@@ -1,0 +1,266 @@
+/* ===================================================================
+   全局设计系统 — Apple 风格（浅色 + 系统蓝）
+   单一真相源：所有页面/组件的配色、间距、圆角、阴影、字体都引用这里
+   =================================================================== */
+:root {
+  /* —— 背景分层（浅色，中性微冷灰）—— */
+  --bg-base:     #f5f5f7;
+  --bg-surface:  #ffffff;
+  --bg-elevated: #ffffff;
+  --bg-sidebar:  rgba(245, 245, 247, 0.72);
+  --bg-glass:    rgba(255, 255, 255, 0.72);
+
+  /* —— 文字 —— */
+  --text:        #1d1d1f;
+  --text-second: #6e6e73;
+  --text-muted:  #a1a1a6;
+
+  /* —— 品牌色：苹果系统蓝 + 创意紫点缀 —— */
+  --primary:       #007aff;
+  --primary-hover: #0071eb;
+  --primary-soft:  rgba(0, 122, 255, 0.10);
+  --accent-purple: #af52de;
+
+  /* —— 语义色（状态）—— */
+  --success: #34c759;
+  --warning: #ff9f0a;
+  --danger:  #ff3b30;
+  --info:    #5ac8fa;
+
+  /* —— 边框/分隔（极淡）—— */
+  --border:    rgba(0, 0, 0, 0.08);
+  --separator: rgba(0, 0, 0, 0.06);
+
+  /* —— 圆角（苹果式大圆角）—— */
+  --radius-sm:   8px;
+  --radius-md:   12px;
+  --radius-lg:   16px;
+  --radius-pill: 980px;
+
+  /* —— 阴影（极淡柔和，2 层）—— */
+  --shadow-sm: 0 1px 2px rgba(0, 0, 0, 0.04);
+  --shadow-md: 0 2px 8px rgba(0, 0, 0, 0.06), 0 1px 2px rgba(0, 0, 0, 0.04);
+  --shadow-lg: 0 8px 28px rgba(0, 0, 0, 0.10);
+
+  /* —— 间距（4px 基准）—— */
+  --sp-1: 4px;  --sp-2: 8px;  --sp-3: 12px;
+  --sp-4: 16px; --sp-5: 24px; --sp-6: 32px; --sp-7: 48px;
+
+  /* —— 字体 —— */
+  --font-sans: -apple-system, BlinkMacSystemFont, "SF Pro Text", "Inter",
+               "PingFang SC", "Microsoft YaHei", sans-serif;
+  --font-display: -apple-system, "SF Pro Display", "Inter",
+                  "PingFang SC", "Microsoft YaHei", sans-serif;
+
+  /* —— 动效曲线 —— */
+  --ease-apple: cubic-bezier(0.2, 0.8, 0.2, 1);
+
+  /* —— 兼容别名：老组件仍引用的旧变量名，映射到新 token —— */
+  --bg-primary:   var(--bg-base);
+  --bg-secondary: var(--bg-surface);
+  --bg-card:      var(--bg-surface);
+  --text-primary: var(--text);
+  --text-secondary: var(--text-second);
+  --accent:       var(--primary);
+  --accent-hover: var(--primary-hover);
+}
+
+/* ===================================================================
+   暗色模式 — data-theme="dark" 覆盖核心 token
+   切换只需改 <html data-theme>，所有引用变量处自动跟随
+   =================================================================== */
+[data-theme="dark"] {
+  --bg-base:     #000000;
+  --bg-surface:  #1c1c1e;
+  --bg-elevated: #2c2c2e;
+  --bg-sidebar:  rgba(28, 28, 30, 0.72);
+  --bg-glass:    rgba(28, 28, 30, 0.72);
+
+  --text:        #f5f5f7;
+  --text-second: #aeaeb2;
+  --text-muted:  #6e6e73;
+
+  --primary-soft: rgba(10, 132, 255, 0.18);
+  --primary:       #0a84ff;
+  --primary-hover: #409cff;
+
+  --success: #30d158;
+  --warning: #ffd60a;
+  --danger:  #ff453a;
+  --info:    #64d2ff;
+
+  --border:    rgba(255, 255, 255, 0.12);
+  --separator: rgba(255, 255, 255, 0.08);
+
+  --shadow-sm: 0 1px 2px rgba(0, 0, 0, 0.40);
+  --shadow-md: 0 2px 8px rgba(0, 0, 0, 0.50), 0 1px 2px rgba(0, 0, 0, 0.40);
+  --shadow-lg: 0 8px 28px rgba(0, 0, 0, 0.60);
+}
+
+* { margin: 0; padding: 0; box-sizing: border-box; }
+
+html, body, #app { height: 100%; }
+
+body {
+  font-family: var(--font-sans);
+  background: var(--bg-base);
+  color: var(--text);
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+  line-height: 1.5;
+  transition: background-color 0.3s var(--ease-apple), color 0.3s var(--ease-apple);
+}
+
+::-webkit-scrollbar { width: 8px; height: 8px; }
+::-webkit-scrollbar-track { background: transparent; }
+::-webkit-scrollbar-thumb {
+  background: rgba(0, 0, 0, 0.18);
+  border-radius: 4px;
+}
+::-webkit-scrollbar-thumb:hover { background: rgba(0, 0, 0, 0.28); }
+[data-theme="dark"] ::-webkit-scrollbar-thumb { background: rgba(255, 255, 255, 0.20); }
+[data-theme="dark"] ::-webkit-scrollbar-thumb:hover { background: rgba(255, 255, 255, 0.32); }
+
+/* ===================================================================
+   Element Plus 主题映射 — 把 EP 组件统一到 Apple 系统蓝 + 圆角
+   =================================================================== */
+:root {
+  --el-color-primary: #007aff;
+  --el-color-primary-light-3: #4da2ff;
+  --el-color-primary-light-5: #80bdff;
+  --el-color-primary-light-7: #b3d7ff;
+  --el-color-primary-light-8: #cce4ff;
+  --el-color-primary-light-9: #e6f2ff;
+  --el-color-primary-dark-2: #0062cc;
+
+  --el-color-success: #34c759;
+  --el-color-warning: #ff9f0a;
+  --el-color-danger:  #ff3b30;
+  --el-color-error:   #ff3b30;
+  --el-color-info:    #8e8e93;
+
+  --el-border-radius-base:  10px;
+  --el-border-radius-small: 8px;
+  --el-border-radius-round: 980px;
+
+  --el-font-family: var(--font-sans);
+  --el-text-color-primary:   #1d1d1f;
+  --el-text-color-regular:   #3a3a3c;
+  --el-text-color-secondary: #6e6e73;
+  --el-text-color-placeholder: #a1a1a6;
+  --el-border-color:        rgba(0, 0, 0, 0.12);
+  --el-border-color-light:  rgba(0, 0, 0, 0.08);
+  --el-border-color-lighter: rgba(0, 0, 0, 0.06);
+  --el-fill-color-blank: #ffffff;
+  --el-bg-color: #ffffff;
+  --el-bg-color-overlay: #ffffff;
+  --el-box-shadow-light: var(--shadow-md);
+}
+
+/* —— Element Plus 暗色映射：让 EP 组件（下拉/卡片/表格/弹窗/输入框）跟随暗色 —— */
+[data-theme="dark"] {
+  --el-color-primary: #0a84ff;
+  --el-color-primary-light-3: #0a84ff;
+  --el-color-primary-light-5: #0062cc;
+  --el-color-primary-light-7: #1c3a5e;
+  --el-color-primary-light-8: #16314d;
+  --el-color-primary-light-9: #11253a;
+  --el-color-primary-dark-2: #409cff;
+
+  --el-color-success: #30d158;
+  --el-color-warning: #ffd60a;
+  --el-color-danger:  #ff453a;
+  --el-color-error:   #ff453a;
+  --el-color-info:    #98989d;
+
+  --el-text-color-primary:   #f5f5f7;
+  --el-text-color-regular:   #d1d1d6;
+  --el-text-color-secondary: #aeaeb2;
+  --el-text-color-placeholder: #6e6e73;
+  --el-border-color:        rgba(255, 255, 255, 0.16);
+  --el-border-color-light:  rgba(255, 255, 255, 0.12);
+  --el-border-color-lighter: rgba(255, 255, 255, 0.08);
+  --el-fill-color-blank: #1c1c1e;
+  --el-fill-color-light: #2c2c2e;
+  --el-bg-color: #1c1c1e;
+  --el-bg-color-page: #000000;
+  --el-bg-color-overlay: #2c2c2e;
+  --el-mask-color: rgba(0, 0, 0, 0.7);
+}
+
+/* 主按钮微调：胶囊感 + 轻按压反馈 */
+.el-button {
+  font-weight: 500;
+  transition: all 0.15s var(--ease-apple);
+}
+.el-button:active { transform: scale(0.97); }
+
+/* —— 页面切换淡入淡出过渡 —— */
+.page-fade-enter-active,
+.page-fade-leave-active {
+  transition: opacity 0.22s var(--ease-apple), transform 0.22s var(--ease-apple);
+}
+.page-fade-enter-from {
+  opacity: 0;
+  transform: translateY(8px);
+}
+.page-fade-leave-to {
+  opacity: 0;
+  transform: translateY(-6px);
+}
+
+/* ===================================================================
+   顶级细节增强（纯增量，不覆盖既有规则）
+   =================================================================== */
+
+/* —— 品牌渐变 token：用于强调标题、主按钮高光 —— */
+:root {
+  --gradient-brand: linear-gradient(135deg, #007aff 0%, #af52de 100%);
+  --gradient-brand-soft: linear-gradient(135deg, rgba(0,122,255,0.12) 0%, rgba(175,82,222,0.12) 100%);
+  --ease-spring: cubic-bezier(0.34, 1.56, 0.64, 1);
+}
+[data-theme="dark"] {
+  --gradient-brand: linear-gradient(135deg, #0a84ff 0%, #bf5af2 100%);
+}
+
+/* —— 文本选中色：跟随品牌 —— */
+::selection { background: rgba(0, 122, 255, 0.22); color: inherit; }
+
+/* —— 全局焦点可见性（无障碍：键盘 Tab 导航清晰可见，鼠标点击不显示）—— */
+:focus-visible {
+  outline: 2px solid var(--primary);
+  outline-offset: 2px;
+  border-radius: 6px;
+}
+.el-button:focus-visible {
+  outline: 2px solid var(--primary);
+  outline-offset: 2px;
+}
+
+/* —— 卡片悬浮微动效：统一所有卡片的抬升手感 —— */
+.lift-on-hover {
+  transition: transform 0.25s var(--ease-spring), box-shadow 0.25s var(--ease-apple);
+}
+.lift-on-hover:hover {
+  transform: translateY(-3px);
+  box-shadow: var(--shadow-lg);
+}
+
+/* —— 渐变标题文字工具类 —— */
+.text-gradient {
+  background: var(--gradient-brand);
+  -webkit-background-clip: text;
+  background-clip: text;
+  -webkit-text-fill-color: transparent;
+}
+
+/* —— 尊重用户的「减少动态效果」系统偏好（无障碍）—— */
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after {
+    animation-duration: 0.001ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.001ms !important;
+    scroll-behavior: auto !important;
+  }
+}
+

@@ -1,0 +1,31 @@
+// library 页面文案
+export default {
+  zh: {
+    title: '成片库',
+    summary: '共 {count} 个成片 · {size}',
+    filterProject: '按项目筛选',
+    empty: '还没有成片，去项目里合成视频吧',
+    fileMissing: '文件丢失',
+    unnamedProject: '未命名项目',
+    viewProject: '查看项目',
+    deleteTitle: '删除成片',
+    durationMin: '{m}分{s}秒', durationSec: '{s}秒',
+    loadFailed: '加载成片库失败：',
+    deleteConfirm: '删除该成片？此操作会同时删除磁盘文件，不可恢复。',
+    deleted: '已删除', deleteFailed: '删除失败：',
+  },
+  en: {
+    title: 'Video Library',
+    summary: '{count} videos · {size}',
+    filterProject: 'Filter by project',
+    empty: 'No videos yet. Go compose one in a project.',
+    fileMissing: 'File missing',
+    unnamedProject: 'Untitled Project',
+    viewProject: 'View Project',
+    deleteTitle: 'Delete Video',
+    durationMin: '{m}m {s}s', durationSec: '{s}s',
+    loadFailed: 'Failed to load library: ',
+    deleteConfirm: 'Delete this video? The file on disk will also be removed and cannot be recovered.',
+    deleted: 'Deleted', deleteFailed: 'Delete failed: ',
+  },
+}

@@ -1,0 +1,106 @@
+# ===== 依赖 =====
+node_modules/
+*/node_modules/
+**/node_modules/
+
+# ===== 构建产物 =====
+dist/
+dist-electron/
+dist-server-jsc/
+build/
+client/dist/
+*.exe
+*.blockmap
+
+# ===== 数据库 & 运行时数据（含密钥，绝不入库）=====
+*.sqlite
+*.sqlite-journal
+server/db/database.sqlite
+server/db/settings.json
+uploads/
+server/uploads/
+**/uploads/
+logs/
+*.log
+
+# ===== 密钥 / 环境变量 =====
+.env
+.env.*
+*.pem
+*.key
+secrets.json
+
+# ===== 历史备份 / 沙箱 / 临时目录（根除"备份目录留痕"）=====
+_backup_*/
+**/_backup_*/
+_sandbox_*/
+**/_sandbox_*/
+_ui-demo/
+_backup_*.tar.gz
+**/_backup_*.tar.gz
+*.tar.gz
+
+# ===== 编辑器 / 系统 =====
+.DS_Store
+Thumbs.db
+.idea/
+.vscode/
+*.swp
+*.tmp
+
+# ===== 缓存 =====
+.cache/
+.vite/
+*.tsbuildinfo
+# --- Codex workspace safety rules ---
+# Dependencies
+node_modules/
+.venv/
+venv/
+__pycache__/
+*.pyc
+
+# Build outputs
+dist/
+build/
+release/
+dist-electron/
+.nuxt/
+.output/
+frontend-dist/
+
+# Environment / secrets
+.env
+.env.*
+!.env.example
+!.env.local-example
+!.env.production.example
+*.pfx
+*.cer
+*.key
+*.pem
+
+# Runtime/user data
+*.sqlite
+*.sqlite3
+*.db
+logs/
+uploads/
+runtime/browser-profile*/
+
+# Packages / installers
+*.zip
+*.tar.gz
+*.tgz
+*.7z
+*.rar
+*.exe
+*.dmg
+*.pkg
+*.msi
+
+# OS/editor
+.DS_Store
+Thumbs.db
+.vscode/
+.idea/

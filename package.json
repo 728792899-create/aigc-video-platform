@@ -1,0 +1,77 @@
+{
+  "name": "snoopy-king",
+  "version": "1.0.3",
+  "description": "史努比大王 - AIGC 辅助的短视频创意生成与制作平台（桌面版）",
+  "author": "王从天降",
+  "license": "MIT",
+  "main": "electron/main.js",
+  "scripts": {
+    "install:all": "npm install && npm --prefix server install && npm --prefix client install",
+    "dev": "node scripts/dev.mjs",
+    "demo": "node scripts/dev.mjs --demo",
+    "test:smoke": "node scripts/run-smoke.mjs",
+    "build:client": "cd client && npm run build",
+    "check:server": "npm --prefix server run preflight && npm --prefix server test && npm --prefix server audit --omit=dev",
+    "check:client": "npm --prefix client test && npm --prefix client run build && npm --prefix client audit --omit=dev",
+    "quality": "npm run check:server && npm run check:client",
+    "electron:dev": "electron .",
+    "pack": "npm run build:client && electron-builder --dir",
+    "dist": "npm run build:client && electron-builder",
+    "build:secure": "bash scripts/secure-build.sh"
+  },
+  "build": {
+    "appId": "com.wanyan.snoopyking",
+    "productName": "史努比大王",
+    "asar": false,
+    "directories": {
+      "output": "dist-electron",
+      "buildResources": "build"
+    },
+    "files": [
+      "electron/**/*",
+      "node_modules/**/*",
+      "package.json"
+    ],
+    "extraResources": [
+      {
+        "from": "dist-server-jsc",
+        "to": "server",
+        "filter": [
+          "**/*",
+          "!db/*.sqlite",
+          "!db/*.sqlite.tmp",
+          "!db/settings.json",
+          "!uploads/**",
+          "!logs/**",
+          "!test/**",
+          "!**/_backup_*/**"
+        ]
+      },
+      {
+        "from": "client/dist",
+        "to": "client/dist"
+      }
+    ],
+    "win": {
+      "target": [{ "target": "nsis", "arch": ["x64"] }],
+      "icon": "build/icon.ico"
+    },
+    "nsis": {
+      "oneClick": false,
+      "perMachine": false,
+      "allowToChangeInstallationDirectory": true,
+      "createDesktopShortcut": true,
+      "createStartMenuShortcut": true,
+      "shortcutName": "史努比大王"
+    }
+  },
+  "devDependencies": {
+    "bytenode": "^1.5.7",
+    "electron": "^33.2.0",
+    "electron-builder": "^25.1.8",
+    "javascript-obfuscator": "^5.4.3"
+  },
+  "dependencies": {
+    "ffmpeg-static": "5.3.0"
+  }
+}
