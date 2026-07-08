@@ -80,7 +80,7 @@ function demoScript(theme, duration = '45-60', style = '写实', detailLevel = '
       {
         scene_number: 3,
         description: '素材面板中显示占位图、配音波形和字幕预览，失败提示以可理解的方式出现在任务进度里。',
-        dialog: 'Demo 模式不会依赖真实 API Key。图片、配音和异常状态都会用本地兜底结果表达，让面试官先看到完整闭环。',
+        dialog: 'Demo 模式不会依赖真实 API Key。图片、配音和异常状态都会用本地兜底结果表达，便于快速确认完整闭环。',
         duration: demoDurations[2],
         characters_in_scene: [{ name: '创作者', role: '主角', action: '查看素材预览', emotion: '确认', location: '工作台前', state_note: '素材已可预览' }],
         continuity_notes: '解释 mock/demo 价值。',
