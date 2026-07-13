@@ -31,6 +31,44 @@ npm --prefix client run build
 
 ---
 
+## 演示截图
+
+### 创作工作台
+
+![AIGC 短视频创作工作台](docs/screenshots/01-workbench.jpg)
+
+### 脚本参数与创作技能
+
+![AIGC 脚本工作台](docs/screenshots/02-script-workbench.jpg)
+
+### 可编辑分镜结果
+
+![AIGC 已生成分镜](docs/screenshots/03-generated-storyboard.jpg)
+
+### 分镜画面工作台
+
+![AIGC 分镜画面工作台](docs/screenshots/04-image-workbench.jpg)
+
+截图由 `DEMO_MODE=1` 本地演示链路生成：不调用付费模型，图片和配音允许走明确标记的本地兜底结果。
+
+## 架构概览
+
+```mermaid
+flowchart LR
+  E["Electron / Browser"] --> UI["Vue 3 创作工作台"]
+  UI -->|"REST + 任务状态"| API["Express API"]
+  API --> PIPE["Pipeline / Workbench"]
+  PIPE --> ROUTE["多模型 Provider 路由"]
+  PIPE --> MEDIA["FFmpeg / TTS / 字幕 / 合成"]
+  API --> DB["sql.js + SQLite 文件"]
+  PIPE --> FILES["本地媒体资产"]
+  ROUTE --> FALLBACK["Demo / 免费 Provider / 占位兜底"]
+```
+
+完整的桌面运行结构、创作流水线、任务恢复、模型降级和安全边界见 [架构说明](docs/architecture.md)。
+
+---
+
 ## ✨ 核心功能
 
 - **一键成片**：一句主题自动生成脚本、逐分镜配图配音、合成带字幕成片，全程进度可视化。
@@ -194,6 +232,8 @@ aigc-video-platform/
 │   └── vite.config.js      # Vite 配置（端口 5173 + API 代理）
 └── README.md
 ```
+
+更多架构图和关键取舍见 [`docs/architecture.md`](docs/architecture.md)。
 
 ---
 
