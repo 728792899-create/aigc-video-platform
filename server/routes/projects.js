@@ -113,6 +113,7 @@ router.post('/:id/images/generate-all', (req, res) => {
       payload: req.body || {},
       target_storyboard_ids: selected.storyboards.map((sb) => Number(sb.id)),
       target_count: selected.storyboards.length,
+      recovery: { kind: 'image-batch', attempts: 0, max_attempts: 3 },
     });
     opLog.log('image.batch.start', 'project', req.params.id, {
       task_id: task.id,

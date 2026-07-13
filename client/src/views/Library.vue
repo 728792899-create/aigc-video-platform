@@ -53,7 +53,7 @@
           </div>
           <div v-if="it.external_file_path" class="lib-external" :class="{ missing: !it.external_file_exists }">
             <span>{{ it.external_file_exists ? '本机副本' : '副本缺失' }}</span>
-            <code>{{ it.external_file_path }}</code>
+            <code>{{ displayLocalPath(it.external_file_path) }}</code>
           </div>
           <div class="lib-time">{{ fmtTime(it.created_at) }}</div>
         </div>
@@ -75,6 +75,7 @@ import { ElMessage, ElMessageBox } from 'element-plus'
 import { useI18n } from 'vue-i18n'
 import { mediaUrl } from '../api/config'
 import { listLibrary, deleteExport } from '../api/features'
+import { displayLocalPath } from '../utils/localPath'
 
 const { t } = useI18n()
 const router = useRouter()

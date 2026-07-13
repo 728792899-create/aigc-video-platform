@@ -1,17 +1,23 @@
 // ============================================================
-//  史努比大王 - Electron 主进程
+//  AIGC 视频工作台 - Electron 主进程
 //  职责：拉起后端(Express) → 等健康检查通过 → 开窗口加载前端 → 退出时清理
 // ============================================================
-const { app, BrowserWindow, dialog, shell, Menu, ipcMain } = require('electron');
+const { app, BrowserWindow, dialog, shell, Menu, ipcMain, safeStorage, session, crashReporter } = require('electron');
 const { fork } = require('child_process');
 const path = require('path');
 const fs = require('fs');
 const http = require('http');
 const net = require('net');
+const telemetry = require('./telemetry');
 
-// 后端端口：默认从 3000 起探测空闲端口，允许通过 SNOOPY_PORT 指定起始端口
+const PRODUCT_NAME = 'AIGC 视频工作台';
+app.setName(PRODUCT_NAME);
+crashReporter.start({ uploadToServer: false, compress: true });
+telemetry.init({ appVersion: app.getVersion(), packaged: app.isPackaged });
+
+// 后端端口：默认从 3000 起探测空闲端口，允许通过 AIGC_STUDIO_PORT 指定起始端口。
 // 注意：这是“起始值”，若被占用会自动 +1 顺延，实际端口由 findFreePort 决定
-let PORT = parseInt(process.env.SNOOPY_PORT, 10) || 3000;
+let PORT = parseInt(process.env.AIGC_STUDIO_PORT || process.env.SNOOPY_PORT, 10) || 3000;
 const isPackaged = app.isPackaged;
 
 // ---- 路径解析：开发模式用项目目录，打包后用 resources / userData ----
@@ -24,14 +30,117 @@ const clientDist = isPackaged
   ? path.join(process.resourcesPath, 'client', 'dist')
   : path.join(__dirname, '..', 'client', 'dist');
 
-// 用户数据目录（可写）：%APPDATA%/史努比大王/
+// 用户数据目录（可写）：由 Electron 按产品名放在系统 Application Support / AppData。
 const userDataDir = app.getPath('userData');
+function migrateLegacyUserData() {
+  if (fs.existsSync(path.join(userDataDir, 'data'))) return;
+  const appData = app.getPath('appData');
+  for (const legacyName of ['史努比大王', 'snoopy-king']) {
+    const legacy = path.join(appData, legacyName);
+    if (path.resolve(legacy) === path.resolve(userDataDir) || !fs.existsSync(path.join(legacy, 'data'))) continue;
+    try {
+      fs.mkdirSync(userDataDir, { recursive: true });
+      fs.cpSync(path.join(legacy, 'data'), path.join(userDataDir, 'data'), { recursive: true, errorOnExist: false });
+      console.log(`[main] 已从旧版数据目录迁移用户数据：${legacyName}`);
+      break;
+    } catch (error) {
+      console.error('[main] 旧版用户数据迁移失败:', error.message);
+    }
+  }
+}
+migrateLegacyUserData();
 const dataDir = path.join(userDataDir, 'data');
 if (!fs.existsSync(dataDir)) fs.mkdirSync(dataDir, { recursive: true });
-// 日志目录（可写）：%APPDATA%/史努比大王/logs/ —— 后端崩溃信息落盘到此，便于排查
+// 日志目录（可写）：用户数据目录/logs/ —— 后端崩溃信息落盘到此，便于排查
 const logsDir = path.join(userDataDir, 'logs');
 if (!fs.existsSync(logsDir)) fs.mkdirSync(logsDir, { recursive: true });
 const backendLogPath = path.join(logsDir, 'backend.log');
+const credentialVaultPath = path.join(dataDir, 'credentials.vault');
+let credentialVault = {};
+
+function loadCredentialVault() {
+  if (!safeStorage.isEncryptionAvailable()) {
+    console.error('[main] 系统安全存储不可用，凭证将不会持久化');
+    return {};
+  }
+  try {
+    if (!fs.existsSync(credentialVaultPath)) return {};
+    const encrypted = Buffer.from(fs.readFileSync(credentialVaultPath, 'utf8'), 'base64');
+    return JSON.parse(safeStorage.decryptString(encrypted)) || {};
+  } catch (error) {
+    console.error('[main] 无法读取系统凭证库:', error.message);
+    return {};
+  }
+}
+
+function persistCredentialVault() {
+  if (!safeStorage.isEncryptionAvailable()) return false;
+  const encrypted = safeStorage.encryptString(JSON.stringify(credentialVault));
+  const temp = `${credentialVaultPath}.tmp`;
+  fs.writeFileSync(temp, encrypted.toString('base64'), { encoding: 'utf8', mode: 0o600 });
+  fs.renameSync(temp, credentialVaultPath);
+  return true;
+}
+
+function migrateLegacyCredentials() {
+  const settingsPath = path.join(dataDir, 'settings.json');
+  if (!fs.existsSync(settingsPath)) return;
+  try {
+    const settings = JSON.parse(fs.readFileSync(settingsPath, 'utf8')) || {};
+    let changed = false;
+    for (const [provider, value] of Object.entries(settings.credentials || {})) {
+      if (!value || typeof value !== 'object') continue;
+      const secrets = {};
+      for (const field of ['apiKey', 'accessKey', 'secretKey']) {
+        if (value[field]) secrets[field] = String(value[field]);
+        if (field in value) { delete value[field]; changed = true; }
+      }
+      if (Object.keys(secrets).length) credentialVault[provider] = { ...(credentialVault[provider] || {}), ...secrets };
+    }
+    if (settings.deepseek?.apiKey) {
+      credentialVault.deepseek = { ...(credentialVault.deepseek || {}), apiKey: String(settings.deepseek.apiKey) };
+      delete settings.deepseek.apiKey;
+      changed = true;
+    }
+    if (changed) {
+      persistCredentialVault();
+      const temp = `${settingsPath}.tmp`;
+      fs.writeFileSync(temp, JSON.stringify(settings, null, 2), { encoding: 'utf8', mode: 0o600 });
+      fs.renameSync(temp, settingsPath);
+      console.log('[main] 已把旧版明文凭证迁移到系统安全存储');
+    }
+  } catch (error) {
+    console.error('[main] 旧版凭证迁移失败:', error.message);
+  }
+}
+
+function handleCredentialMessage(message) {
+  if (!message || message.channel !== 'credential-vault' || message.action !== 'set') return;
+  const provider = String(message.provider || '');
+  if (!/^[a-z0-9][a-z0-9_-]{0,63}$/i.test(provider)) return;
+  const next = {};
+  for (const field of ['apiKey', 'accessKey', 'secretKey', 'appId', 'cluster', 'resourceId']) {
+    if (message.value?.[field] === undefined) continue;
+    const value = String(message.value[field] || '').trim();
+    if (value && value.length <= 8192) next[field] = value;
+  }
+  if (Object.keys(next).length) credentialVault[provider] = next;
+  else delete credentialVault[provider];
+  try { persistCredentialVault(); } catch (error) { console.error('[main] 保存系统凭证失败:', error.message); }
+}
+
+function redactLogText(input) {
+  let text = String(input || '');
+  for (const value of Object.values(credentialVault)) {
+    for (const field of ['apiKey', 'accessKey', 'secretKey']) {
+      const secret = String(value?.[field] || '');
+      if (secret.length >= 4) text = text.split(secret).join('[REDACTED]');
+    }
+  }
+  return text
+    .replace(/Bearer\s+[A-Za-z0-9._~+/=-]{8,}/gi, 'Bearer [REDACTED]')
+    .replace(/\b(sk|key|token)-[A-Za-z0-9_-]{8,}\b/gi, '[REDACTED]');
+}
 
 // FFmpeg 二进制路径（ffmpeg-static 提供，跨平台）
 let ffmpegPath = '';
@@ -81,9 +190,9 @@ function findFreePort(startPort, maxTries = 20) {
       tester.once('listening', () => {
         tester.close(() => resolve(port));
       });
-      // 不指定 host：与后端 app.listen(PORT) 一致（默认绑定通配 ::），
-      // 否则绑 127.0.0.1 时探不出 0.0.0.0/[::] 上的占用，导致误判可用
-      tester.listen(port);
+      // 桌面后端只绑定 127.0.0.1，端口探测也必须使用同一地址。
+      // 仅监听 IPv6 通配地址时，可能与已有的 IPv4 服务同时成功，从而误判端口空闲。
+      tester.listen(port, '127.0.0.1');
     };
     tryPort();
   });
@@ -98,12 +207,15 @@ function startBackend() {
     return;
   }
 
+  credentialVault = loadCredentialVault();
+  migrateLegacyCredentials();
   const env = Object.assign({}, process.env, {
     // 让 fork 的子进程以纯 Node 运行，而不是再开一个 Electron 实例
     ELECTRON_RUN_AS_NODE: '1',
     NODE_ENV: 'production',
     // 后端监听端口（与主进程健康检查/窗口加载保持一致）
     PORT: String(PORT),
+    HOST: '127.0.0.1',
     // 可写数据目录（安装目录通常只读，数据必须放这里）
     DB_PATH: path.join(dataDir, 'database.sqlite'),
     SETTINGS_FILE: path.join(dataDir, 'settings.json'),
@@ -112,8 +224,12 @@ function startBackend() {
     CLIENT_DIST: clientDist,
     // FFmpeg 二进制（打包进安装包，无需用户自装）
     FFMPEG_PATH: ffmpegPath || 'ffmpeg',
+    // 后端依赖以 vendor/ 作为受管运行时目录，避免打包器过滤额外 node_modules。
+    NODE_PATH: path.join(serverDir, 'vendor'),
     // 桌面应用同源，无跨域；放行本地
     CORS_ORIGIN: `http://localhost:${PORT},http://127.0.0.1:${PORT}`,
+    // 仅通过子进程启动环境传递一次，服务读取后会立即删除；不会写日志或配置文件。
+    AIGC_CREDENTIALS_B64: Buffer.from(JSON.stringify(credentialVault)).toString('base64'),
   });
 
   backendProc = fork(entry, [], {
@@ -121,12 +237,17 @@ function startBackend() {
     env,
     stdio: ['ignore', 'pipe', 'pipe', 'ipc'],
   });
+  backendProc.on('message', (message) => {
+    handleCredentialMessage(message);
+    if (message?.type === 'server-ready' && Number(message.port) === PORT) handleBackendReady();
+  });
 
-  // 后端日志落盘：stdout/stderr 同时写控制台与 %APPDATA%/史努比大王/logs/backend.log，
+  // 后端日志落盘：stdout/stderr 同时写控制台与用户数据目录/logs/backend.log，
   // 这样后端崩溃时的报错栈能保留下来，便于事后排查（否则崩溃信息随进程消失）。
   const writeLog = (prefix, chunk) => {
-    const line = `[${new Date().toISOString()}] ${prefix} ${chunk}`;
-    process.stdout.write(`[backend] ${chunk}`);
+    const safeChunk = redactLogText(chunk);
+    const line = `[${new Date().toISOString()}] ${prefix} ${safeChunk}`;
+    process.stdout.write(`[backend] ${safeChunk}`);
     try { if (logStream) logStream.write(line); } catch (_) {}
   };
   backendProc.stdout.on('data', d => writeLog('OUT', d));
@@ -136,6 +257,7 @@ function startBackend() {
     const msg = `[main] 后端进程退出 code=${code} signal=${signal}\n`;
     try { if (logStream) logStream.write(`[${new Date().toISOString()}] ${msg}`); } catch (_) {}
     console.log(msg.trim());
+    if (!isQuitting) telemetry.captureException(new Error('Backend process exited unexpectedly'), { code, signal, restart: backendRestarts + 1 });
     backendProc = null;
     // 主动退出（用户关闭应用）不重启；否则视为崩溃，带退避自动拉起，避免软件假死。
     if (isQuitting) return;
@@ -157,6 +279,7 @@ function startBackend() {
 
 // ---- 健康检查：轮询 /api/health，就绪后回调 ----
 function waitForBackend(onReady, attempt = 0) {
+  if (backendReady || didOpenMainWindow || isQuitting) return;
   const MAX = 60; // 最多等 ~30s
   const req = http.get(`http://127.0.0.1:${PORT}/api/health`, (res) => {
     res.resume();
@@ -171,6 +294,8 @@ function waitForBackend(onReady, attempt = 0) {
   req.setTimeout(1500, () => { req.destroy(); });
 
   function retry() {
+    // IPC 就绪信号可能比本次 HTTP 请求先抵达；成功后必须停止旧计时链。
+    if (backendReady || didOpenMainWindow || isQuitting) return;
     if (attempt >= MAX) {
       dialog.showErrorBox('启动超时', '后端服务未能在预期时间内就绪，请重启应用。');
       app.quit();
@@ -178,6 +303,16 @@ function waitForBackend(onReady, attempt = 0) {
     }
     setTimeout(() => waitForBackend(onReady, attempt + 1), 500);
   }
+}
+
+let didOpenMainWindow = false;
+function handleBackendReady() {
+  if (didOpenMainWindow || isQuitting) return;
+  didOpenMainWindow = true;
+  backendReady = true;
+  createWindow();
+  if (splash) { splash.close(); splash = null; }
+  configureAutoUpdates();
 }
 
 // ---- 应用菜单（中英双语，跟随界面语言切换） ----
@@ -224,12 +359,12 @@ function buildMenu(locale) {
       label: t('帮助', 'Help'),
       submenu: [
         {
-          label: t('关于 史努比大王', 'About 史努比大王'),
+          label: t(`关于 ${PRODUCT_NAME}`, `About ${PRODUCT_NAME}`),
           click: () => {
             dialog.showMessageBox(mainWindow, {
               type: 'info',
               title: t('关于', 'About'),
-              message: '史努比大王',
+              message: PRODUCT_NAME,
               detail: t(
                 `AIGC 辅助的短视频创意生成与制作平台\n版本 ${app.getVersion()}\n作者：王从天降`,
                 `AIGC-Assisted Short Video Creation Platform\nVersion ${app.getVersion()}\nAuthor: Wang Congtianjiang`
@@ -251,20 +386,53 @@ function createWindow() {
     height: 900,
     minWidth: 1024,
     minHeight: 680,
-    title: '史努比大王',
+    title: PRODUCT_NAME,
     backgroundColor: '#ffffff',
     show: false,
     webPreferences: {
       contextIsolation: true,
       nodeIntegration: false,
+      sandbox: true,
+      webSecurity: true,
+      allowRunningInsecureContent: false,
       preload: path.join(__dirname, 'preload.js'),
     },
   });
 
   // 外部链接用系统浏览器打开，不在应用内导航
   mainWindow.webContents.setWindowOpenHandler(({ url }) => {
-    shell.openExternal(url);
+    try {
+      const parsed = new URL(url);
+      if (parsed.protocol === 'https:') shell.openExternal(parsed.toString()).catch(() => {});
+    } catch (_) {}
     return { action: 'deny' };
+  });
+  mainWindow.webContents.on('will-navigate', (event, url) => {
+    try {
+      const target = new URL(url);
+      if (target.hostname === '127.0.0.1' && Number(target.port) === PORT) return;
+    } catch (_) {}
+    event.preventDefault();
+  });
+  // 渲染层异常也要进入桌面日志，否则用户只能看到空白窗口。
+  // 输出经过与后端相同的凭证脱敏，不记录 info/debug 级别。
+  mainWindow.webContents.on('console-message', (_event, details) => {
+    const level = String(details?.level ?? '').toLowerCase();
+    if (!['2', '3', 'warning', 'error'].includes(level)) return;
+    const message = redactLogText(details?.message || 'Renderer console error');
+    console.error(`[renderer:${level}] ${message}`);
+    try { if (logStream) logStream.write(`[${new Date().toISOString()}] RENDERER ${level} ${message}\n`); } catch (_) {}
+  });
+  mainWindow.webContents.on('did-fail-load', (_event, code, description, url, isMainFrame) => {
+    if (!isMainFrame) return;
+    const error = new Error(`Renderer load failed (${code}): ${description} ${url}`);
+    console.error('[renderer]', error.message);
+    telemetry.captureException(error, { feature: 'renderer-load' });
+  });
+  mainWindow.webContents.on('render-process-gone', (_event, details) => {
+    const error = new Error(`Renderer process gone: ${details?.reason || 'unknown'}`);
+    console.error('[renderer]', error.message);
+    telemetry.captureException(error, { feature: 'renderer-process', exitCode: details?.exitCode });
   });
 
   // 生产环境反调试：拦截 DevTools 快捷键（F12 / Ctrl+Shift+I/J/C），
@@ -286,17 +454,46 @@ function createWindow() {
   mainWindow.on('closed', () => { mainWindow = null; });
 }
 
-// ---- 启动期加载窗口（绚丽启动画面：极光背景+动态小狗+光效） ----
-let splash = null;
-function createSplash() {
-  splash = new BrowserWindow({
-    width: 480, height: 420, frame: false, resizable: false,
-    backgroundColor: '#1a0b3b', show: true, center: true, transparent: false,
-  });
-  const html = `<!doctype html><meta charset="utf-8"><style>*{margin:0;padding:0;box-sizing:border-box}html,body{height:100%;overflow:hidden;font-family:'Microsoft YaHei',sans-serif}body{display:flex;flex-direction:column;align-items:center;justify-content:center;background:linear-gradient(125deg,#1a0b3b,#3b0a5e,#7209b7,#3a0ca3,#4361ee,#1a0b3b);background-size:400% 400%;animation:aurora 12s ease infinite;position:relative}@keyframes aurora{0%{background-position:0 50%}50%{background-position:100% 50%}100%{background-position:0 50%}}.glow{position:absolute;width:520px;height:520px;border-radius:50%;background:radial-gradient(circle,rgba(247,37,133,.45),rgba(114,9,183,.25)40%,transparent 70%);filter:blur(20px);animation:spin 9s linear infinite;z-index:0}.glow2{position:absolute;width:420px;height:420px;border-radius:50%;background:radial-gradient(circle,rgba(76,201,240,.4),rgba(67,97,238,.2)45%,transparent 70%);filter:blur(24px);animation:spin 14s linear infinite reverse;z-index:0}@keyframes spin{from{transform:rotate(0)scale(1)}50%{transform:rotate(180deg)scale(1.15)}to{transform:rotate(360deg)scale(1)}}.particles{position:absolute;inset:0;z-index:1;pointer-events:none}.p{position:absolute;border-radius:50%;opacity:0;animation:float 6s ease-in infinite}@keyframes float{0%{transform:translateY(40px)scale(.3);opacity:0}20%{opacity:1}100%{transform:translateY(-220px)scale(1);opacity:0}}.stage{position:relative;z-index:3;display:flex;flex-direction:column;align-items:center}.ring{position:absolute;top:-26px;width:210px;height:210px;border-radius:50%;border:3px dashed rgba(76,201,240,.55);animation:spin2 8s linear infinite;z-index:2}.ring::before{content:'';position:absolute;inset:14px;border-radius:50%;border:2px dotted rgba(247,37,133,.5)}@keyframes spin2{to{transform:rotate(360deg)}}.dog{animation:hop .9s ease-in-out infinite;transform-origin:50% 92%;filter:drop-shadow(0 8px 16px rgba(0,0,0,.45))}@keyframes hop{0%,100%{transform:translateY(0)scaleY(1)}30%{transform:translateY(-16px)scaleY(1.05)}55%{transform:translateY(0)scaleY(.95)}70%{transform:translateY(-5px)}}.tail{transform-origin:88px 78px;animation:wag .3s ease-in-out infinite}@keyframes wag{0%,100%{transform:rotate(-20deg)}50%{transform:rotate(22deg)}}.ear-l{transform-origin:52px 40px;animation:flop .9s ease-in-out infinite}.ear-r{transform-origin:76px 40px;animation:flop .9s ease-in-out infinite}@keyframes flop{0%,100%{transform:rotate(0)}30%{transform:rotate(-9deg)}60%{transform:rotate(6deg)}}.shadow{transform-origin:center;animation:sh .9s ease-in-out infinite}@keyframes sh{0%,100%{transform:scaleX(1);opacity:.4}30%{transform:scaleX(.65);opacity:.2}}.title{margin-top:30px;font-size:30px;font-weight:800;letter-spacing:4px;background:linear-gradient(90deg,#f72585,#ff9e00,#4cc9f0,#b5179e,#f72585);background-size:200% auto;-webkit-background-clip:text;background-clip:text;color:transparent;animation:shine 3s linear infinite;text-shadow:0 2px 20px rgba(247,37,133,.3)}@keyframes shine{to{background-position:200% center}}.slogan{margin-top:6px;font-size:12px;letter-spacing:6px;color:rgba(255,255,255,.55)}.bar{margin-top:22px;width:240px;height:6px;border-radius:6px;background:rgba(255,255,255,.12);overflow:hidden}.bar i{display:block;height:100%;width:40%;border-radius:6px;background:linear-gradient(90deg,#4cc9f0,#f72585,#ff9e00);animation:load 1.6s ease-in-out infinite}@keyframes load{0%{margin-left:-40%}100%{margin-left:100%}}.sub{margin-top:14px;font-size:13px;color:rgba(255,255,255,.7)}.dots span{animation:blink 1.2s infinite both}.dots span:nth-child(2){animation-delay:.2s}.dots span:nth-child(3){animation-delay:.4s}@keyframes blink{0%,80%,100%{opacity:.25}40%{opacity:1}}</style><body><div class="glow"></div><div class="glow2"></div><div class="particles"id="ps"></div><div class="stage"><div class="ring"></div><svg width="170"height="140"viewBox="0 0 140 120"class="dog"><ellipse class="shadow"cx="70"cy="112"rx="36"ry="6"fill="#000"/><g><path class="tail"d="M86 76 q18 -6 22 -20 q4 10 -4 20 q-8 8 -18 6 z"fill="#fff"/><ellipse cx="60"cy="74"rx="34"ry="24"fill="#fff"/><ellipse cx="60"cy="80"rx="20"ry="12"fill="#ffe5f1"/><rect x="40"y="88"width="9"height="16"rx="4"fill="#fff"/><rect x="66"y="88"width="9"height="16"rx="4"fill="#fff"/><circle cx="64"cy="44"r="26"fill="#fff"/><ellipse class="ear-l"cx="46"cy="42"rx="9"ry="20"fill="#222"/><ellipse class="ear-r"cx="82"cy="42"rx="9"ry="20"fill="#222"/><circle cx="56"cy="40"r="3.6"fill="#111"/><circle cx="72"cy="40"r="3.6"fill="#111"/><circle cx="57"cy="39"r="1"fill="#fff"/><circle cx="73"cy="39"r="1"fill="#fff"/><ellipse cx="64"cy="52"rx="5"ry="4"fill="#111"/><path d="M64 56 q-6 7 -12 3 M64 56 q6 7 12 3"stroke="#111"stroke-width="1.6"fill="none"stroke-linecap="round"/><ellipse cx="50"cy="50"rx="4"ry="2.5"fill="#ffb3c8"opacity=".7"/><ellipse cx="78"cy="50"rx="4"ry="2.5"fill="#ffb3c8"opacity=".7"/></g></svg><div class="title">史努比大王</div><div class="slogan">AIGC 短视频创意工坊</div><div class="bar"><i></i></div><div class="sub">正在启动服务，请稍候<span class="dots"><span>.</span><span>.</span><span>.</span></span></div></div><script>var colors=['#f72585','#4cc9f0','#ff9e00','#b5179e','#4361ee','#fff'],box=document.getElementById('ps');for(var i=0;i<26;i++){var d=document.createElement('div');d.className='p';var s=3+Math.random()*5;d.style.width=s+'px';d.style.height=s+'px';d.style.left=Math.random()*100+'%';d.style.bottom='-10px';d.style.background=colors[i%colors.length];d.style.boxShadow='0 0 8px '+colors[i%colors.length];d.style.animationDelay=Math.random()*6+'s';d.style.animationDuration=4+Math.random()*4+'s';box.appendChild(d)}</script></body>`;
-  splash.loadURL('data:text/html;charset=utf-8,' + encodeURIComponent(html));
+function configureAutoUpdates() {
+  if (!isPackaged || process.env.DISABLE_AUTO_UPDATE === '1') return;
+  try {
+    const { autoUpdater } = require('electron-updater');
+    autoUpdater.autoDownload = false;
+    autoUpdater.autoInstallOnAppQuit = true;
+    autoUpdater.on('error', (error) => {
+      console.error('[update] 检查失败:', telemetry.redact(error.message));
+      telemetry.captureException(error, { feature: 'auto-update' });
+    });
+    autoUpdater.on('update-available', (info) => console.log(`[update] 发现新版本 ${info.version}`));
+    autoUpdater.on('update-not-available', () => console.log('[update] 当前已是最新版本'));
+    setTimeout(() => autoUpdater.checkForUpdates().catch(() => {}), 15_000).unref();
+  } catch (error) {
+    console.error('[update] 初始化失败:', telemetry.redact(error.message));
+  }
 }
 
+function createProductSplash() {
+  splash = new BrowserWindow({
+    width: 480,
+    height: 360,
+    frame: false,
+    resizable: false,
+    backgroundColor: '#101827',
+    show: true,
+    center: true,
+    webPreferences: {
+      contextIsolation: true,
+      nodeIntegration: false,
+      sandbox: true,
+      webSecurity: true,
+    },
+  });
+  const html = `<!doctype html><html><head><meta charset="utf-8"><meta http-equiv="Content-Security-Policy" content="default-src 'none'; style-src 'unsafe-inline'"><style>
+    *{box-sizing:border-box}body{margin:0;height:100vh;display:grid;place-items:center;background:radial-gradient(circle at 50% 30%,#243761,#101827 65%);color:#f8fafc;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif}.wrap{text-align:center}.mark{width:112px;height:86px;margin:0 auto 26px;border:3px solid #72e4ff;border-radius:18px;padding:12px;display:grid;grid-template-columns:repeat(3,1fr);gap:8px;box-shadow:0 0 50px #3c82f655}.mark i{border-radius:6px;background:linear-gradient(145deg,#72e4ff,#8b5cf6);animation:pulse 1.4s ease-in-out infinite alternate}.mark i:nth-child(2),.mark i:nth-child(4){animation-delay:.25s}.mark i:nth-child(3),.mark i:nth-child(5){animation-delay:.5s}h1{font-size:27px;letter-spacing:2px;margin:0}.sub{margin-top:10px;color:#a8b5cc;font-size:13px}.bar{margin:24px auto 0;width:230px;height:5px;background:#ffffff18;border-radius:5px;overflow:hidden}.bar::after{content:'';display:block;width:42%;height:100%;background:linear-gradient(90deg,#72e4ff,#8b5cf6);animation:load 1.35s ease-in-out infinite}@keyframes pulse{to{opacity:.4;transform:scale(.88)}}@keyframes load{from{transform:translateX(-110%)}to{transform:translateX(350%)}}</style></head><body><main class="wrap"><div class="mark" aria-hidden="true"><i></i><i></i><i></i><i></i><i></i><i></i></div><h1>${PRODUCT_NAME}</h1><div class="sub">正在恢复创作空间与媒体任务…</div><div class="bar"></div></main></body></html>`;
+  splash.loadURL(`data:text/html;charset=utf-8,${encodeURIComponent(html)}`);
+}
+
+let splash = null;
 // ---- 退出清理：杀掉后端子进程 ----
 function cleanup() {
   // 标记主动退出：阻止 backendProc.on('exit') 里的崩溃自动重启逻辑
@@ -322,14 +519,32 @@ if (!gotLock) {
   });
 
   app.whenReady().then(async () => {
+    session.defaultSession.setPermissionRequestHandler((_webContents, _permission, callback) => callback(false));
+    session.defaultSession.setPermissionCheckHandler(() => false);
     // 初始菜单（中文）；前端加载后会通过 IPC 同步真实语言
     buildMenu(currentLocale);
+    const isTrustedSender = (event) => {
+      try {
+        const source = new URL(event.senderFrame?.url || '');
+        return source.protocol === 'http:' && source.hostname === '127.0.0.1' && Number(source.port) === PORT;
+      } catch { return false; }
+    };
     // 监听前端语言切换：重建菜单使其与界面语言一致
-    ipcMain.on('app:set-locale', (_e, locale) => {
+    ipcMain.on('app:set-locale', (event, locale) => {
+      if (!isTrustedSender(event)) return;
       currentLocale = locale === 'en' ? 'en' : 'zh';
       buildMenu(currentLocale);
     });
-    createSplash();
+    ipcMain.handle('dialog:select-export-directory', async (event) => {
+      if (!isTrustedSender(event)) throw new Error('非法 IPC 来源');
+      const result = await dialog.showOpenDialog(mainWindow, {
+        title: currentLocale === 'en' ? 'Choose export folder' : '选择视频导出位置',
+        properties: ['openDirectory', 'createDirectory'],
+      });
+      if (result.canceled || result.filePaths.length !== 1) return null;
+      return path.resolve(result.filePaths[0]);
+    });
+    createProductSplash();
     // 先探测空闲端口（3000 被占就顺延），再用最终端口拉起后端 + 加载窗口，三者一致
     try {
       const free = await findFreePort(PORT);
@@ -345,15 +560,13 @@ if (!gotLock) {
     // 打开后端日志文件（追加模式）：记录后端 stdout/stderr 与崩溃/重启事件
     try {
       logStream = fs.createWriteStream(backendLogPath, { flags: 'a' });
-      logStream.write(`\n[${new Date().toISOString()}] ===== 史努比大王 启动，PORT=${PORT} =====\n`);
+      logStream.write(`\n[${new Date().toISOString()}] ===== ${PRODUCT_NAME} 启动，PORT=${PORT} =====\n`);
     } catch (e) {
       console.error('[main] 无法打开后端日志文件:', e.message);
     }
     startBackend();
-    waitForBackend(() => {
-      createWindow();
-      if (splash) { splash.close(); splash = null; }
-    });
+    // IPC 是主要就绪信号；HTTP 健康检查作为子进程消息丢失时的兜底。
+    waitForBackend(handleBackendReady);
 
     app.on('activate', () => {
       if (BrowserWindow.getAllWindows().length === 0 && backendReady) createWindow();

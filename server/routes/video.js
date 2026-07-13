@@ -1,21 +1,26 @@
 const express = require('express');
 const router = express.Router();
-const { spawn, exec } = require('child_process');
 const path = require('path');
 const fs = require('fs');
-const os = require('os');
 const { getDb } = require('../db');
 const subtitleService = require('../services/subtitle');
 const taskManager = require('../services/taskManager');
 const { resolveUploadPath } = require('../utils/fileCleanup');
 const { probeDuration } = require('../utils/mediaProbe');
 const config = require('../services/config');
-const { resolveFfmpegPath } = require('../utils/ffmpeg');
 const assetNaming = require('../services/assetNaming');
 const timelineService = require('../services/timeline');
-
-// FFmpeg 路径（用户配置 → ffmpeg-static → 系统 PATH）
-const FFMPEG = resolveFfmpegPath(config.get('ffmpegPath')).path;
+const {
+  exportLocationInfo,
+  preflightExternalExportDirectory,
+  copyExportToExternal,
+} = require('../services/exportStorage');
+const {
+  ffmpeg,
+  setEncodePreset,
+  timeoutForSeconds,
+  withFfmpegTimeout,
+} = require('../services/ffmpegRunner');
 
 // ============ 并发锁：同一时间只允许一个合成任务 ============
 let composeLock = false;
@@ -38,215 +43,6 @@ function releaseComposeLock() {
     next();
   } else {
     composeLock = false;
-  }
-}
-
-function expandUserPath(input) {
-  const raw = String(input || '').trim();
-  if (!raw) return '';
-  if (raw === '~') return os.homedir();
-  if (raw.startsWith('~/') || raw.startsWith('~\\')) return path.join(os.homedir(), raw.slice(2));
-  return raw;
-}
-
-function exportLibraryDirectory() {
-  return path.resolve(config.get('uploadDir'), 'videos');
-}
-
-function configuredExternalExportDirectory() {
-  const saved = String(config.get('export.defaultDirectory') || '').trim();
-  return saved ? path.resolve(expandUserPath(saved)) : '';
-}
-
-function ensureWritableDirectory(dir, { create = true } = {}) {
-  const target = path.resolve(expandUserPath(dir));
-  if (!target) throw new Error('导出目录不能为空');
-  if (!fs.existsSync(target)) {
-    if (!create) throw new Error(`目录不存在: ${target}`);
-    fs.mkdirSync(target, { recursive: true });
-  }
-  const st = fs.statSync(target);
-  if (!st.isDirectory()) throw new Error(`不是文件夹: ${target}`);
-  const probe = path.join(target, `.aigc_export_write_test_${Date.now()}`);
-  fs.writeFileSync(probe, 'ok');
-  fs.unlinkSync(probe);
-  return target;
-}
-
-function exportLocationInfo() {
-  const libraryDirectory = exportLibraryDirectory();
-  const defaultDirectory = configuredExternalExportDirectory();
-  return {
-    library_directory: libraryDirectory,
-    library_url_rule: '/uploads/videos/...',
-    default_directory: defaultDirectory,
-    has_custom_default: !!defaultDirectory,
-  };
-}
-
-function requestedExternalExportDirectory(options = {}) {
-  if (options.skipExternalExportCopy === true || options.skip_external_export_copy === true) return '';
-  const explicit = String(options.exportDirectory || options.export_directory || '').trim();
-  if (explicit) return path.resolve(expandUserPath(explicit));
-  return configuredExternalExportDirectory();
-}
-
-function preflightExternalExportDirectory(options = {}) {
-  const requested = requestedExternalExportDirectory(options);
-  if (!requested) return null;
-  const target = ensureWritableDirectory(requested, { create: true });
-  if (options.setAsDefaultExportDirectory === true || options.set_as_default_export_directory === true) {
-    config.set('export.defaultDirectory', target);
-  }
-  return target;
-}
-
-function copyExportToExternal({ exportId, fileUrl, options = {} }) {
-  const libraryDirectory = exportLibraryDirectory();
-  const sourceAbs = resolveUploadPath(fileUrl);
-  const result = {
-    library_directory: libraryDirectory,
-    library_file_path: sourceAbs || '',
-    external_directory: '',
-    external_file_path: '',
-    external_copy_status: 'skipped',
-    export_directory_source: 'library',
-    saved_as_default_export_directory: false,
-  };
-  const requested = requestedExternalExportDirectory(options);
-  if (!requested) return result;
-
-  try {
-    const targetDir = ensureWritableDirectory(requested, { create: true });
-    result.external_directory = targetDir;
-    if (options.setAsDefaultExportDirectory === true || options.set_as_default_export_directory === true) {
-      config.set('export.defaultDirectory', targetDir);
-      result.saved_as_default_export_directory = true;
-    }
-    if (!sourceAbs || !fs.existsSync(sourceAbs)) throw new Error('成片文件不存在，无法复制到自定义目录');
-    const targetPath = path.join(targetDir, path.basename(sourceAbs));
-    fs.copyFileSync(sourceAbs, targetPath);
-    result.external_directory = targetDir;
-    result.external_file_path = targetPath;
-    result.external_copy_status = 'success';
-    result.export_directory_source = String(options.exportDirectory || options.export_directory || '').trim() ? 'custom' : 'default';
-    try {
-      getDb().prepare('UPDATE exports SET external_file_path=?, external_directory=?, external_copy_status=? WHERE id=?')
-        .run(targetPath, targetDir, 'success', exportId);
-    } catch {}
-  } catch (e) {
-    result.external_copy_status = 'error';
-    result.external_copy_error = e.message;
-    result.external_directory = result.external_directory || requested;
-    try {
-      getDb().prepare('UPDATE exports SET external_directory=?, external_copy_status=? WHERE id=?')
-        .run(requested, 'error', exportId);
-    } catch {}
-  }
-  return result;
-}
-
-// 跟踪活跃子进程，进程退出时清理
-const activeProcesses = new Set();
-
-/**
- * Windows 下强制杀进程树
- */
-function killProcessTree(pid) {
-  try {
-    exec(`taskkill /F /T /PID ${pid}`, { windowsHide: true });
-  } catch {}
-}
-
-/**
- * 安全的 FFmpeg/FFprobe 执行器
- * - spawn 流式读 stderr，不会 buffer 爆炸
- * - 超时后强制 kill 整个进程树（Windows 兼容）
- * - 返回 { stdout, stderr }
- */
-function spawnAsync(cmd, args, options = {}) {
-  const timeout = options.timeout || 300000; // 默认 5 分钟
-
-  return new Promise((resolve, reject) => {
-    const child = spawn(cmd, args, {
-      windowsHide: true,
-      stdio: ['ignore', 'pipe', 'pipe'],
-    });
-
-    activeProcesses.add(child);
-
-    let stdout = '';
-    let stderr = '';
-    let killed = false;
-    let stderrLines = []; // 只保留最后 50 行，防止内存爆
-
-    child.stdout.on('data', (chunk) => { stdout += chunk.toString(); });
-    child.stderr.on('data', (chunk) => {
-      const text = chunk.toString();
-      stderrLines.push(text);
-      // 只保留最后 50 段，防止长时间编码输出吃内存
-      if (stderrLines.length > 50) stderrLines.shift();
-    });
-
-    // 超时强制 kill
-    const timer = setTimeout(() => {
-      killed = true;
-      killProcessTree(child.pid);
-      reject(new Error(`FFmpeg 超时 (${timeout / 1000}s)，已强制终止`));
-    }, timeout);
-
-    child.on('close', (code) => {
-      clearTimeout(timer);
-      activeProcesses.delete(child);
-      if (killed) return; // 已经 reject 过了
-      stderr = stderrLines.join('');
-      if (code !== 0) {
-        // 只取 stderr 最后 500 字符作为错误信息，避免巨长
-        const errMsg = stderr.slice(-500).trim() || `exit code ${code}`;
-        reject(new Error(errMsg));
-      } else {
-        resolve({ stdout, stderr });
-      }
-    });
-
-    child.on('error', (err) => {
-      clearTimeout(timer);
-      activeProcesses.delete(child);
-      if (!killed) reject(err);
-    });
-  });
-}
-
-/**
- * 执行 ffmpeg 命令（接受参数数组）
- * 预览模式下可注入 x264 -preset ultrafast 加速（__encodePreset 由 composeVideo 临时设置）。
- */
-let __encodePreset = null; // null=默认（不注入），'ultrafast' 等=预览加速
-let __ffmpegTimeout = 300000;
-function ffmpeg(...args) {
-  let finalArgs = args;
-  if (__encodePreset && args.length >= 2) {
-    // 在输出路径（末位）前插入 -preset；-c copy 的命令 ffmpeg 会忽略 preset（仅告警，无害）
-    finalArgs = [...args.slice(0, -1), '-preset', __encodePreset, args[args.length - 1]];
-  }
-  return spawnAsync(FFMPEG, finalArgs, { timeout: __ffmpegTimeout || 300000 });
-}
-
-function timeoutForSeconds(seconds, stage = 'encode') {
-  const sec = Math.max(1, Number(seconds) || 60);
-  const multipliers = { segment: 45, chapter: 24, final: 12, encode: 30 };
-  const minMs = stage === 'final' ? 600000 : 300000;
-  const maxMs = stage === 'final' ? 6 * 60 * 60 * 1000 : 2 * 60 * 60 * 1000;
-  return Math.max(minMs, Math.min(maxMs, Math.round(sec * (multipliers[stage] || 30) * 1000)));
-}
-
-async function withFfmpegTimeout(ms, fn) {
-  const prev = __ffmpegTimeout;
-  __ffmpegTimeout = ms;
-  try {
-    return await fn();
-  } finally {
-    __ffmpegTimeout = prev;
   }
 }
 
@@ -1281,7 +1077,7 @@ async function composeLongVideo(project_id, valid, options = {}, onProgress = ()
   const t2vTarget = resolveT2vTarget(longOptions, false);
   const groups = buildLongVideoGroups(valid, originalTimeline, Number(options.chapterDurationSec) || 300);
   const chapterVideos = [];
-  __encodePreset = null;
+  setEncodePreset(null);
 
   try {
     for (let i = 0; i < groups.length; i++) {
@@ -1414,7 +1210,7 @@ async function composeLongVideo(project_id, valid, options = {}, onProgress = ()
     if (fs.existsSync(speedVideo)) try { fs.unlinkSync(speedVideo); } catch {}
     throw err;
   } finally {
-    __encodePreset = null;
+    setEncodePreset(null);
   }
 }
 
@@ -1430,7 +1226,7 @@ async function composeVideo(project_id, valid, options = {}, onProgress = () => 
   const finalOutput = path.join(outputDir, `${isPreview ? 'preview' : 'project'}_${project_id}_${timestamp}.mp4`);
   const tempVideo = path.join(tempDir, `temp_${project_id}_${timestamp}.mp4`);
   const speedVideo = path.join(tempDir, `speed_${project_id}_${timestamp}.mp4`);
-  __encodePreset = isPreview ? 'ultrafast' : null;
+  setEncodePreset(isPreview ? 'ultrafast' : null);
   const videoSpeed = clampVideoSpeed(options.videoSpeed || options.video_speed || 1);
   const originalTimeline = await timelineService.buildProjectTimeline(project_id, { storyboards: valid, videoSpeed: 1 });
   const outputTimeline = await timelineService.buildProjectTimeline(project_id, { storyboards: valid, videoSpeed });
@@ -1508,7 +1304,7 @@ async function composeVideo(project_id, valid, options = {}, onProgress = () => 
 
     // 预览模式：不落成片库 exports，直接返回临时预览文件 url（前端就地播放，不进「我的作品」）。
     if (isPreview) {
-      __encodePreset = null;
+      setEncodePreset(null);
       return {
         preview: true,
         file_path: relPath,
@@ -1558,7 +1354,7 @@ async function composeVideo(project_id, valid, options = {}, onProgress = () => 
     };
   } catch (err) {
     // 合成失败时也要清理临时文件，防止磁盘泄漏
-    __encodePreset = null;
+    setEncodePreset(null);
     cleanupSegments(segments);
     if (fs.existsSync(tempVideo)) try { fs.unlinkSync(tempVideo); } catch {}
     if (fs.existsSync(speedVideo)) try { fs.unlinkSync(speedVideo); } catch {}
@@ -1691,13 +1487,6 @@ router.get('/transitions', (req, res) => {
     ],
     message: 'success',
   });
-});
-
-// 进程退出时杀掉所有活跃的 ffmpeg 子进程
-process.on('exit', () => {
-  for (const child of activeProcesses) {
-    try { killProcessTree(child.pid); } catch {}
-  }
 });
 
 // 导出 router（保持原有挂载方式不变），并附带高层合成函数供流水线复用

@@ -1,6 +1,6 @@
 /**
  * 后端字节码编译脚本（打包专用，不改动 server/ 源码目录）
- * 用法（必须用 Electron 内置 node v20 执行，jsc 版本绑定）：
+ * 用法（必须用目标 Electron 内置 Node 执行，jsc 版本与运行时绑定）：
  *   ELECTRON_RUN_AS_NODE=1 ./node_modules/.bin/electron scripts/compile-backend.js
  *
  * 产物：dist-server-jsc/  —— server 的字节码版本，供 electron-builder 打包
@@ -9,7 +9,7 @@
  *   2. 业务 .js 全部编译成 .jsc 并删除源 .js（无扩展名 require 自动解析到 .jsc）
  *   3. 入口 app.js 特殊处理：编成 app.jsc + 生成明文 app.js bootstrap
  *      （顶部 require('bytenode') 注册加载器，再 require('./app.jsc')）
- *   4. node_modules 原样保留（依赖不编译）
+ *   4. 依赖原样复制到 vendor/（避免打包器对额外资源中 node_modules 的默认排除）
  */
 const fs = require('fs');
 const path = require('path');
@@ -42,7 +42,7 @@ function copyDir(src, dst) {
 // 递归收集所有 .js 文件（OUT 内，含 node_modules 之外）
 function collectJs(dir, acc) {
   for (const e of fs.readdirSync(dir, { withFileTypes: true })) {
-    if (e.isDirectory() && e.name === 'node_modules') continue;
+    if (e.isDirectory() && (e.name === 'node_modules' || e.name === 'vendor')) continue;
     const p = path.join(dir, e.name);
     if (e.isDirectory()) collectJs(p, acc);
     else if (e.name.endsWith('.js')) acc.push(p);
@@ -54,11 +54,12 @@ function main() {
   // 1. 清理 + 复制
   if (fs.existsSync(OUT)) fs.rmSync(OUT, { recursive: true, force: true });
   copyDir(SRC, OUT);
-  // node_modules 必须带上（依赖不编译）——单独复制
+  // 依赖必须带上（依赖不编译）。electron-builder 会默认过滤
+  // extraResources 中名为 node_modules 的目录，因此改用 vendor/ 并由桌面主进程注入 NODE_PATH。
   const nmSrc = path.join(SRC, 'node_modules');
   if (fs.existsSync(nmSrc)) {
-    console.log('[compile] 复制 node_modules（依赖不编译）...');
-    copyDirRaw(nmSrc, path.join(OUT, 'node_modules'));
+    console.log('[compile] 复制后端运行时依赖到 vendor/...');
+    copyDirRaw(nmSrc, path.join(OUT, 'vendor'));
   }
 
   // 2. 编译所有业务 .js -> .jsc，删除源 .js
@@ -74,7 +75,7 @@ function main() {
       // 入口：生成明文 bootstrap
       if (rel === ENTRY) {
         fs.writeFileSync(fp,
-          "require('bytenode');\nmodule.exports = require('./app.jsc');\n", 'utf-8');
+          "require('./vendor/bytenode');\nmodule.exports = require('./app.jsc');\n", 'utf-8');
         entryHandled = true;
       }
     } catch (e) {
@@ -82,8 +83,8 @@ function main() {
       process.exit(1);
     }
   }
-  // bytenode 必须在产物 node_modules 里可被入口 require
-  const hasBytenode = fs.existsSync(path.join(OUT, 'node_modules', 'bytenode'));
+  // bytenode 必须在产物 vendor 里可被入口 bootstrap 直接加载。
+  const hasBytenode = fs.existsSync(path.join(OUT, 'vendor', 'bytenode'));
   console.log(`[compile] 完成：编译 ${compiled} 个 .js -> .jsc`);
   console.log(`[compile] 入口 bootstrap 已生成: ${entryHandled}`);
   console.log(`[compile] bytenode 依赖就位: ${hasBytenode}`);

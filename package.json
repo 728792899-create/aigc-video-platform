@@ -1,7 +1,7 @@
 {
-  "name": "snoopy-king",
+  "name": "aigc-video-studio",
   "version": "1.0.3",
-  "description": "史努比大王 - AIGC 辅助的短视频创意生成与制作平台（桌面版）",
+  "description": "AIGC 视频工作台 - 本地优先、可恢复的桌面视频创作应用",
   "author": "王从天降",
   "license": "MIT",
   "main": "electron/main.js",
@@ -9,25 +9,32 @@
     "install:all": "npm install && npm --prefix server install && npm --prefix client install",
     "dev": "node scripts/dev.mjs",
     "demo": "node scripts/dev.mjs --demo",
-    "test:smoke": "node scripts/run-smoke.mjs",
+    "test:smoke": "node scripts/run-smoke.mjs && node scripts/demo-acceptance.mjs",
+    "test:demo": "node scripts/demo-acceptance.mjs",
     "build:client": "cd client && npm run build",
     "check:server": "npm --prefix server run preflight && npm run test:smoke",
     "check:client": "npm --prefix client test && npm --prefix client run build",
-    "security:audit": "npm --prefix server audit --omit=dev && npm --prefix client audit --omit=dev",
-    "security:audit:all": "npm --prefix server audit && npm --prefix client audit",
+    "security:audit": "npm audit --omit=dev && npm --prefix server audit --omit=dev && npm --prefix client audit --omit=dev",
+    "security:audit:all": "npm audit && npm --prefix server audit && npm --prefix client audit",
     "quality": "npm run check:server && npm run check:client",
     "electron:dev": "electron .",
-    "pack": "npm run build:client && electron-builder --dir",
-    "dist": "npm run build:client && electron-builder",
+    "prepare:desktop": "node scripts/prepare-desktop.mjs",
+    "electron:preflight": "node scripts/electron-preflight.mjs",
+    "pack": "npm run prepare:desktop && npm run electron:preflight && node scripts/package-preflight.mjs",
+    "dist": "npm run prepare:desktop && npm run electron:preflight && electron-builder",
     "build:secure": "bash scripts/secure-build.sh"
   },
   "build": {
-    "appId": "com.wanyan.snoopyking",
-    "productName": "史努比大王",
-    "asar": false,
+    "appId": "com.aigcvideo.studio",
+    "productName": "AIGC 视频工作台",
+    "artifactName": "AIGC-Video-Studio-${version}-${os}-${arch}.${ext}",
+    "asar": true,
+    "asarUnpack": [
+      "node_modules/ffmpeg-static/**/*"
+    ],
     "directories": {
       "output": "dist-electron",
-      "buildResources": "build"
+      "buildResources": "resources"
     },
     "files": [
       "electron/**/*",
@@ -55,8 +62,36 @@
       }
     ],
     "win": {
-      "target": [{ "target": "nsis", "arch": ["x64"] }],
-      "icon": "build/icon.ico"
+      "icon": "resources/icon.ico",
+      "target": [
+        {
+          "target": "nsis",
+          "arch": [
+            "x64"
+          ]
+        }
+      ],
+      "requestedExecutionLevel": "asInvoker"
+    },
+    "mac": {
+      "icon": "resources/icon.icns",
+      "target": [
+        { "target": "dmg", "arch": ["x64", "arm64"] },
+        { "target": "zip", "arch": ["x64", "arm64"] }
+      ],
+      "category": "public.app-category.video",
+      "hardenedRuntime": true,
+      "gatekeeperAssess": false,
+      "entitlements": "resources/entitlements.mac.plist",
+      "entitlementsInherit": "resources/entitlements.mac.plist"
+    },
+    "afterSign": "scripts/notarize.js",
+    "afterPack": "scripts/after-pack.js",
+    "publish": {
+      "provider": "github",
+      "owner": "728792899-create",
+      "repo": "aigc-video-platform",
+      "releaseType": "draft"
     },
     "nsis": {
       "oneClick": false,
@@ -64,16 +99,20 @@
       "allowToChangeInstallationDirectory": true,
       "createDesktopShortcut": true,
       "createStartMenuShortcut": true,
-      "shortcutName": "史努比大王"
+      "shortcutName": "AIGC 视频工作台",
+      "deleteAppDataOnUninstall": false
     }
   },
   "devDependencies": {
+    "@electron/notarize": "3.1.1",
     "bytenode": "^1.5.7",
-    "electron": "^33.2.0",
-    "electron-builder": "^25.1.8",
+    "electron": "43.1.0",
+    "electron-builder": "26.15.3",
     "javascript-obfuscator": "^5.4.3"
   },
   "dependencies": {
+    "@sentry/electron": "7.15.0",
+    "electron-updater": "6.8.9",
     "ffmpeg-static": "5.3.0"
   }
 }

@@ -279,7 +279,7 @@ async function generate({
 
   // DEMO_MODE 固定使用本地占位图，不访问任何真实图源或消耗额度。
   if (['1', 'true'].includes(String(process.env.DEMO_MODE || '').toLowerCase())) {
-    const demoResult = await buildPlaceholderResult(ratio);
+    const demoResult = await buildPlaceholderResult(ratio, { demo: true });
     if (onProgress) onProgress(1, 1);
     return {
       prompt,
@@ -288,8 +288,8 @@ async function generate({
       provider: 'demo',
       downgraded: false,
       is_placeholder: true,
-      attempts: [{ model: 'DEMO 本地占位图', ok: false }],
-      notice: 'DEMO_MODE 使用本地占位图，不调用真实生图模型。',
+      attempts: [{ model: 'DEMO 本地占位图', ok: true }],
+      notice: 'Demo Mode 已在本机生成原创占位画面，未调用任何付费模型。',
       reference_mode: referenceImages?.length ? 'text-anchor-seed-fallback' : 'text-anchor',
       reference_images: referenceImages || [],
       submit_id: demoResult.submit_id,
@@ -373,8 +373,8 @@ function friendlyReason(msg) {
  * 占位图兜底：生成一张占位图并组装成与 provider 一致的结果结构。
  * 占位图也失败时抛错（此时确实无法兜底）。
  */
-async function buildPlaceholderResult(ratio) {
-  const ph = await placeholder.generatePlaceholder(ratio);
+async function buildPlaceholderResult(ratio, options = {}) {
+  const ph = await placeholder.generatePlaceholder(ratio, options);
   if (!ph) throw new Error('图片生成失败，且占位图兜底也失败（ffmpeg 不可用？）');
   return {
     submit_id: `placeholder_${Date.now()}`,

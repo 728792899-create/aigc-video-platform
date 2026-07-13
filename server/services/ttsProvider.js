@@ -30,16 +30,18 @@ function isDemoMode() {
   return process.env.DEMO_MODE === '1' || process.env.DEMO_MODE === 'true';
 }
 
-function generateSilentDemoTts(storyboardId) {
+function generateSilentDemoTts(storyboardId, text = '', speed = 1) {
   if (!fs.existsSync(UPLOAD_DIR)) fs.mkdirSync(UPLOAD_DIR, { recursive: true });
   const filename = `demo_tts_${storyboardId || uuidv4()}_${Date.now()}.mp3`;
   const outputPath = path.join(UPLOAD_DIR, filename);
   const ffmpeg = resolveFfmpegPath(config.get('ffmpegPath')).path;
+  const charCount = String(text || '').replace(/\s+/g, '').length;
+  const duration = Math.max(2.5, Math.min(8, (charCount / 4 + 0.5) / Math.max(0.5, Number(speed) || 1)));
   const result = spawnSync(ffmpeg, [
     '-y',
     '-f', 'lavfi',
     '-i', 'anullsrc=channel_layout=mono:sample_rate=24000',
-    '-t', '1.2',
+    '-t', duration.toFixed(2),
     '-q:a', '9',
     '-acodec', 'libmp3lame',
     outputPath,
@@ -118,15 +120,13 @@ function generateMacosDemoTts(text, voice, speed, storyboardId) {
 }
 
 async function generateDemoTts(text, voice, speed, pitch, storyboardId, ttsOpts) {
+  // Demo 必须可离线复现：不能先尝试 Edge 的公网语音端点。
+  if (process.env.DEMO_SILENT_TTS === '1') return generateSilentDemoTts(storyboardId, text, speed);
   try {
-    return await edge.generateTTS(text, voice, speed, pitch, storyboardId, ttsOpts);
-  } catch (edgeErr) {
-    try {
-      return generateMacosDemoTts(text, voice, speed, storyboardId);
-    } catch (macErr) {
-      console.warn('[ttsProvider] demo TTS fell back to silent placeholder:', `${edgeErr.message}; ${macErr.message}`);
-      return generateSilentDemoTts(storyboardId);
-    }
+    return generateMacosDemoTts(text, voice, speed, storyboardId);
+  } catch (localError) {
+    console.warn('[ttsProvider] demo TTS 使用本地静音占位:', localError.message);
+    return generateSilentDemoTts(storyboardId, text, speed);
   }
 }
 
@@ -205,7 +205,7 @@ async function genVolcanoTts(cred, model, text, voice, storyboardId, { emotion =
   const voiceType = mapVolcanoVoice(voice, model);
   const body = {
     app: { appid: cred.appId, token: cred.apiKey, cluster: cred.cluster || 'volcano_tts' },
-    user: { uid: 'snoopy-king' },
+    user: { uid: 'aigc-video-studio' },
     audio: {
       voice_type: voiceType,
       encoding: 'mp3',
@@ -273,7 +273,7 @@ async function genVolcanoTtsV3(cred, model, text, voice, storyboardId, { speed =
   const resourceId = cred.resourceId || 'volc.service_type.10029';
   const speaker = mapVolcanoVoiceV3(voice, model);
   const body = {
-    user: { uid: 'snoopy-king' },
+    user: { uid: 'aigc-video-studio' },
     req_params: {
       text,
       speaker,

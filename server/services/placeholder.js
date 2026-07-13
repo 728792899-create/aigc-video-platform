@@ -43,7 +43,7 @@ function ffmpegFontPath(p) {
  * @param {string} ratio 画面比例
  * @returns {Promise<{local_path,file_url,filename}|null>}
  */
-function generatePlaceholder(ratio = '16:9') {
+function generatePlaceholder(ratio = '16:9', options = {}) {
   return new Promise((resolve) => {
     const [w, h] = RATIO_TO_SIZE[ratio] || [1280, 720];
     const filename = `placeholder_${uuidv4()}.png`;
@@ -52,8 +52,12 @@ function generatePlaceholder(ratio = '16:9') {
     const cjkFont = resolveCjkFont();
     // 有中文字体 → 中文提示；否则退化英文（ffmpeg 内置字体仅 ASCII，中文会乱码）
     const fontExpr = cjkFont ? `fontfile='${ffmpegFontPath(cjkFont)}':` : '';
-    const line1 = cjkFont ? '图片暂未生成' : 'Image not generated';
-    const line2 = cjkFont ? '请检查网络后重新生成' : 'check network and retry';
+    const line1 = options.demo
+      ? (cjkFont ? 'Demo 本地占位画面' : 'Demo local placeholder')
+      : (cjkFont ? '图片暂未生成' : 'Image not generated');
+    const line2 = options.demo
+      ? (cjkFont ? '未调用任何付费模型' : 'No paid model request')
+      : (cjkFont ? '请检查网络后重新生成' : 'check network and retry');
 
     const vf = `drawtext=${fontExpr}text='${line1}':` +
       `fontcolor=white:fontsize=${Math.round(w / 22)}:` +
@@ -63,7 +67,7 @@ function generatePlaceholder(ratio = '16:9') {
       `x=(w-text_w)/2:y=(h-text_h)/2+${Math.round(h / 28)}`;
     const args = [
       '-y', '-f', 'lavfi',
-      '-i', `color=c=0x2b2b3d:s=${w}x${h}`,
+      '-i', `color=c=${options.demo ? '0x152449' : '0x2b2b3d'}:s=${w}x${h}`,
       '-vf', vf,
       '-frames:v', '1', filePath,
     ];

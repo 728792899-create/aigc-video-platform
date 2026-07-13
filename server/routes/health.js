@@ -18,6 +18,7 @@ const { getDb } = require('../db');
 const registry = require('../services/providers');
 const usage = require('../services/usage');
 const { resolveFfmpegPath } = require('../utils/ffmpeg');
+const credentialStore = require('../services/credentialStore');
 
 // 执行命令拿首行输出，带超时（用于 ffmpeg -version 探测）
 function probeCommand(cmd, args, timeoutMs = 4000) {
@@ -106,7 +107,7 @@ function checkDatabase() {
 }
 
 function checkDeepseek() {
-  const key = config.get('deepseek.apiKey');
+  const key = registry.hasCredentials('deepseek');
   const baseUrl = config.get('deepseek.baseUrl');
   if (!key) {
     return { key: 'deepseek', label: 'AI 文案 (DeepSeek)', status: 'warn',
@@ -155,7 +156,7 @@ function checkProviders() {
       if (!configured && routedStage) { status = 'warn'; msg = `当前阶段「${routedStage[0]}」指向但未配密钥`; }
       else if (!configured) { status = 'ok'; msg = '未配置（未使用）'; }
       if (RANK[status] > RANK[worst]) worst = status;
-      const lastError = u && u.last_error ? u.last_error.slice(0, 120) : '';
+      const lastError = u && u.last_error ? credentialStore.redact(u.last_error).slice(0, 120) : '';
       items.push({
         key: p.key, label: p.label, kind, kindLabel: KIND_LABEL[kind] || kind,
         configured, userConfigured, free: !!p.free, status, message: msg,
@@ -170,7 +171,7 @@ function checkProviders() {
   items.push({
     key: 'edge', label: 'Edge TTS（本地·免费）', kind: 'tts', kindLabel: '配音',
     configured: true, free: true, status: 'ok', message: '本地引擎，默认配音',
-    last_error: edgeU && edgeU.last_error ? edgeU.last_error.slice(0, 120) : '',
+    last_error: edgeU && edgeU.last_error ? credentialStore.redact(edgeU.last_error).slice(0, 120) : '',
     last_error_at: edgeU && edgeU.last_error ? edgeU.last_at : 0,
     usage: edgeU ? { ok: edgeU.ok, fail: edgeU.fail, success_rate: edgeU.success_rate, last_ms: edgeU.last_ms } : null,
   });

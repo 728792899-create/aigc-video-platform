@@ -1,7 +1,7 @@
 <template>
   <div class="images-page">
     <div class="left-panel">
-      <h3 class="panel-title">Storyboards</h3>
+      <h3 class="panel-title">分镜列表</h3>
       <el-select v-if="chapterOptions.length > 1" v-model="selectedChapter" class="chapter-filter" size="small">
         <el-option v-for="chapter in chapterOptions" :key="chapter.value" :label="chapter.label" :value="chapter.value" />
       </el-select>
@@ -13,7 +13,7 @@
           :class="{ active: selectedStoryboard?.id === sb.id }"
           @click="selectStoryboard(sb)"
         >
-          <div class="scene-number">Scene {{ index + 1 }}</div>
+          <div class="scene-number">镜头 {{ index + 1 }}</div>
           <div class="thumbnail">
             <img v-if="sb.selected_image_url" :src="sb.selected_image_url" alt="thumbnail" />
             <el-icon v-else :size="32"><Picture /></el-icon>
@@ -36,7 +36,7 @@
       <h3 class="panel-title">{{ selectedStoryboard.description }}</h3>
 
       <div class="prompt-section">
-        <label class="section-label">Image Generation Prompt</label>
+        <label class="section-label">画面生成提示词</label>
         <div v-if="selectedStoryboardCharacters.length" class="character-strip">
           <el-tag v-for="c in selectedStoryboardCharacters" :key="c.id" size="small" :type="c.locked ? 'success' : 'warning'">
             {{ c.name }} · {{ c.locked ? $t('script.locked') : $t('script.unlocked') }} · {{ c.assets?.length || 0 }} {{ $t('script.references') }}
@@ -50,7 +50,7 @@
         />
         <div class="prompt-actions">
           <el-button type="primary" @click="copyPrompt">
-            <el-icon><CopyDocument /></el-icon> Copy Prompt
+            <el-icon><CopyDocument /></el-icon> 复制提示词
           </el-button>
           <el-button type="warning" @click="rebuildPrompt">
             <el-icon><MagicStick /></el-icon> {{ $t('images.autoGenPrompt') }}
@@ -147,7 +147,7 @@
       </div>
 
       <div class="gallery-section">
-        <label class="section-label">Image Gallery</label>
+        <label class="section-label">画面素材</label>
         <div class="image-gallery" v-if="images.length">
           <div
             v-for="img in images"
@@ -181,7 +181,7 @@
             </div>
           </div>
         </div>
-        <el-empty v-else description="No images uploaded yet" />
+        <el-empty v-else description="还没有画面素材，可使用 Demo 本地占位画面或生成新图片" />
       </div>
 
       <ProjectStageFooter

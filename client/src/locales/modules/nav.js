@@ -1,7 +1,7 @@
 // 侧边栏导航 + 应用品牌
 export default {
   zh: {
-    brand: '史努比大王',
+    brand: 'AIGC 视频工作台',
     dashboard: '创作工作台',
     projects: '项目管理',
     currentProject: '当前项目',
@@ -20,7 +20,7 @@ export default {
     toDark: '切换到深色',
   },
   en: {
-    brand: '史努比大王',
+    brand: 'AIGC Video Studio',
     dashboard: 'Workspace',
     projects: 'Projects',
     currentProject: 'Current Project',

@@ -1,5 +1,5 @@
 // settings 页面文案
-export default {
+const messages = {
   zh: {
     title: '系统设置',
     tabGeneral: '常规',
@@ -146,16 +146,14 @@ export default {
     feedbackWechat: '反馈微信号',
     copyWechat: '复制微信号',
     iKnow: '我知道了',
-    agreementText: '《史努比大王 用户协议》\n\n一、关于本软件\n本软件（史努比大王）是一款 AIGC 辅助的短视频创意生成与制作工具，作为毕业设计作品提供，供学习与创作使用。\n\n二、使用许可\n您可在遵守相关法律法规的前提下，使用本软件进行短视频创意脚本、配图、配音与合成。请勿将本软件用于任何违法、侵权或违背公序良俗的用途。\n\n三、内容责任\n您使用本软件生成的全部内容由您自行负责。请确保您对输入的素材、主题及生成结果拥有合法权利，不得侵犯他人著作权、肖像权、名誉权等合法权益。\n\n四、第三方服务\n本软件的文案、配图、配音等功能依赖第三方 AI 服务（如 DeepSeek、Pollinations、Edge TTS 等），其可用性与生成质量受第三方服务影响，本软件不对其稳定性作出保证。\n\n五、免责声明\n本软件按“现状”提供，作者不对因使用本软件导致的任何直接或间接损失承担责任。\n\n六、协议更新\n本协议可能随版本更新而调整，继续使用即视为接受更新后的协议。',
-    privacyText: '《史努比大王 隐私政策》\n\n一、信息收集\n本软件为本地桌面应用，您的项目数据、分镜、图片、音频等均保存在您本机的数据目录中，本软件不会主动上传或收集您的个人隐私信息。\n\n二、API 密钥\n您在设置中填写的各项 AI 服务密钥仅保存在本机配置文件（settings.json）中，仅用于在您发起生成请求时调用对应服务，不会被发送至作者或任何第三方服务器。\n\n三、网络请求\n使用文案、配图、配音、视频合成等功能时，软件会将您输入的相关文本/参数发送至您所配置的第三方 AI 服务以完成生成。这些请求受对应服务商的隐私政策约束。\n\n四、数据安全\n请妥善保管您的数据目录与备份文件；导出配置时可选择对密钥脱敏，避免泄露。\n\n五、联系方式\n如对隐私有任何疑问，可通过设置中的“意见反馈”联系开发者。',
     backupMigration: '备份与迁移',
     fullBackup: '整体备份',
     fullBackupDesc: '打包数据库 + 配置为单个 .aigcbak 文件，换机/重装一键迁移',
     exportBackup: '导出备份',
     restoreBackup: '还原备份',
     configOnly: '仅配置',
-    configOnlyDesc: '只导出/导入设置项（密钥默认包含，可勾选脱敏）',
-    maskKeys: '导出时脱敏密钥',
+    configOnlyDesc: '只导出/导入非敏感设置；系统凭证库中的密钥永不进入导出文件',
+    maskKeys: '不包含密钥',
     exportConfig: '导出配置',
     importConfig: '导入配置',
     restoreWarn: '⚠️ 还原备份会覆盖当前全部数据，操作前建议先导出一份当前备份。',
@@ -330,16 +328,14 @@ export default {
     feedbackWechat: 'WeChat',
     copyWechat: 'Copy WeChat',
     iKnow: 'Got it',
-    agreementText: 'Snoopy King - User Agreement\n\n1. About\nThis software (Snoopy King) is an AIGC-assisted short-video creation tool, provided as a graduation project for learning and creative use.\n\n2. License\nYou may use this software to create short-video scripts, images, voiceovers and compositions in compliance with applicable laws. Do not use it for any illegal, infringing, or unethical purposes.\n\n3. Content Responsibility\nYou are solely responsible for all content you generate. Ensure you hold the lawful rights to the materials, topics and outputs, and do not infringe the copyright, portrait, or reputation rights of others.\n\n4. Third-party Services\nCopywriting, image and voice features rely on third-party AI services (DeepSeek, Pollinations, Edge TTS, etc.). Their availability and quality are subject to those providers; no guarantee is made.\n\n5. Disclaimer\nThe software is provided as is. The author is not liable for any direct or indirect loss arising from its use.\n\n6. Updates\nThis agreement may change with version updates. Continued use constitutes acceptance.',
-    privacyText: 'Snoopy King - Privacy Policy\n\n1. Data Collection\nThis is a local desktop app. Your projects, storyboards, images and audio are stored in your local data directory. The app does not actively upload or collect your personal data.\n\n2. API Keys\nThe AI service keys you enter in Settings are stored only in the local config file (settings.json) and are used solely to call the corresponding services when you request generation. They are never sent to the author or any third-party server.\n\n3. Network Requests\nWhen using copywriting, image, voice or video features, the app sends your input text/parameters to the third-party AI services you configured. These requests are governed by the privacy policies of those providers.\n\n4. Data Security\nKeep your data directory and backups safe; you may mask keys when exporting config to avoid leaks.\n\n5. Contact\nFor privacy questions, contact the developer via Feedback in Settings.',
     backupMigration: 'Backup & Migration',
     fullBackup: 'Full Backup',
     fullBackupDesc: 'Pack database + config into a single .aigcbak file for one-click migration when changing machines or reinstalling',
     exportBackup: 'Export Backup',
     restoreBackup: 'Restore Backup',
     configOnly: 'Config Only',
-    configOnlyDesc: 'Export/import settings only (keys included by default, can be masked)',
-    maskKeys: 'Mask keys on export',
+    configOnlyDesc: 'Export/import non-sensitive settings only; keys in the system credential vault are never exported',
+    maskKeys: 'Keys excluded',
     exportConfig: 'Export Config',
     importConfig: 'Import Config',
     restoreWarn: 'Restoring a backup overwrites all current data. Export a current backup first.',
@@ -376,3 +372,10 @@ export default {
     importFailed: 'Import failed: {msg}',
   },
 }
+
+messages.zh.agreementText = '《AIGC 视频工作台用户协议》\n\n本软件按 MIT 许可提供，用于合法的视频创作。您应确保输入素材、音乐、字体、肖像及生成结果具备适当授权，并遵守所选第三方 Provider 的条款。软件按“现状”提供，不承诺第三方服务持续可用。'
+messages.zh.privacyText = '《AIGC 视频工作台隐私说明》\n\n项目、媒体资产和数据库默认保存在本机。桌面版 API 密钥通过操作系统安全存储加密保存，不写入 settings.json、日志、前端响应、配置导出或备份。仅当您主动使用第三方 Provider 时，相关提示词和素材才会发送给该服务商；Demo Mode 不发送付费模型请求。可选 Sentry 仅在配置 SENTRY_DSN 后启用，默认关闭且不发送个人身份信息。'
+messages.en.agreementText = 'AIGC Video Studio Terms\n\nThis software is provided under the MIT License for lawful video creation. You must hold appropriate rights to input media, music, fonts, likenesses, and outputs, and comply with each selected provider’s terms. The software is provided as is and third-party availability is not guaranteed.'
+messages.en.privacyText = 'AIGC Video Studio Privacy Notice\n\nProjects, media, and the database stay local by default. Desktop API keys are encrypted by the operating system credential store and are excluded from settings.json, logs, frontend responses, config exports, and backups. Prompts or media are sent only when you actively use a third-party provider. Demo Mode makes no paid-model request. Optional Sentry monitoring is disabled unless SENTRY_DSN is configured and does not send personal identity information by default.'
+
+export default messages

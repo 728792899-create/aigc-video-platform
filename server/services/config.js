@@ -95,6 +95,13 @@ function load() {
   try {
     if (fs.existsSync(SETTINGS_FILE)) {
       userConfig = JSON.parse(fs.readFileSync(SETTINGS_FILE, 'utf-8')) || {};
+      const credentialStore = require('./credentialStore');
+      const migrated = credentialStore.extractFromConfig(userConfig);
+      if (migrated.extracted.length) {
+        userConfig = migrated.clean;
+        persist();
+        console.warn(`[config] 已将 ${migrated.extracted.length} 组旧版明文凭证迁移出 settings.json`);
+      }
     }
   } catch (e) {
     console.error('[config] 读取 settings.json 失败，使用默认值:', e.message);
@@ -127,6 +134,11 @@ function runMigrations() {
 
 function persist() {
   try {
+    // 最后一道防线：任何调用方即使误把密钥传给 config，也先迁移到运行时凭证库，
+    // settings.json 永远只落非敏感设置。
+    const credentialStore = require('./credentialStore');
+    const extracted = credentialStore.extractFromConfig(userConfig);
+    userConfig = extracted.clean;
     const dir = path.dirname(SETTINGS_FILE);
     if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true });
     // 原子写：先写临时文件再 rename

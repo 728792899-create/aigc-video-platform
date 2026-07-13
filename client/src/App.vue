@@ -12,22 +12,12 @@
       <el-aside v-if="showSidebar" width="220px" class="sidebar" :class="{ 'is-open': sidebarOpen }">
         <div class="logo">
           <svg class="logo-mark" viewBox="0 0 64 64" xmlns="http://www.w3.org/2000/svg" aria-label="logo">
-            <!-- 左垂耳 -->
-            <path d="M22 22 C9 19 5 35 10 47 C15 48 21 39 24 29 Z" fill="currentColor"/>
-            <!-- 右垂耳 -->
-            <path d="M42 22 C55 19 59 35 54 47 C49 48 43 39 40 29 Z" fill="currentColor"/>
-            <!-- 头部 -->
-            <ellipse cx="32" cy="30" rx="15.5" ry="14" fill="var(--bg-surface)" stroke="currentColor" stroke-width="2.4"/>
-            <!-- 口鼻部 -->
-            <ellipse cx="32" cy="38" rx="8.5" ry="6.8" fill="var(--bg-surface)" stroke="currentColor" stroke-width="2"/>
-            <!-- 鼻子 -->
-            <ellipse cx="32" cy="34.5" rx="3.6" ry="2.9" fill="currentColor"/>
-            <!-- 眼睛 -->
-            <circle cx="26.5" cy="26" r="1.7" fill="currentColor"/>
-            <circle cx="37.5" cy="26" r="1.7" fill="currentColor"/>
-            <!-- 嘴 -->
-            <path d="M32 37.2 C32 41.5 28.5 43 26 41.8 M32 37.2 C32 41.5 35.5 43 38 41.8"
-                  fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/>
+            <rect x="7" y="12" width="50" height="40" rx="9" fill="none" stroke="currentColor" stroke-width="3"/>
+            <rect x="14" y="20" width="9" height="9" rx="2" fill="currentColor" opacity=".65"/>
+            <rect x="27.5" y="20" width="9" height="9" rx="2" fill="currentColor"/>
+            <rect x="41" y="20" width="9" height="9" rx="2" fill="currentColor" opacity=".65"/>
+            <rect x="14" y="35" width="9" height="9" rx="2" fill="currentColor"/>
+            <path d="M31 34 L42 40 L31 46 Z" fill="var(--bg-surface)" stroke="currentColor" stroke-width="2" stroke-linejoin="round"/>
           </svg>
           <span>{{ $t('nav.brand') }}</span>
           <button class="theme-toggle" :title="theme === 'dark' ? $t('nav.toLight') : $t('nav.toDark')" @click="toggle">

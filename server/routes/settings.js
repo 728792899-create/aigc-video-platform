@@ -15,6 +15,8 @@ const os = require('os');
 const { execFile } = require('child_process');
 const { getDb, exportRaw, restoreRaw } = require('../db');
 const opLog = require('../services/opLog');
+const credentialStore = require('../services/credentialStore');
+const safeError = (error) => credentialStore.redact(error?.message || error || '未知错误');
 
 // 文案 API 预设档（前端下拉选择自动填 baseUrl）
 const DEEPSEEK_PRESETS = [
@@ -24,7 +26,7 @@ const DEEPSEEK_PRESETS = [
 ];
 
 function maskedSettingsWithRuntime() {
-  return { ...config.getAllMasked(), _runtime: { settingsFile: config.SETTINGS_FILE } };
+  return { ...credentialStore.applyMasked(config.getAllMasked()), _runtime: { settingsFile: config.SETTINGS_FILE } };
 }
 
 function expandUserPath(input) {
@@ -54,7 +56,9 @@ router.get('/runtime', (req, res) => {
 // 注意：值为脱敏占位（以 **** 开头）的字段会被忽略，避免把脱敏串写回覆盖真实密钥
 router.post('/', (req, res) => {
   const patch = req.body || {};
-  const cleaned = stripMaskedSecrets(config.stripMasked(patch));
+  const credentialStore = require('../services/credentialStore');
+  const extracted = credentialStore.extractFromConfig(stripMaskedSecrets(config.stripMasked(patch)));
+  const cleaned = extracted.clean;
   config.setMany(cleaned);
   // 哪些改动需要重启才能完全生效（已落盘文件路径相关）
   const needRestart = 'uploadDir' in cleaned;
@@ -88,6 +92,7 @@ router.post('/keys/clear', (req, res) => {
   const registry = require('../services/providers');
   const def = registry.getProvider(provider);
   if (!def) return res.status(400).json({ code: 400, data: null, message: `未知 provider：${provider}` });
+  const credentialStore = require('../services/credentialStore');
   const existing = config.get(`credentials.${provider}`) || {};
   const next = { ...existing };
   if (def.auth === 'access_secret') {
@@ -96,8 +101,8 @@ router.post('/keys/clear', (req, res) => {
   } else {
     next.apiKey = '';
   }
+  credentialStore.clear(provider);
   config.setMany({ credentials: { [provider]: next } });
-  if (provider === 'deepseek') config.setMany({ deepseek: { apiKey: '' } });
   opLog.log('settings.key.clear', 'provider', provider, null);
   res.json({
     code: 200,
@@ -135,8 +140,9 @@ router.post('/test-api', async (req, res) => {
   try {
     if (type === 'deepseek') {
       // 优先用请求体里临时传入的配置测（还没保存时也能测），否则用已保存的
+      const credentialStore = require('../services/credentialStore');
       const apiKey = req.body.apiKey && !req.body.apiKey.startsWith('****')
-        ? req.body.apiKey : config.get('deepseek.apiKey');
+        ? req.body.apiKey : credentialStore.get('deepseek').apiKey || config.get('deepseek.apiKey');
       const baseUrl = req.body.baseUrl || config.get('deepseek.baseUrl');
       const model = req.body.model || config.get('deepseek.model');
       if (!apiKey) {
@@ -157,7 +163,10 @@ router.post('/test-api', async (req, res) => {
         return res.json({ code: 200, data: { ok: true, latency, message: `连接成功 (${latency}ms)` } });
       }
       const txt = await r.text();
-      return res.json({ code: 200, data: { ok: false, latency, message: `HTTP ${r.status}: ${txt.slice(0, 120)}` } });
+      return res.json({
+        code: 200,
+        data: { ok: false, latency, message: require('../services/credentialStore').redact(`HTTP ${r.status}: ${txt.slice(0, 120)}`) },
+      });
     }
 
     if (type === 'pollinations') {
@@ -176,7 +185,7 @@ router.post('/test-api', async (req, res) => {
     return res.status(400).json({ code: 400, message: '未知的测试类型' });
   } catch (e) {
     const latency = Date.now() - started;
-    const msg = e.name === 'TimeoutError' || /abort/i.test(e.message) ? '连接超时' : e.message;
+    const msg = e.name === 'TimeoutError' || /abort/i.test(e.message) ? '连接超时' : safeError(e);
     return res.json({ code: 200, data: { ok: false, latency, message: msg } });
   }
 });
@@ -200,7 +209,7 @@ router.post('/check-dir', (req, res) => {
     fs.accessSync(target, fs.constants.W_OK);
     return res.json({ code: 200, data: { ok: true, exists: true, path: target, message: '目录可用' } });
   } catch (e) {
-    return res.json({ code: 200, data: { ok: false, message: `不可用: ${e.message}` } });
+    return res.json({ code: 200, data: { ok: false, message: `不可用: ${safeError(e)}` } });
   }
 });
 
@@ -248,7 +257,7 @@ router.post('/pick-dir', async (req, res) => {
     res.status(canceled ? 400 : 500).json({
       code: canceled ? 400 : 500,
       data: null,
-      message: canceled ? '已取消选择目录' : `选择目录失败: ${e.message}`,
+      message: canceled ? '已取消选择目录' : `选择目录失败: ${safeError(e)}`,
     });
   }
 });
@@ -293,21 +302,21 @@ router.post('/clean-temp', (req, res) => {
     }
     res.json({ code: 200, data: { removed }, message: `已清理 ${removed} 个临时文件` });
   } catch (e) {
-    res.status(500).json({ code: 500, message: e.message });
+    res.status(500).json({ code: 500, message: safeError(e) });
   }
 });
 
 // ============ F8 配置导入导出 / 备份还原 ============
 
-// 导出配置：返回 settings.json 内容。?mask=true 时密钥脱敏（默认不脱敏，方便换机迁移）
+// 导出配置永远脱敏。系统凭证库中的密钥不属于可导出配置。
 router.get('/export-config', (req, res) => {
   try {
-    const masked = String(req.query.mask) === 'true';
-    const data = masked ? config.getAllMasked() : config.getAll();
-    opLog.log('settings.update', 'config', null, { action: 'export', masked });
-    res.json({ code: 200, data: { version: 1, exportedAt: Date.now(), config: data }, message: 'success' });
+    const data = maskedSettingsWithRuntime();
+    delete data._runtime;
+    opLog.log('settings.update', 'config', null, { action: 'export', masked: true });
+    res.json({ code: 200, data: { version: 2, exportedAt: Date.now(), secretsIncluded: false, config: data }, message: 'success' });
   } catch (e) {
-    res.status(500).json({ code: 500, message: e.message });
+    res.status(500).json({ code: 500, message: safeError(e) });
   }
 });
 
@@ -318,12 +327,13 @@ router.post('/import-config', (req, res) => {
     if (!incoming || typeof incoming !== 'object') {
       return res.status(400).json({ code: 400, message: '无效的配置数据' });
     }
-    const clean = stripMasked(incoming);
-    config.setMany(clean);
-    opLog.log('settings.import', 'config', null, { keys: Object.keys(clean) });
+    const credentialStore = require('../services/credentialStore');
+    const extracted = credentialStore.extractFromConfig(stripMasked(incoming));
+    config.setMany(extracted.clean);
+    opLog.log('settings.import', 'config', null, { keys: Object.keys(extracted.clean), credentialsMigrated: extracted.extracted });
     res.json({ code: 200, data: config.getAllMasked(), message: '配置已导入' });
   } catch (e) {
-    res.status(500).json({ code: 500, message: e.message });
+    res.status(500).json({ code: 500, message: safeError(e) });
   }
 });
 
@@ -335,13 +345,14 @@ router.get('/backup', (req, res) => {
       magic: 'AIGC_BACKUP',
       version: 1,
       createdAt: Date.now(),
-      config: config.getAll(),
+      config: config.getAllMasked(),
+      secretsIncluded: false,
       db: dbBuf.toString('base64'),
     };
     opLog.log('settings.update', 'backup', null, { action: 'backup', dbBytes: dbBuf.length });
     res.json({ code: 200, data: envelope, message: 'success' });
   } catch (e) {
-    res.status(500).json({ code: 500, message: e.message });
+    res.status(500).json({ code: 500, message: safeError(e) });
   }
 });
 
@@ -357,12 +368,14 @@ router.post('/restore', (req, res) => {
     const dbBuf = Buffer.from(env.db, 'base64');
     restoreRaw(dbBuf); // 内含完整性校验，失败会抛错
     if (env.config && typeof env.config === 'object') {
-      config.setMany(stripMasked(env.config));
+      const credentialStore = require('../services/credentialStore');
+      const extracted = credentialStore.extractFromConfig(stripMasked(env.config));
+      config.setMany(extracted.clean);
     }
     opLog.log('backup.restore', 'backup', null, { dbBytes: dbBuf.length });
     res.json({ code: 200, data: null, message: '备份已还原，数据库已热加载' });
   } catch (e) {
-    res.status(500).json({ code: 500, message: '还原失败：' + e.message });
+    res.status(500).json({ code: 500, message: '还原失败：' + safeError(e) });
   }
 });
 

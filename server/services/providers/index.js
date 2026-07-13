@@ -127,6 +127,7 @@ const PROVIDERS = {
 };
 
 const config = require('../config');
+const credentialStore = require('../credentialStore');
 let builtinCreds = null;
 try { builtinCreds = require('../builtinCreds'); } catch (_) { builtinCreds = null; }
 
@@ -153,12 +154,12 @@ function resolveCredentials(name) {
   // credentialFrom：云端 T2I/T2V 复用对应 LLM 平台的密钥（如 CogView 用 zhipu 的 Key）。
   // baseUrl 仍以本 provider 自己的为准（图像接口域名/路径可能不同）。
   const credKey = def.credentialFrom || name;
-  const cred = config.get(`credentials.${credKey}`) || {};
+  const cred = { ...(config.get(`credentials.${credKey}`) || {}), ...credentialStore.get(credKey) };
   // 向后兼容：deepseek 仍读旧的 deepseek.apiKey / deepseek.baseUrl
   let apiKey = cred.apiKey;
   let baseUrl = cred.baseUrl;
   if (credKey === 'deepseek') {
-    apiKey = apiKey || config.get('deepseek.apiKey');
+    apiKey = apiKey || credentialStore.get('deepseek').apiKey || config.get('deepseek.apiKey');
     baseUrl = baseUrl || config.get('deepseek.baseUrl');
     // 可选的本地/答辩环境兜底：默认关闭，且凭证只能来自运行环境变量，绝不随包硬编码。
     if ((!apiKey || !apiKey.trim()) && builtinCreds) {
@@ -212,12 +213,12 @@ function hasUserCredentials(name) {
   const def = PROVIDERS[name];
   if (!def) return false;
   const credKey = def.credentialFrom || name;
-  const cred = config.getUser(`credentials.${credKey}`) || {};
+  const cred = { ...(config.getUser(`credentials.${credKey}`) || {}), ...credentialStore.get(credKey) };
   let apiKey = cred.apiKey;
   let accessKey = cred.accessKey;
   let secretKey = cred.secretKey;
   let appId = cred.appId;
-  if (credKey === 'deepseek') apiKey = apiKey || config.getUser('deepseek.apiKey');
+  if (credKey === 'deepseek') apiKey = apiKey || credentialStore.get('deepseek').apiKey || config.getUser('deepseek.apiKey');
   if (def.protocol === 'volcano-tts' || def.protocol === 'volcano-tts-v3') return Boolean(apiKey && appId);
   return Boolean(apiKey || (accessKey && secretKey));
 }

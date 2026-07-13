@@ -574,6 +574,14 @@ test('Provider 列表：GET /api/providers 按 kind 分组（llm/t2i/t2v/tts）'
   assert.ok(body.data.llm.some((p) => p.key === 'deepseek'), 'llm 分组应含 deepseek');
 });
 
+test('Demo Mode：积分探测不启动外部 Dreamina CLI', async () => {
+  const { status, body } = await req('GET', '/api/ai/dreamina-credit');
+  assert.equal(status, 200);
+  assert.equal(body.data.demo_mode, true);
+  assert.equal(body.data.available, false);
+  assert.match(body.message, /不探测外部 CLI/);
+});
+
 test('Provider 健康：GET /api/providers/health 返回启动自检快照与配置文件路径', async () => {
   const { status, body } = await req('GET', '/api/providers/health');
   assert.strictEqual(status, 200);

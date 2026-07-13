@@ -8,6 +8,7 @@
 const express = require('express');
 const router = express.Router();
 const taskManager = require('../services/taskManager');
+const { STAGES } = require('../services/workflowStateMachine');
 
 const TERMINAL_STATUSES = new Set(['success', 'failed', 'interrupted', 'partial', 'canceled']);
 
@@ -117,6 +118,7 @@ router.post('/:id/retry-failed', (req, res) => {
     payload,
     target_storyboard_ids: failedIds,
     target_count: failedIds.length,
+    recovery: { kind: 'image-batch', attempts: 0, max_attempts: 3 },
   });
   res.json({
     code: 200,
@@ -128,6 +130,47 @@ router.post('/:id/retry-failed', (req, res) => {
       console.error('[image-batch retry] 启动失败:', err);
       try { taskManager.fail(task.id, err); } catch (_) {}
     });
+});
+
+// 单阶段重试：保留此前成功检查点，只把目标阶段及其下游置回待运行。
+router.post('/:id/retry-stage', (req, res) => {
+  const task = taskManager.get(req.params.id);
+  if (!task) return res.status(404).json({ code: 404, message: '任务不存在' });
+  if (task.type !== 'auto-produce' || !task.meta?.workflow) {
+    return res.status(400).json({ code: 400, message: '当前任务不支持阶段级重试' });
+  }
+  const stage = String(req.body?.stage || task.meta.workflow.current_stage || '');
+  if (!STAGES.includes(stage)) return res.status(400).json({ code: 400, message: '未知工作流阶段' });
+  try {
+    const workflow = taskManager.transitionStage(task.id, { type: 'RETRY', stage });
+    const nextTask = taskManager.update(task.id, {
+      status: 'waiting',
+      progress: Math.max(1, Number(task.progress) || 1),
+      message: `准备重试阶段：${stage}`,
+      error: null,
+      result: null,
+      meta: {
+        ...(task.meta || {}),
+        workflow,
+        cancel_requested: false,
+        recovery: { ...(task.meta.recovery || {}), kind: 'auto-produce' },
+      },
+    });
+    const queue = require('../services/autoProduceQueue');
+    const aiRouter = require('./ai');
+    const queued = queue.enqueue(nextTask, () => aiRouter.runAutoProduceTask(
+      nextTask.id,
+      Number(nextTask.meta.project_id),
+      nextTask.meta.params || {},
+    ));
+    return res.json({
+      code: 200,
+      data: { task_id: nextTask.id, stage, workflow, queue: queued },
+      message: queued.status === 'waiting' ? '阶段重试已排队' : '阶段重试已开始',
+    });
+  } catch (error) {
+    return res.status(409).json({ code: 409, message: error.message });
+  }
 });
 
 // 单任务查询

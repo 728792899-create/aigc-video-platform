@@ -53,7 +53,7 @@ app.use(cors({
   },
   credentials: true,
 }));
-app.use(morgan('dev'));
+if (process.env.LOG_HTTP !== '0') app.use(morgan('dev'));
 app.use(securityHeaders);
 // 请求关联 ID：为每个请求生成/透传 X-Request-Id，写入响应头并挂到 req 上，
 // 便于错误日志与前端排障关联（约束文档 §10：API 必须有请求 ID/日志关联 ID）。
@@ -129,6 +129,7 @@ if (clientDist && fs.existsSync(clientDist)) {
 
 // 全局错误处理
 app.use((err, req, res, next) => {
+  const safeErrorMessage = require('./services/credentialStore').redact(err.message || '服务器内部错误');
   // 客户端错误（畸形 JSON、请求体过大、CORS 拒绝等）属于预期输入问题，
   // 只记一行简讯，不打完整堆栈，避免污染错误日志、掩盖真正的服务端 bug。
   const isClientError =
@@ -138,15 +139,15 @@ app.use((err, req, res, next) => {
     /^CORS/.test(err.message || '');            // CORS 拒绝
   const status = err.status || err.statusCode || (isClientError ? 400 : 500);
   if (isClientError) {
-    console.warn(`[client-error ${status}] [rid:${req.requestId}] ${req.method} ${req.originalUrl}: ${err.message}`);
+    console.warn(`[client-error ${status}] [rid:${req.requestId}] ${req.method} ${req.originalUrl}: ${safeErrorMessage}`);
   } else {
-    console.error(`[rid:${req.requestId}]`, err.stack);
+    console.error(`[rid:${req.requestId}]`, require('./services/credentialStore').redact(err.stack || safeErrorMessage));
   }
   if (res.headersSent) return next(err);
   res.status(status).json({
     code: status,
     data: null,
-    message: err.message || '服务器内部错误',
+    message: safeErrorMessage,
     requestId: req.requestId,
   });
 });
@@ -154,9 +155,33 @@ app.use((err, req, res, next) => {
 // 启动服务器（先初始化数据库）
 async function start() {
   await initDb();
-  // DB 就绪后恢复历史任务（pending/running 已在 initDb 中标记为 interrupted）
+  // DB 就绪后先载入历史，再按任务类型重建 runner。恢复是幂等的：流水线会读取
+  // workflow 检查点并跳过已完成阶段，批量生图会跳过已有资产。
   try {
-    require('./services/taskManager').loadFromDb();
+    const taskManager = require('./services/taskManager');
+    taskManager.loadFromDb();
+    const { recoverTasks } = require('./services/taskRecovery');
+    const aiRouter = require('./routes/ai');
+    const queue = require('./services/autoProduceQueue');
+    const workbench = require('./services/workbench');
+    recoverTasks({
+      taskManager,
+      awaitRunners: false,
+      runners: {
+        'auto-produce': (task) => queue.enqueue(task, () => aiRouter.runAutoProduceTask(
+          task.id,
+          Number(task.meta?.project_id),
+          task.meta?.params || {},
+        )),
+        'image-batch': (task) => workbench.runProjectImageBatch(
+          task.id,
+          Number(task.meta?.project_id),
+          task.meta?.payload || {},
+        ),
+      },
+    }).then((summary) => {
+      if (summary.scanned) console.log(`[startup] 任务恢复：${JSON.stringify(summary)}`);
+    }).catch((error) => console.error('[startup] 自动恢复任务失败:', error.message));
   } catch (e) {
     console.error('[startup] 任务恢复失败:', e.message);
   }
@@ -173,6 +198,11 @@ async function start() {
   }
   const server = app.listen(PORT, HOST, () => {
     console.log(`服务器运行在 http://${HOST}:${PORT}`);
+    // Electron 使用 fork 启动时通过 IPC 确认服务真正已监听。
+    // 比启动期 HTTP 轮询更可靠，同时普通 node app.js 运行不受影响。
+    if (typeof process.send === 'function') {
+      process.send({ type: 'server-ready', port: PORT, host: HOST });
+    }
   });
 
   // 优雅关闭：收到终止信号时停止接收新连接，待现有请求结束再退出，

@@ -286,66 +286,18 @@
 
         <el-divider content-position="left">{{ $t('settings.platformCred') }}</el-divider>
         <div class="cred-box">
-          <div v-for="p in llmProviders" :key="p.key" class="cred-row">
-            <div class="cred-head">
-              <strong>{{ p.label }}</strong>
-              <el-tag v-if="p.userConfigured" type="success" size="small" effect="plain">{{ $t('settings.configured') }}</el-tag>
-              <el-tag v-else-if="p.configured" type="primary" size="small" effect="plain">{{ $t('settings.builtinAvailable') }}</el-tag>
-              <el-tag v-else type="info" size="small" effect="plain">{{ $t('settings.notConfigured') }}</el-tag>
-              <span v-if="p.free" class="free-tag">{{ $t('settings.hasFreeTier') }}</span>
-            </div>
-            <div class="cred-inputs">
-              <el-input v-model="cred[p.key].apiKey" placeholder="API Key" size="small" style="width:240px" show-password />
-              <el-input v-model="cred[p.key].baseUrl" :placeholder="p.baseUrl || 'Base URL'" size="small" style="width:240px" />
-              <el-button size="small" type="primary" @click="doSaveCred(p.key)">{{ $t('settings.save') }}</el-button>
-              <el-button size="small" text type="danger" @click="doClearCred(p.key)">{{ $t('settings.clearSecret') }}</el-button>
-              <el-button size="small" :loading="provTesting[p.key]" @click="doTest(p.key)">{{ $t('settings.test') }}</el-button>
-              <span v-if="provTestResult[p.key]" :class="['test-res', provTestResult[p.key].ok ? 'ok' : 'fail']">
-                {{ provTestResult[p.key].ok ? $t('settings.connected', { ms: provTestResult[p.key].latency_ms }) : provTestResult[p.key].error }}
-              </span>
-            </div>
-          </div>
-          <!-- 火山豆包语音：需 AppID + Access Token + Cluster（独立鉴权，非 OpenAI 兼容） -->
-          <div v-for="p in volcanoTtsProviders" :key="p.key" class="cred-row">
-            <div class="cred-head">
-              <strong>{{ p.label }}</strong>
-              <el-tag v-if="p.userConfigured" type="success" size="small" effect="plain">{{ $t('settings.configured') }}</el-tag>
-              <el-tag v-else-if="p.configured" type="primary" size="small" effect="plain">{{ $t('settings.builtinAvailable') }}</el-tag>
-              <el-tag v-else type="info" size="small" effect="plain">{{ $t('settings.notConfigured') }}</el-tag>
-              <span class="free-tag">{{ $t('settings.volcanoCredHint') }}</span>
-            </div>
-            <div class="cred-inputs">
-              <el-input v-model="cred[p.key].appId" placeholder="AppID" size="small" style="width:160px" />
-              <el-input v-model="cred[p.key].apiKey" placeholder="Access Token" size="small" style="width:240px" show-password />
-              <el-input v-model="cred[p.key].cluster" placeholder="Cluster (默认 volcano_tts)" size="small" style="width:200px" />
-              <el-button size="small" type="primary" @click="doSaveCred(p.key)">{{ $t('settings.save') }}</el-button>
-              <el-button size="small" text type="danger" @click="doClearCred(p.key)">{{ $t('settings.clearSecret') }}</el-button>
-              <el-button size="small" :loading="provTesting[p.key]" @click="doTest(p.key)">{{ $t('settings.test') }}</el-button>
-              <span v-if="provTestResult[p.key]" :class="['test-res', provTestResult[p.key].ok ? 'ok' : 'fail']">
-                {{ provTestResult[p.key].ok ? $t('settings.connected', { ms: provTestResult[p.key].latency_ms }) : provTestResult[p.key].error }}
-              </span>
-            </div>
-          </div>
-          <!-- 可灵视频：需 Access Key + Secret Key（JWT 签名鉴权，非 OpenAI 兼容） -->
-          <div v-for="p in klingProviders" :key="p.key" class="cred-row">
-            <div class="cred-head">
-              <strong>{{ p.label }}</strong>
-              <el-tag v-if="p.userConfigured" type="success" size="small" effect="plain">{{ $t('settings.configured') }}</el-tag>
-              <el-tag v-else-if="p.configured" type="primary" size="small" effect="plain">{{ $t('settings.builtinAvailable') }}</el-tag>
-              <el-tag v-else type="info" size="small" effect="plain">{{ $t('settings.notConfigured') }}</el-tag>
-              <span class="free-tag">{{ $t('settings.klingCredHint') }}</span>
-            </div>
-            <div class="cred-inputs">
-              <el-input v-model="cred[p.key].accessKey" placeholder="Access Key" size="small" style="width:240px" show-password />
-              <el-input v-model="cred[p.key].secretKey" placeholder="Secret Key" size="small" style="width:240px" show-password />
-              <el-button size="small" type="primary" @click="doSaveCred(p.key)">{{ $t('settings.save') }}</el-button>
-              <el-button size="small" text type="danger" @click="doClearCred(p.key)">{{ $t('settings.clearSecret') }}</el-button>
-              <el-button size="small" :loading="provTesting[p.key]" @click="doTest(p.key)">{{ $t('settings.test') }}</el-button>
-              <span v-if="provTestResult[p.key]" :class="['test-res', provTestResult[p.key].ok ? 'ok' : 'fail']">
-                {{ provTestResult[p.key].ok ? $t('settings.connected', { ms: provTestResult[p.key].latency_ms }) : provTestResult[p.key].error }}
-              </span>
-            </div>
-          </div>
+          <ProviderCredentialRow
+            v-for="p in credentialProviders"
+            :key="p.key"
+            :provider="p"
+            :credential="cred[p.key] || {}"
+            :testing="!!provTesting[p.key]"
+            :result="provTestResult[p.key] || null"
+            @update-field="updateCredentialField(p.key, $event)"
+            @save="doSaveCred(p.key)"
+            @clear="doClearCred(p.key)"
+            @test="doTest(p.key)"
+          />
         </div>
       </el-tab-pane>
 
@@ -395,7 +347,7 @@
               <span class="hint">{{ $t('settings.configOnlyDesc') }}</span>
             </div>
             <div class="backup-actions">
-              <el-checkbox v-model="maskOnExport" size="small">{{ $t('settings.maskKeys') }}</el-checkbox>
+              <el-tag size="small" type="success" effect="plain">{{ $t('settings.maskKeys') }}</el-tag>
               <el-button size="small" @click="doExportConfig">{{ $t('settings.exportConfig') }}</el-button>
               <el-button size="small" @click="pickImportConfig">{{ $t('settings.importConfig') }}</el-button>
             </div>
@@ -415,6 +367,7 @@ import { useI18n } from 'vue-i18n'
 import { persistLocale } from '../locales'
 import { CircleCheck, Warning, CircleClose } from '@element-plus/icons-vue'
 import api from '../api'
+import ProviderCredentialRow from '../components/ProviderCredentialRow.vue'
 import {
   getSettings, getPresets, saveDefaults, saveSettings, clearProviderKey, testApi,
   checkDir, getStorageStats, cleanTemp,
@@ -504,6 +457,11 @@ const videoProviders = ref([]) // 视频阶段可选 provider（静图运镜 + �
 const voiceProviders = ref([]) // 配音阶段可选 provider（Edge 本地 + 云端 tts）
 const volcanoTtsProviders = ref([]) // 火山豆包语音（需 AppID+Token+Cluster 独立凭证）
 const klingProviders = ref([]) // 可灵视频（需 Access Key + Secret Key 独立 JWT 鉴权）
+const credentialProviders = computed(() => {
+  const seen = new Set()
+  return [...llmProviders.value, ...volcanoTtsProviders.value, ...klingProviders.value]
+    .filter((provider) => provider?.key && !seen.has(provider.key) && seen.add(provider.key))
+})
 const guideGroups = ref({}) // 选型指南原始分组数据（含 free/note），供分级展示
 const stage = reactive({ script: { provider: 'deepseek', model: '' }, image: { provider: 'pollinations', model: 'flux' }, video: { provider: 'static', model: '' }, voice: { provider: 'edge', model: '' } })
 // 备用生图模型链（v1.6.4）：本地 key（flux/turbo…）或 'provider__model' 云端规格
@@ -547,6 +505,11 @@ const guideKinds = computed(() => {
 const cred = reactive({})
 const provTesting = reactive({})
 const provTestResult = reactive({})
+
+function updateCredentialField(key, { field, value }) {
+  if (!cred[key]) cred[key] = {}
+  cred[key][field] = value
+}
 
 function modelsOf(stageKey) {
   const sel = stage[stageKey]
@@ -949,7 +912,6 @@ function showPrivacy() {
 // ===== F8 备份与迁移 =====
 const backupLoading = ref(false)
 const restoreLoading = ref(false)
-const maskOnExport = ref(false)
 const fileInput = ref(null)
 let pickMode = '' // 'restore' | 'import'
 
@@ -979,7 +941,7 @@ async function doBackup() {
 
 async function doExportConfig() {
   try {
-    const data = await exportConfig(maskOnExport.value)
+    const data = await exportConfig()
     const stamp = new Date().toISOString().slice(0, 10)
     downloadJson(data, `aigc-config-${stamp}.json`)
     ElMessage.success(t('settings.configExported'))
@@ -1031,171 +993,4 @@ async function onFilePicked(e) {
 }
 </script>
 
-<style scoped>
-.settings-page {
-  max-width: 900px;
-}
-.settings-page h1 {
-  margin-bottom: 16px;
-}
-.settings-tabs {
-  background: var(--bg-surface);
-  border: 1px solid var(--separator);
-  border-radius: var(--radius-lg);
-  box-shadow: var(--shadow-sm);
-  padding: 16px 20px;
-}
-.set-form {
-  margin-top: 8px;
-}
-.api-card {
-  background: var(--bg-base);
-  border: 1px solid var(--separator);
-  transition: transform 0.25s var(--ease-spring), box-shadow 0.25s var(--ease-apple);
-}
-.api-card:hover {
-  transform: translateY(-2px);
-  box-shadow: var(--shadow-md);
-}
-.card-title {
-  font-weight: 600;
-  color: var(--primary);
-}
-.api-shortcuts,
-.api-test-results {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 10px;
-  margin-top: 14px;
-}
-.history-error {
-  display: block;
-  margin-top: 4px;
-  color: var(--text-third);
-  font-size: 12px;
-  line-height: 1.45;
-}
-.hint {
-  color: var(--text-second);
-  font-size: 13px;
-}
-.storage-stats .total {
-  margin: 12px 0;
-  font-weight: 600;
-}
-.about-box p {
-  margin: 8px 0;
-  line-height: 1.6;
-}
-.about-info {
-  padding: 4px 0 8px;
-}
-.info-line {
-  display: flex;
-  gap: 16px;
-  margin: 6px 0;
-  font-size: 14px;
-}
-.info-line .info-key {
-  color: var(--text-second);
-  min-width: 100px;
-}
-.info-line .info-val {
-  font-weight: 600;
-}
-.about-actions {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 8px;
-  margin-top: 14px;
-}
-.health-box {
-  padding: 4px 0;
-}
-.first-setup-alert {
-  margin-bottom: 16px;
-}
-.health-head {
-  display: flex;
-  align-items: center;
-  gap: 12px;
-}
-.health-time {
-  color: var(--text-second);
-  font-size: 13px;
-  flex: 1;
-}
-.backup-box {
-  margin-top: 8px;
-}
-.backup-row {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 16px;
-  padding: 12px 0;
-  border-bottom: 1px solid var(--separator);
-}
-.backup-label {
-  display: flex;
-  flex-direction: column;
-  gap: 4px;
-}
-.backup-actions {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-}
-.warn-hint {
-  margin-top: 12px;
-  color: var(--warning);
-  font-size: 13px;
-}
-.stage-row {
-  display: flex;
-  align-items: center;
-  gap: 10px;
-}
-.cred-box {
-  display: flex;
-  flex-direction: column;
-  gap: 14px;
-}
-.cred-row {
-  padding: 10px 0;
-  border-bottom: 1px solid var(--separator);
-}
-.cred-head {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  margin-bottom: 8px;
-}
-.cred-inputs {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  flex-wrap: wrap;
-}
-.free-tag {
-  color: var(--success);
-  font-size: 12px;
-}
-.test-res {
-  font-size: 12px;
-}
-.test-res.ok { color: var(--success); }
-.test-res.fail { color: var(--danger); }
-.guide-block { margin-bottom: 14px; }
-.guide-kind { font-weight: 600; margin-bottom: 6px; font-size: 14px; }
-.guide-item {
-  display: flex;
-  align-items: center;
-  gap: 6px;
-  padding: 5px 0;
-  flex-wrap: wrap;
-  border-bottom: 1px solid var(--el-border-color-lighter, #ebeef5);
-}
-.guide-name { font-weight: 500; min-width: 120px; }
-.guide-note { color: var(--el-text-color-secondary, #909399); font-size: 12px; flex: 1 1 auto; }
-</style>
+<style scoped src="../styles/settings.css"></style>

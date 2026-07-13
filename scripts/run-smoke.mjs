@@ -45,7 +45,7 @@ async function runAllSmoke() {
 
 function runServerSmoke() {
   return new Promise((resolve, reject) => {
-    const child = spawnProcess("npm", ["--prefix", "server", "test"], {
+    const child = spawnProcess("npm", ["--prefix", "server", "run", "test:against-running"], {
       env: {
         BASE_URL: baseUrl,
         UPLOAD_DIR: path.join(tempRoot, "uploads"),

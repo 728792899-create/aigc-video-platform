@@ -17,6 +17,9 @@ const failureAdvisor = require('../services/failureAdvisor');
 const assetNaming = require('../services/assetNaming');
 const continuity = require('../services/continuity');
 const promptCompiler = require('../services/promptCompiler');
+const { createWorkflow } = require('../services/workflowStateMachine');
+const credentialStore = require('../services/credentialStore');
+const safeError = (error) => credentialStore.redact(error?.message || error || '未知错误');
 
 /**
  * 一键成片失败后的项目清理。
@@ -119,6 +122,13 @@ async function runAutoProduceTask(taskId, projectId, produceParams) {
     taskManager.succeed(taskId, result, '🎬 视频已生成');
   } catch (err) {
     console.error('[auto-produce] 失败:', err);
+    try {
+      const workflow = taskManager.get(taskId)?.meta?.workflow;
+      const currentStage = workflow?.current_stage;
+      if (currentStage && workflow?.stages?.[currentStage]?.status === 'running') {
+        taskManager.transitionStage(taskId, { type: 'FAIL', stage: currentStage, error: err.message });
+      }
+    } catch (_) {}
     finishAutoProduceFailure(taskId, projectId, err);
   }
 }
@@ -151,7 +161,7 @@ router.post('/generate-script', validateBody(schemas.generateScript), async (req
     }
     res.json({ code: 200, data: { ...result, _skills: { auto: skill.autoCount, manual: skill.manualCount } }, message: '生成成功' });
   } catch (err) {
-    res.status(500).json({ code: 500, data: null, message: `文案生成失败: ${err.message}` });
+    res.status(500).json({ code: 500, data: null, message: `文案生成失败: ${safeError(err)}` });
   }
 });
 
@@ -180,7 +190,7 @@ router.post('/expand-dialog', async (req, res) => {
     });
     res.json({ code: 200, data: { dialog: expanded }, message: '改写成功' });
   } catch (err) {
-    res.status(500).json({ code: 500, data: null, message: `台词改写失败: ${err.message}` });
+    res.status(500).json({ code: 500, data: null, message: `台词改写失败: ${safeError(err)}` });
   }
 });
 
@@ -197,7 +207,7 @@ router.post('/optimize-theme', validateBody(schemas.optimizeTheme), async (req, 
     const optimized = await optimizeTheme(cleanTheme, { style: style || '', override });
     res.json({ code: 200, data: { theme: optimized, original: cleanTheme }, message: '优化成功' });
   } catch (err) {
-    res.status(500).json({ code: 500, data: null, message: `主题优化失败: ${err.message}` });
+    res.status(500).json({ code: 500, data: null, message: `主题优化失败: ${safeError(err)}` });
   }
 });
 
@@ -240,7 +250,7 @@ router.post('/generate-image', idempotency({ ttlMs: 5 * 60 * 1000 }), validateBo
       return res.status(400).json({
         code: 400,
         data: { code: err.code, advice: err.advice || [] },
-        message: `${err.message}${err.advice?.length ? `：${err.advice.join('；')}` : ''}`,
+        message: `${safeError(err)}${err.advice?.length ? `：${err.advice.join('；')}` : ''}`,
       });
     }
     // ⑦ 创作技能：把「画面阶段必用技能(auto_apply) + 用户手动勾选技能」并入用户提示词，增强画面生成
@@ -372,7 +382,7 @@ router.post('/generate-image', idempotency({ ttlMs: 5 * 60 * 1000 }), validateBo
     });
   } catch (err) {
     console.error('generate-image error:', err);
-    res.status(500).json({ code: 500, data: null, message: `图片生成失败: ${err.message}` });
+    res.status(500).json({ code: 500, data: null, message: `图片生成失败: ${safeError(err)}` });
   }
 });
 
@@ -633,6 +643,10 @@ router.post('/auto-produce', idempotency({ ttlMs: 5 * 60 * 1000 }), validateBody
       scriptSkillIds, imageSkillIds,
       consistencyMode: defaults.consistencyMode,
       workflowMode: defaults.workflowMode,
+      // 仅 DEMO_MODE 下由流水线读取，用于可复现的恢复/重试验收。
+      demoStageDelayMs: req.body.demoStageDelayMs,
+      demoDelayStage: req.body.demoDelayStage,
+      demoFailStageOnce: req.body.demoFailStageOnce,
     };
     const task = taskManager.create('auto-produce', {
       project_id: projectId,
@@ -642,6 +656,15 @@ router.post('/auto-produce', idempotency({ ttlMs: 5 * 60 * 1000 }), validateBody
       showProcess: defaults.showProcess,
       notifyOnComplete: defaults.notifyOnComplete,
       workflow_mode: defaults.workflowMode,
+      workflow: createWorkflow({ projectId, topic: theme.trim() }),
+      recovery: { kind: 'auto-produce', attempts: 0, max_attempts: 3 },
+      demo_mode: ['1', 'true'].includes(String(process.env.DEMO_MODE || '').toLowerCase()),
+      providers: {
+        script: defaults.scriptProvider,
+        image: defaults.model,
+        video: videoProvider || 'static',
+        voice: voiceProvider || 'edge',
+      },
     });
     opLog.log('auto-produce.start', 'project', projectId, { theme: theme.trim().slice(0, 80), task_id: task.id });
 
@@ -659,7 +682,7 @@ router.post('/auto-produce', idempotency({ ttlMs: 5 * 60 * 1000 }), validateBody
     });
   } catch (err) {
     console.error('auto-produce error:', err);
-    res.status(500).json({ code: 500, data: null, message: `一键成片启动失败: ${err.message}` });
+    res.status(500).json({ code: 500, data: null, message: `一键成片启动失败: ${safeError(err)}` });
   }
 });
 
@@ -678,7 +701,12 @@ router.post('/auto-produce/:taskId/retry', async (req, res) => {
 
     // 复用原项目，重新建一个任务（保留参数血缘 retry_of）
     const task = taskManager.create('auto-produce', {
-      project_id: projectId, theme: params.theme, params, retry_of: prev.id,
+      project_id: projectId,
+      theme: params.theme,
+      params,
+      retry_of: prev.id,
+      workflow: createWorkflow({ projectId, topic: params.theme }),
+      recovery: { kind: 'auto-produce', attempts: 0, max_attempts: 3 },
     });
     try { getDb().prepare('UPDATE projects SET status = ? WHERE id = ?').run('generating', projectId); } catch {}
     const queued = autoProduceQueue.enqueue(task, () => runAutoProduceTask(task.id, projectId, params));
@@ -689,18 +717,25 @@ router.post('/auto-produce/:taskId/retry', async (req, res) => {
     });
   } catch (err) {
     console.error('auto-produce retry error:', err);
-    res.status(500).json({ code: 500, data: null, message: `重试启动失败: ${err.message}` });
+    res.status(500).json({ code: 500, data: null, message: `重试启动失败: ${safeError(err)}` });
   }
 });
 
 // 查询积分余额
 router.get('/dreamina-credit', async (req, res) => {
   try {
+    if (['1', 'true'].includes(String(process.env.DEMO_MODE || '').toLowerCase())) {
+      return res.json({
+        code: 200,
+        data: { available: false, demo_mode: true, credit: null },
+        message: 'Demo Mode 不探测外部 CLI，也不产生付费请求',
+      });
+    }
     const dreamina = require('../services/dreamina');
     const result = await dreamina.checkCredit();
     res.json({ code: 200, data: result, message: 'success' });
   } catch (err) {
-    res.status(500).json({ code: 500, data: null, message: err.message });
+    res.status(500).json({ code: 500, data: null, message: safeError(err) });
   }
 });
 
@@ -745,7 +780,7 @@ router.post('/generate-tts', async (req, res) => {
     }
     res.json({ code: 200, data: result, message: '合成成功' });
   } catch (err) {
-    res.status(500).json({ code: 500, data: null, message: `语音合成失败: ${err.message}` });
+    res.status(500).json({ code: 500, data: null, message: `语音合成失败: ${safeError(err)}` });
   }
 });
 
@@ -807,7 +842,7 @@ router.post('/voice-preview', async (req, res) => {
     const result = await ttsProvider.synthesize({ text, voice, speed, pitch, emotion, volume: Number(volume), provider: prov });
     res.json({ code: 200, data: result, message: 'success' });
   } catch (err) {
-    res.status(500).json({ code: 500, data: null, message: `试听失败: ${err.message}` });
+    res.status(500).json({ code: 500, data: null, message: `试听失败: ${safeError(err)}` });
   }
 });
 
@@ -900,8 +935,9 @@ router.post('/podcast/generate', async (req, res) => {
     });
   } catch (err) {
     console.error('[podcast] 生成失败:', err.message);
-    res.status(500).json({ code: 500, data: null, message: `播客生成失败: ${err.message}` });
+    res.status(500).json({ code: 500, data: null, message: `播客生成失败: ${safeError(err)}` });
   }
 });
 
+router.runAutoProduceTask = runAutoProduceTask;
 module.exports = router;

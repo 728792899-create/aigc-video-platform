@@ -70,7 +70,7 @@
     <div class="export-location-box">
       <div class="location-row">
         <span class="location-label">成片库默认位置</span>
-        <code>{{ exportLocation.library_directory || 'uploads/videos' }}</code>
+        <code>{{ displayLocalPath(exportLocation.library_directory) || 'uploads/videos' }}</code>
       </div>
       <p class="field-hint">软件始终会保存一份到成片库，页面和成片库使用 <code>/uploads/videos/...</code> 播放、下载。</p>
 
@@ -94,7 +94,7 @@
           设为以后默认导出副本目录
         </el-checkbox>
         <span v-if="exportLocation.default_directory" class="default-copy">
-          当前默认副本目录：{{ exportLocation.default_directory }}
+          当前默认副本目录：{{ displayLocalPath(exportLocation.default_directory) }}
         </span>
       </div>
 
@@ -125,6 +125,7 @@ import { useI18n } from 'vue-i18n'
 import { ElMessage } from 'element-plus'
 import { InfoFilled } from '@element-plus/icons-vue'
 import { checkDir, pickDir } from '../api/settings'
+import { displayLocalPath } from '../utils/localPath'
 
 const { t } = useI18n()
 

@@ -11,7 +11,7 @@ const http = require('http');
 const { v4: uuidv4 } = require('uuid');
 const config = require('./config');
 
-const DREAMINA_PATH = 'C:\\Users\\Administrator\\bin\\dreamina.exe';
+const DREAMINA_PATH = String(process.env.DREAMINA_CLI_PATH || 'dreamina').trim();
 const UPLOAD_DIR = path.resolve(config.get('uploadDir'), 'images');
 
 // 确保目录存在
@@ -22,15 +22,16 @@ if (!fs.existsSync(UPLOAD_DIR)) fs.mkdirSync(UPLOAD_DIR, { recursive: true });
  */
 function execDreamina(args) {
   return new Promise((resolve, reject) => {
-    console.log('[dreamina] exec args:', JSON.stringify(args));
+    console.log('[dreamina] 执行本机 CLI，参数数量:', args.length);
     execFile(DREAMINA_PATH, args, {
       maxBuffer: 10 * 1024 * 1024,
       timeout: 180000,
     }, (error, stdout, stderr) => {
       if (error) {
         console.error('[dreamina] error:', error.message);
-        console.error('[dreamina] stderr:', stderr);
-        console.error('[dreamina] stdout:', stdout);
+        // stdout/stderr 可能含服务端返回的凭证或签名 URL，只记录脱敏后的摘要。
+        console.error('[dreamina] stderr length:', String(stderr || '').length);
+        console.error('[dreamina] stdout length:', String(stdout || '').length);
         return reject(new Error(`dreamina CLI 失败: ${stderr || stdout || error.message}`));
       }
       console.log('[dreamina] stdout length:', stdout.length);

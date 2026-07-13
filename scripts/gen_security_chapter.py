@@ -1,5 +1,8 @@
 # -*- coding: utf-8 -*-
-"""生成论文章节《软件加密与知识产权保护》DOCX 到桌面。"""
+"""生成论文章节《软件加密与知识产权保护》DOCX。"""
+import os
+import sys
+from pathlib import Path
 from docx import Document
 from docx.shared import Pt, RGBColor, Cm
 from docx.enum.text import WD_ALIGN_PARAGRAPH
@@ -7,7 +10,10 @@ from docx.enum.table import WD_TABLE_ALIGNMENT
 from docx.oxml.ns import qn
 from docx.oxml import OxmlElement
 
-OUT = r"C:\Users\Administrator\Desktop\软件加密与知识产权保护-论文章节.docx"
+OUT = Path(
+    sys.argv[1] if len(sys.argv) > 1
+    else os.environ.get("OUTPUT_DOCX", "软件加密与知识产权保护-论文章节.docx")
+).expanduser().resolve()
 doc = Document()
 
 # 默认正文字体（宋体小四 12pt，1.5倍行距）
@@ -182,18 +188,18 @@ para("在前端构建产物生成后，对其中承载业务逻辑的 JavaScript
      "且混淆会显著增大体积并拖慢运行，故在混淆流程中予以跳过，仅混淆自有业务代码块。")
 
 h("5.5.2  L0 asar 归档加固", 3, 12.5)
-para("将打包配置由 asar: false 修正为 asar: true，使 Electron 主进程代码归入加密的 asar 二进制归档，"
+para("将打包配置由 asar: false 修正为 asar: true，使 Electron 主进程代码归入 asar 二进制归档（归档并非加密），"
      "并由 electron-builder 写入完整性校验信息，启动时校验归档哈希以防篡改。由于 FFmpeg 等需作为外部进程执行的"
      "二进制依赖无法在归档内运行，通过 asarUnpack 配置将其解包至 app.asar.unpacked 目录，"
      "并在主进程中对其路径做相应重定向，保证视频合成功能正常。")
 
 h("5.5.3  L2 后端字节码编译（核心）", 3, 12.5)
-para("这是本方案防护强度最高、技术含量最高的一环。借助 bytenode 工具，将后端 45 个业务 .js 文件逐一编译为 "
+para("这是本方案防护强度最高、技术含量最高的一环。借助 bytenode 工具，将后端业务 .js 文件按当前源码数量逐一编译为 "
      ".jsc（V8 字节码二进制）并删除对应源码，仅保留两行引导代码作为程序入口。编译完成后，原本明文可读的"
      "提示词工程与业务逻辑全部转化为不可直接阅读的二进制字节码。", bold_lead="")
 para("实现中解决了两个关键技术问题：其一，字节码与 V8 引擎版本强绑定，必须使用 Electron 内置的 Node 运行时"
-     "（v20.18.3）进行编译，而非系统 Node（v24），否则运行时加载将崩溃；其二，得益于 bytenode 注册后对无扩展名"
-     "模块引用的自动解析能力，45 个文件的相互引用语句无需任何改写，仅在入口处注册即可，大幅降低了改造成本与风险。")
+     "进行编译，而不能混用不同 V8 版本的系统 Node，否则运行时加载将崩溃；其二，得益于 bytenode 注册后对无扩展名"
+     "模块引用的自动解析能力，业务文件的相互引用语句无需任何改写，仅在入口处注册即可，大幅降低了改造成本与风险。")
 
 h("5.5.4  L4 运行时反调试", 3, 12.5)
 para("在生产环境下禁用一切调试入口：隐藏应用菜单中的开发者工具项，拦截 F12、Ctrl+Shift+I/J/C 等调试快捷键，"
@@ -242,7 +248,7 @@ table(
     [
         ["后端业务逻辑", "明文 .js 可读", "V8 字节码 .jsc，不可读", "安装目录仅余两行引导代码"],
         ["提示词工程", "明文，核心 IP 裸露", "编译进字节码二进制", "核心模块明文消失，仅存 .jsc"],
-        ["Electron 主进程", "明文目录可浏览", "归入 asar 加密归档", "安装目录无明文 app 目录"],
+        ["Electron 主进程", "明文目录可浏览", "归入 asar 归档", "安装目录无明文 app 目录"],
         ["前端业务代码", "压缩但可还原", "混淆为乱码标识符", "关键字符串检索零命中"],
         ["运行时调试", "可开 DevTools", "生产环境全面禁用", "快捷键与菜单均失效"],
         ["业务功能完整性", "—", "完全正常", "实启动核心接口全部正常响应"],
@@ -278,5 +284,5 @@ para("综上，本章针对桌面端应用源码完全暴露的核心风险，�
      "为本平台的知识产权保护提供了切实可行的工程范例。")
 
 print("skeleton ready")
-doc.save(OUT)
+doc.save(str(OUT))
 print("saved", OUT)

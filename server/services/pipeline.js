@@ -63,9 +63,40 @@ async function runAutoProduce(opts, onProgress = () => {}) {
   if (!projectId) throw new Error('缺少 projectId');
 
   const db = getDb();
+  if (opts.taskId) taskManager.ensureWorkflow(opts.taskId, { projectId, topic: theme });
+  const workflowStage = (stage) => taskManager.get(opts.taskId)?.meta?.workflow?.stages?.[stage];
+  const stageDone = (stage) => ['succeeded', 'skipped'].includes(workflowStage(stage)?.status);
+  const stageEvent = (type, stage, extra = {}) => {
+    if (!opts.taskId) return null;
+    return taskManager.transitionStage(opts.taskId, { type, stage, ...extra });
+  };
+  const demoMode = ['1', 'true'].includes(String(process.env.DEMO_MODE || '').toLowerCase());
+  const demoGate = async (stage) => {
+    if (!demoMode || !opts.taskId) return;
+    const delayMs = Math.max(0, Math.min(15_000, Number(opts.demoStageDelayMs) || 0));
+    if (delayMs > 0 && (!opts.demoDelayStage || opts.demoDelayStage === stage)) {
+      onProgress(taskManager.get(opts.taskId)?.progress || 1, `Demo 恢复检查点：${stage}`);
+      await new Promise((resolve) => setTimeout(resolve, delayMs));
+    }
+    if (opts.demoFailStageOnce !== stage) return;
+    const task = taskManager.get(opts.taskId);
+    const failures = { ...(task?.meta?.demo_failures || {}) };
+    if (failures[stage]) return;
+    failures[stage] = { injected_at: Date.now(), count: 1 };
+    taskManager.update(opts.taskId, { meta: { ...(task.meta || {}), demo_failures: failures } });
+    const error = new Error(`DEMO_INJECTED_FAILURE:${stage}`);
+    error.stageHint = stage;
+    throw error;
+  };
 
   // —— 1) 生成分镜脚本 ——
-  onProgress(lerp(STAGE.SCRIPT, 0.1), 'AI 正在构思分镜脚本…');
+  let script = workflowStage('script')?.output?.script || null;
+  if (!script) {
+    stageEvent('START', 'script');
+    onProgress(lerp(STAGE.SCRIPT, 0.1), 'AI 正在构思分镜脚本…');
+  } else {
+    onProgress(STAGE.SCRIPT[1], '已从任务检查点恢复分镜脚本');
+  }
   // ⑦ 创作技能：一键成片自动注入「文案阶段的必用技能」(auto_apply)，
   //    无需用户手动勾选，保障开头钩子/完播节奏等质量基线。用户也可在技能库自行增减必用技能。
   const { getEffectiveSkillPrompt } = require('../routes/skills');
@@ -84,9 +115,14 @@ async function runAutoProduce(opts, onProgress = () => {}) {
     onProgress(lerp(STAGE.SCRIPT, 0.15), `已自动应用 ${scriptSkill.autoCount} 个必用文案技能…`);
   }
   const scriptProv = scriptProvider || (require('./config').get('stageModels.script') || {}).provider || 'deepseek';
-  const script = await usage.track('llm', scriptProv, () => generateScript(theme, duration, style, scriptOverrideArg));
+  if (!script) {
+    script = await usage.track('llm', scriptProv, () => generateScript(theme, duration, style, scriptOverrideArg));
+  }
   const storyboards = Array.isArray(script.storyboards) ? script.storyboards : [];
   if (storyboards.length === 0) throw new Error('AI 未生成有效分镜');
+  if (!stageDone('script')) {
+    stageEvent('SUCCEED', 'script', { output: { script, provider: scriptProv, storyboard_count: storyboards.length } });
+  }
   onProgress(STAGE.SCRIPT[1], `已生成 ${storyboards.length} 个分镜：《${script.title || theme}》`);
 
   // 把标题/简介写回项目，方便前端展示
@@ -108,32 +144,40 @@ async function runAutoProduce(opts, onProgress = () => {}) {
 
   // —— 2) 批量写入分镜 ——
   onProgress(STAGE.SAVE[0], '保存分镜到项目…');
-  // 事务外先收集旧分镜的 audio/video 文件，重新生成脚本后旧文件必成孤儿，替换后清理
-  const oldFiles = db.prepare('SELECT audio_url, video_path FROM storyboards WHERE project_id = ?').all(projectId);
-  const insert = db.prepare(
-    `INSERT INTO storyboards (project_id, scene_number, description, dialog, duration, sort_order, prompt, chapter_index, chapter_title)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`
-  );
-  const batchReplace = db.transaction((items) => {
-    db.prepare('DELETE FROM storyboards WHERE project_id = ?').run(projectId);
-    items.forEach((item, index) => {
-      insert.run(
-        projectId, item.scene_number || index + 1, item.description || '',
-        item.dialog || '', item.duration || 5, index, item.description || '',
-        item.chapter_index || item.chapter || 1, item.chapter_title || ''
-      );
-    });
-  });
-  batchReplace(storyboards);
-  syncChapters(projectId, storyboards);
-  try { continuity.saveStoryboardBindings(projectId, storyboards); } catch (e) { console.warn('[continuity] 分镜角色绑定失败:', e.message); }
-  // 替换成功后清理旧分镜的孤儿文件（audio + video）
-  try {
-    safeUnlinkMany([...oldFiles.map(f => f.audio_url), ...oldFiles.map(f => f.video_path)].filter(Boolean));
-  } catch (_) { /* 清理失败不阻断流水线 */ }
-  const savedRows = db.prepare(
+  let savedRows = db.prepare(
     'SELECT * FROM storyboards WHERE project_id = ? ORDER BY sort_order ASC'
   ).all(projectId);
+  if (!stageDone('storyboard') || savedRows.length === 0) {
+    stageEvent('START', 'storyboard');
+    // 只在分镜阶段没有成功检查点时替换，避免重启恢复误删已经生成的资产。
+    const oldFiles = db.prepare('SELECT audio_url, video_path FROM storyboards WHERE project_id = ?').all(projectId);
+    const insert = db.prepare(
+      `INSERT INTO storyboards (project_id, scene_number, description, dialog, duration, sort_order, prompt, chapter_index, chapter_title)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`
+    );
+    const batchReplace = db.transaction((items) => {
+      db.prepare('DELETE FROM storyboards WHERE project_id = ?').run(projectId);
+      items.forEach((item, index) => {
+        insert.run(
+          projectId, item.scene_number || index + 1, item.description || '',
+          item.dialog || '', item.duration || 5, index, item.description || '',
+          item.chapter_index || item.chapter || 1, item.chapter_title || ''
+        );
+      });
+    });
+    batchReplace(storyboards);
+    syncChapters(projectId, storyboards);
+    try { continuity.saveStoryboardBindings(projectId, storyboards); } catch (e) { console.warn('[continuity] 分镜角色绑定失败:', e.message); }
+    try {
+      safeUnlinkMany([...oldFiles.map(f => f.audio_url), ...oldFiles.map(f => f.video_path)].filter(Boolean));
+    } catch (_) { /* 清理失败不阻断流水线 */ }
+    savedRows = db.prepare(
+      'SELECT * FROM storyboards WHERE project_id = ? ORDER BY sort_order ASC'
+    ).all(projectId);
+    stageEvent('SUCCEED', 'storyboard', {
+      output: { storyboard_ids: savedRows.map((item) => item.id), count: savedRows.length },
+    });
+  }
   onProgress(STAGE.SAVE[1], `已保存 ${savedRows.length} 个分镜`);
 
   // —— 3) 逐分镜配图 + 配音 ——
@@ -147,6 +191,8 @@ async function runAutoProduce(opts, onProgress = () => {}) {
   let realImageOk = 0;    // 真实生成成功（不含占位图）——用于对外成功口径
   let placeholderCount = 0; // 占位图兜底数（生图全失败）
   let downgradedCount = 0;  // 自动降级到备用模型才成功的数
+  if (!stageDone('image')) stageEvent('START', 'image');
+  await demoGate('image');
   for (let i = 0; i < total; i++) {
     // 协作式取消在分镜边界生效：不截断正在写文件/落库的单个阶段，避免留下半文件；
     // 当前镜头完成后不再启动下一镜，并保留此前已生成素材。
@@ -161,7 +207,15 @@ async function runAutoProduce(opts, onProgress = () => {}) {
 
     // 3a) 配图（失败有占位图兜底，不抛出中断整条流水线）
     const imgProv = (require('./config').get('stageModels.image') || {}).provider || 'pollinations';
-    try {
+    const existingSelected = sb.selected_image_id
+      ? db.prepare('SELECT id, gen_status, file_url FROM images WHERE id = ?').get(sb.selected_image_id)
+      : null;
+    if (existingSelected?.file_url) {
+      hasVisual++;
+      if (existingSelected.gen_status === 'placeholder') placeholderCount++;
+      else realImageOk++;
+      onProgress(lerp(STAGE.ASSETS, baseRatio + 0.3 / total), `分镜 ${i + 1}/${total}：已恢复已有画面…`);
+    } else try {
       let imageHandled = false;
       // ⑦ 创作技能：一键成片自动注入「画面阶段的必用技能」(电影级运镜/画风统一等)
       let imageSkill = { text: '', autoCount: 0, manualCount: 0 };
@@ -285,7 +339,7 @@ async function runAutoProduce(opts, onProgress = () => {}) {
 
     // 3b) 配音（有对白才配）。按 voiceProvider 路由（默认 Edge），云端失败自动降级 Edge。
     const dialogText = (sb.dialog || '').trim();
-    if (dialogText) {
+    if (dialogText && !sb.audio_url) {
       const vProv = voiceProvider || (require('./config').get('stageModels.voice') || {}).provider || 'edge';
       try {
         const ttsResult = await usage.track('tts', vProv, () => ttsProvider.synthesize({
@@ -311,6 +365,7 @@ async function runAutoProduce(opts, onProgress = () => {}) {
   // 取消可能在最后一个镜头处理中到达；合成前再检查一次，避免继续进入高成本 FFmpeg 阶段。
   if (cancelRequested()) canceled = true;
   if (canceled) {
+    if (!stageDone('image')) stageEvent('CANCEL', 'image');
     try { db.prepare('UPDATE projects SET status = ?, continuity_status = ? WHERE id = ?').run('partial', 'partial', projectId); } catch {}
     const imageCount = Number(db.prepare(
       `SELECT COUNT(*) AS n FROM images i
@@ -345,6 +400,43 @@ async function runAutoProduce(opts, onProgress = () => {}) {
   }
 
   if (hasVisual === 0) throw new Error('所有分镜配图均失败，无法合成视频');
+  if (!stageDone('image')) {
+    stageEvent(hasVisual === total ? 'SUCCEED' : 'PARTIAL', 'image', {
+      output: { total, completed: hasVisual, real: realImageOk, placeholders: placeholderCount },
+      ...(hasVisual === total ? {} : { error: `${total - hasVisual} 个分镜缺少画面` }),
+    });
+  }
+
+  const dialogCount = Number(db.prepare(
+    "SELECT COUNT(*) AS n FROM storyboards WHERE project_id = ? AND TRIM(COALESCE(dialog, '')) <> ''"
+  ).get(projectId)?.n) || 0;
+  const audioCount = Number(db.prepare(
+    "SELECT COUNT(*) AS n FROM storyboards WHERE project_id = ? AND TRIM(COALESCE(audio_url, '')) <> ''"
+  ).get(projectId)?.n) || 0;
+  if (!stageDone('voice')) {
+    if (dialogCount === 0) stageEvent('SKIP', 'voice', { output: { reason: '没有对白' } });
+    else {
+      stageEvent('START', 'voice');
+      stageEvent(audioCount >= dialogCount ? 'SUCCEED' : 'PARTIAL', 'voice', {
+        output: { total: dialogCount, completed: audioCount },
+        ...(audioCount >= dialogCount ? {} : { error: `${dialogCount - audioCount} 个分镜配音失败` }),
+      });
+    }
+  }
+
+  if (!stageDone('subtitle')) {
+    if (dialogCount === 0) stageEvent('SKIP', 'subtitle', { output: { reason: '没有对白' } });
+    else {
+      stageEvent('START', 'subtitle');
+      const subtitleCount = Number(db.prepare(
+        "SELECT COUNT(*) AS n FROM storyboards WHERE project_id = ? AND TRIM(COALESCE(subtitle_text, '')) <> ''"
+      ).get(projectId)?.n) || 0;
+      stageEvent(subtitleCount >= dialogCount ? 'SUCCEED' : 'PARTIAL', 'subtitle', {
+        output: { total: dialogCount, completed: subtitleCount },
+        ...(subtitleCount >= dialogCount ? {} : { error: `${dialogCount - subtitleCount} 个分镜缺少字幕` }),
+      });
+    }
+  }
   let assetMsg = `素材就绪（${hasVisual}/${total} 个分镜有画面，其中真实生成 ${realImageOk} 个、占位兜底 ${placeholderCount} 个），开始合成…`;
   if (placeholderCount > 0) {
     assetMsg = `素材就绪（${hasVisual}/${total} 个分镜有画面，其中真实生成 ${realImageOk} 个、占位兜底 ${placeholderCount} 个；建议在「设置」配置可用生图模型），开始合成…`;
@@ -353,12 +445,16 @@ async function runAutoProduce(opts, onProgress = () => {}) {
   }
   onProgress(STAGE.ASSETS[1], assetMsg);
 
+  if (!stageDone('timeline')) stageEvent('START', 'timeline');
   const health = assetHealth.assertComposable(projectId);
+  if (!stageDone('timeline')) stageEvent('SUCCEED', 'timeline', { output: { health } });
   if (health.status === 'warn' && health.issues.length) {
     onProgress(STAGE.ASSETS[1], `资产预检通过（${health.issues.length} 项可优化问题），开始合成…`);
   }
 
   // —— 4) 合成视频（复用 video 路由的高层封装）——
+  if (!stageDone('export')) stageEvent('START', 'export');
+  await demoGate('export');
   const videoRouter = require('../routes/video');
   const result = await videoRouter.composeProjectVideo(projectId, {
     fps: 24,
@@ -374,6 +470,7 @@ async function runAutoProduce(opts, onProgress = () => {}) {
   }, (p, msg) => {
     onProgress(lerp(STAGE.COMPOSE, (p || 0) / 100), msg || '合成中…');
   });
+  if (!stageDone('export')) stageEvent('SUCCEED', 'export', { output: result });
 
   // 标记项目完成
   try { db.prepare('UPDATE projects SET status = ? WHERE id = ?').run('completed', projectId); } catch {}

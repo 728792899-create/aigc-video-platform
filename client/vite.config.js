@@ -4,6 +4,16 @@ import vue from '@vitejs/plugin-vue'
 // 顶级构建配置：vendor 分包 + 体积优化 + 本地代理
 export default defineConfig({
   plugins: [vue()],
+  resolve: {
+    alias: {
+      // 语言表已在 locales/index.js 转为 MessageFunction，打包时不带 eval 编译器。
+      'vue-i18n': 'vue-i18n/dist/vue-i18n.runtime.esm-bundler.js',
+    },
+  },
+  define: {
+    __VUE_I18N_LEGACY_API__: false,
+    __INTLIFY_DROP_MESSAGE_COMPILER__: true,
+  },
   server: {
     port: 5173,
     proxy: {

@@ -1,0 +1,75 @@
+name: CI
+
+on:
+  push:
+    branches: [main, master]
+  pull_request:
+
+permissions:
+  contents: read
+
+env:
+  DEMO_MODE: '1'
+  DEMO_SILENT_TTS: '1'
+  LOG_HTTP: '0'
+  OPENAI_API_KEY: ''
+  DEEPSEEK_API_KEY: ''
+  DASHSCOPE_API_KEY: ''
+  GEMINI_API_KEY: ''
+  RUNWAY_API_KEY: ''
+  KLING_API_KEY: ''
+  ARK_API_KEY: ''
+  VOLCANO_API_KEY: ''
+
+jobs:
+  quality:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: |
+            package-lock.json
+            server/package-lock.json
+            client/package-lock.json
+      - run: npm ci
+      - run: npm --prefix server ci
+      - run: npm --prefix client ci
+      - run: npm run security:audit:all
+      - run: node scripts/security-check.mjs
+      - run: node scripts/ffmpeg-smoke.mjs
+      - run: npm run quality
+      - run: npm run prepare:desktop
+      - run: npm run electron:preflight
+
+  desktop-package-preflight:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [macos-14, windows-2022]
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 35
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: |
+            package-lock.json
+            server/package-lock.json
+            client/package-lock.json
+      - run: npm ci
+      - run: npm --prefix server ci
+      - run: npm --prefix client ci
+      - run: npm run prepare:desktop
+      - run: npm run electron:preflight
+      - if: runner.os == 'macOS'
+        run: npx electron-builder --dir --mac --arm64 -c.directories.output="$RUNNER_TEMP/aigc-video-pack" -c.mac.identity=- -c.mac.entitlements=resources/entitlements.adhoc.plist -c.mac.entitlementsInherit=resources/entitlements.adhoc.plist
+      - if: runner.os == 'macOS'
+        run: codesign --verify --deep --strict --verbose=2 "$RUNNER_TEMP/aigc-video-pack/mac-arm64/AIGC 视频工作台.app"
+      - if: runner.os == 'Windows'
+        run: npx electron-builder --dir --win --x64 -c.win.signAndEditExecutable=false

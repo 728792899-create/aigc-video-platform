@@ -18,6 +18,7 @@ const fs = require('fs');
 const DB_PATH = process.env.DB_PATH
   ? path.resolve(process.env.DB_PATH)
   : path.resolve(__dirname, 'database.sqlite');
+const SCHEMA_VERSION = 3;
 
 let db = null;
 let SQL = null;
@@ -25,6 +26,26 @@ let SQL = null;
 // ============ 写盘节流 + 互斥 ============
 let saveTimer = null;
 let saving = false;
+
+function userVersion(database) {
+  try { return Number(database.exec('PRAGMA user_version')[0]?.values?.[0]?.[0]) || 0; } catch { return 0; }
+}
+
+function createMigrationBackup(fromVersion) {
+  if (!fs.existsSync(DB_PATH)) return '';
+  const backupDir = path.join(path.dirname(DB_PATH), 'backups');
+  fs.mkdirSync(backupDir, { recursive: true });
+  const target = path.join(backupDir, `database-v${fromVersion}-${Date.now()}.sqlite`);
+  fs.copyFileSync(DB_PATH, target, fs.constants.COPYFILE_EXCL);
+  const backups = fs.readdirSync(backupDir)
+    .filter((name) => /^database-v\d+-\d+\.sqlite$/.test(name))
+    .map((name) => ({ name, mtime: fs.statSync(path.join(backupDir, name)).mtimeMs }))
+    .sort((a, b) => b.mtime - a.mtime);
+  for (const old of backups.slice(5)) {
+    try { fs.unlinkSync(path.join(backupDir, old.name)); } catch {}
+  }
+  return target;
+}
 
 /**
  * 真正执行写盘（同步，带互斥标志防重入）
@@ -109,6 +130,13 @@ async function initDb() {
 
   // 启用外键
   db.run('PRAGMA foreign_keys = ON');
+  const previousSchemaVersion = userVersion(db);
+  if (previousSchemaVersion < SCHEMA_VERSION && fs.existsSync(DB_PATH)) {
+    const backupPath = createMigrationBackup(previousSchemaVersion);
+    console.log(`[DB] 迁移前备份已创建: ${backupPath}`);
+  } else if (previousSchemaVersion > SCHEMA_VERSION) {
+    console.warn(`[DB] 数据库 schema v${previousSchemaVersion} 高于当前程序 v${SCHEMA_VERSION}，将保持原版本号`);
+  }
 
   // 创建表
   db.run(`
@@ -556,19 +584,8 @@ async function initDb() {
     )
   `);
 
-  // 启动恢复：把上次进程残留的 pending/running 任务标记为 interrupted（已中断），
-  // 因为 worker 进程已死无法续跑，但要给前端一个明确终态而不是 404
-  try {
-    db.run(
-      `UPDATE tasks SET status = 'interrupted',
-         message = '任务因服务重启而中断',
-         updated_at = ?
-       WHERE status IN ('pending', 'waiting', 'running', 'composing')`,
-      [Date.now()]
-    );
-  } catch (e) {
-    console.error('[DB] 恢复任务状态失败:', e.message);
-  }
+  // 不在数据库初始化时把运行中任务粗暴终结。app 启动完成后由 taskRecovery
+  // 根据任务类型和持久化检查点重建 runner；未知类型才会保留为 interrupted 供诊断。
 
   // 创建索引 — 加速高频 JOIN 和排序查询（v1.6.6 合规修复）
   const indexes = [
@@ -593,6 +610,7 @@ async function initDb() {
     }
   }
 
+  if (previousSchemaVersion <= SCHEMA_VERSION) db.run(`PRAGMA user_version = ${SCHEMA_VERSION}`);
   // 初始化阶段直接同步写盘一次
   saveDb();
 
@@ -671,13 +689,26 @@ function getDb() {
 function restoreRaw(buffer) {
   if (!SQL) throw new Error('SQL.js 未初始化');
   const fresh = new SQL.Database(new Uint8Array(buffer));
-  // 简单完整性校验：必须能查到 projects 表
-  fresh.exec("SELECT name FROM sqlite_master WHERE type='table' AND name='projects'");
+  const integrity = fresh.exec('PRAGMA integrity_check')[0]?.values?.[0]?.[0];
+  if (integrity !== 'ok') { fresh.close(); throw new Error(`备份数据库完整性校验失败：${integrity || 'unknown'}`); }
+  const required = fresh.exec("SELECT name FROM sqlite_master WHERE type='table' AND name IN ('projects','storyboards','tasks')")[0]?.values || [];
+  if (required.length < 3) { fresh.close(); throw new Error('备份缺少必要业务表'); }
+  const incomingVersion = userVersion(fresh);
+  if (incomingVersion > SCHEMA_VERSION) { fresh.close(); throw new Error(`备份 schema v${incomingVersion} 高于当前程序 v${SCHEMA_VERSION}`); }
+
+  // 覆盖前创建本地恢复点；写新文件成功后才切换内存连接。
+  if (fs.existsSync(DB_PATH)) {
+    const backupDir = path.join(path.dirname(DB_PATH), 'backups');
+    fs.mkdirSync(backupDir, { recursive: true });
+    fs.copyFileSync(DB_PATH, path.join(backupDir, `restore-point-${Date.now()}.sqlite`));
+  }
+  const tempPath = `${DB_PATH}.restore.tmp`;
+  fs.writeFileSync(tempPath, Buffer.from(fresh.export()));
+  fs.renameSync(tempPath, DB_PATH);
   if (db) { try { db.close(); } catch {} }
   db = fresh;
   db._txDepth = 0;
   db.run('PRAGMA foreign_keys = ON');
-  saveDb();
   return true;
 }
 

@@ -37,8 +37,12 @@ export function checkDir(dir, create = false) {
   return api.post('/settings/check-dir', { dir, create }).then((r) => r.data.data)
 }
 
-// 打开本机目录选择器（由本地后端弹出系统目录选择框）
-export function pickDir() {
+// Electron 使用最小化 preload 白名单打开系统选择器；Web 开发模式回退到本地后端。
+export async function pickDir() {
+  if (window.aigcStudio && typeof window.aigcStudio.selectExportDirectory === 'function') {
+    const path = await window.aigcStudio.selectExportDirectory()
+    return path ? { path } : null
+  }
   return api.post('/settings/pick-dir').then((r) => r.data.data)
 }
 
@@ -54,9 +58,9 @@ export function cleanTemp() {
 
 // ===== F8 配置导入导出 / 备份还原 =====
 
-// 导出配置（mask=true 时密钥脱敏）
-export function exportConfig(mask = false) {
-  return api.get('/settings/export-config', { params: { mask } }).then((r) => r.data.data)
+// 导出配置始终不含密钥；保留参数只为兼容旧调用方。
+export function exportConfig(_mask = true) {
+  return api.get('/settings/export-config').then((r) => r.data.data)
 }
 
 // 导入配置

@@ -16,6 +16,7 @@ const t2iProvider = require('../services/t2iProvider');
 const t2vProvider = require('../services/t2vProvider');
 const ttsProvider = require('../services/ttsProvider');
 const usage = require('../services/usage');
+const credentialStore = require('../services/credentialStore');
 
 const KINDS = ['llm', 't2i', 't2v', 'tts'];
 
@@ -40,7 +41,7 @@ function providerHealthItems() {
         .filter(([, sel]) => sel && sel.provider === p.key)
         .map(([stage]) => stage);
       const u = usageAll[`${kind}:${p.key}`] || null;
-      const lastError = u?.last_error || '';
+      const lastError = credentialStore.redact(u?.last_error || '');
       let status = configured ? 'available' : 'unconfigured';
       if (configured && lastError && (!u?.last_ok_at || Number(u.last_at || 0) >= Number(u.last_ok_at || 0))) {
         status = classifyProviderError(lastError);
@@ -194,7 +195,7 @@ router.post('/credentials', (req, res) => {
     if (secretFields.has(k) && typeof fields[k] === 'string' && fields[k].trim() === '') continue; // 空密钥不覆盖
     cleaned[k] = fields[k];
   }
-  const existing = config.get(`credentials.${provider}`) || {};
+  const existing = { ...(config.get(`credentials.${provider}`) || {}), ...credentialStore.get(provider) };
   const next = { ...existing, ...cleaned };
   if (clearSecret) {
     if (def.auth === 'access_secret') {
@@ -205,14 +206,21 @@ router.post('/credentials', (req, res) => {
     }
     // DeepSeek 兼容旧字段：显式清除时同步清除旧入口，避免 fallback 继续读到旧 Key。
     if (provider === 'deepseek') {
-      config.setMany({ deepseek: { apiKey: '' } });
+      credentialStore.clear('deepseek');
     }
   }
-  config.setMany({ credentials: { [provider]: next } });
+  const secretPatch = {};
+  const publicPatch = {};
+  for (const [field, value] of Object.entries(next)) {
+    if (secretFields.has(field)) secretPatch[field] = value;
+    else publicPatch[field] = value;
+  }
+  if (clearSecret) credentialStore.clear(provider);
+  if (Object.values(secretPatch).some(Boolean)) credentialStore.set(provider, secretPatch);
+  config.setMany({ credentials: { [provider]: publicPatch } });
   // DeepSeek 统一入口：新凭证同步到旧字段，兼容健康检查、旧 API 测试和老流程。
   if (provider === 'deepseek') {
     const deepseekPatch = {};
-    if (next.apiKey !== undefined) deepseekPatch.apiKey = next.apiKey;
     if (next.baseUrl !== undefined) deepseekPatch.baseUrl = next.baseUrl;
     if (Object.keys(deepseekPatch).length) config.setMany({ deepseek: deepseekPatch });
   }
@@ -297,7 +305,7 @@ router.post('/test', async (req, res) => {
     usage.recordFail(def.kind, provider, e, Date.now() - started);
     return res.json({
       code: 200,
-      data: { ok: false, latency_ms: Date.now() - started, error: e.message },
+      data: { ok: false, latency_ms: Date.now() - started, error: credentialStore.redact(e.message) },
       message: '连通失败',
     });
   }

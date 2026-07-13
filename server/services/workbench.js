@@ -145,14 +145,22 @@ function getWorkbenchStatus(projectId, { persist = true } = {}) {
   const checks = lastContinuityChecks(projectId);
   const step = determineStep({ project: enrichedProject, storyboards, characters, health, checks });
   const state = statusFromIssues({ step, health, checks });
+  const allImagesReady = health?.counts?.storyboards > 0 && health.counts.usable_image_scenes >= health.counts.storyboards;
+  const dialogScenes = storyboards.filter((s) => String(s.dialog || '').trim());
   const progressSteps = [
-    { key: 'theme', label: '主题', done: !!(project.theme || project.script_content || storyboards.length) },
-    { key: 'script', label: '剧本', done: storyboards.length > 0 },
-    { key: 'characters', label: '角色', done: characters.length > 0 },
-    { key: 'images', label: '画面', done: health?.counts?.storyboards > 0 && health.counts.usable_image_scenes >= health.counts.storyboards },
-    { key: 'audio', label: '配音字幕', done: storyboards.length > 0 && storyboards.some((s) => s.audio_url || s.subtitle_text || s.dialog) },
-    { key: 'compose', label: '成片', done: (health?.counts?.exports || 0) > 0 },
+    { key: 'topic', label: '主题', done: !!(project.theme || project.script_content || storyboards.length) },
+    { key: 'script', label: '脚本', done: !!(project.script_content || storyboards.length) },
+    { key: 'storyboard', label: '分镜', done: storyboards.length > 0 },
+    { key: 'image', label: '图片', done: allImagesReady },
+    { key: 'voice', label: '配音', done: dialogScenes.length === 0 ? storyboards.length > 0 : dialogScenes.every((s) => s.audio_url) },
+    { key: 'subtitle', label: '字幕', done: dialogScenes.length === 0 ? storyboards.length > 0 : dialogScenes.every((s) => s.subtitle_text) },
+    { key: 'timeline', label: '时间线', done: storyboards.length > 0 && storyboards.every((s) => Number(s.duration) > 0) },
+    { key: 'export', label: '导出', done: (health?.counts?.exports || 0) > 0 },
   ];
+  const currentStepMap = {
+    theme: 'topic', script: 'script', characters: 'storyboard', images: 'image',
+    quality: 'image', preview: 'timeline', compose: 'export',
+  };
   const repairItems = [];
   if (!characters.length) repairItems.push({ type: 'characters', label: '提取角色' });
   if (characters.some((c) => c.is_primary && (!c.locked || !c.assets?.length))) repairItems.push({ type: 'auto_lock', label: '一键定妆' });
@@ -165,7 +173,7 @@ function getWorkbenchStatus(projectId, { persist = true } = {}) {
     project_id: Number(projectId),
     status: state.status,
     status_label: state.label,
-    current_step: step.current_step,
+    current_step: currentStepMap[step.current_step] || step.current_step,
     next_action: step.next_action,
     primary_action: step.primary_action,
     progress_steps: progressSteps,

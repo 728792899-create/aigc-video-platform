@@ -7,6 +7,7 @@
  */
 const { randomUUID } = require('crypto');
 const { EventEmitter } = require('events');
+const workflowStateMachine = require('./workflowStateMachine');
 
 const TERMINAL_STATUSES = new Set(['success', 'failed', 'interrupted', 'partial', 'canceled']);
 
@@ -87,6 +88,29 @@ class TaskManager extends EventEmitter {
     }
   }
 
+  ensureWorkflow(id, options = {}) {
+    const task = this.get(id);
+    if (!task) return null;
+    const workflow = workflowStateMachine.normalizeWorkflow(task.meta?.workflow, {
+      projectId: options.projectId || task.meta?.project_id,
+      topic: options.topic || task.meta?.theme,
+    });
+    this.update(id, { meta: { ...(task.meta || {}), workflow } });
+    return workflow;
+  }
+
+  transitionStage(id, event) {
+    const task = this.get(id);
+    if (!task) return null;
+    const current = workflowStateMachine.normalizeWorkflow(task.meta?.workflow, {
+      projectId: task.meta?.project_id,
+      topic: task.meta?.theme,
+    });
+    const workflow = workflowStateMachine.transition(current, event);
+    this.update(id, { meta: { ...(task.meta || {}), workflow } });
+    return workflow;
+  }
+
   create(type, meta = {}) {
     const id = randomUUID();
     const task = {
@@ -138,7 +162,8 @@ class TaskManager extends EventEmitter {
   }
 
   fail(id, error) {
-    const errMsg = error instanceof Error ? error.message : String(error);
+    const raw = error instanceof Error ? error.message : String(error);
+    const errMsg = require('./credentialStore').redact(raw);
     return this.update(id, {
       status: 'failed',
       message: errMsg,
@@ -164,7 +189,31 @@ class TaskManager extends EventEmitter {
   }
 
   get(id) {
-    return this.tasks.get(id);
+    const cached = this.tasks.get(id);
+    if (cached) return cached;
+    const db = this._getDb();
+    if (!db) return undefined;
+    try {
+      const r = db.prepare('SELECT * FROM tasks WHERE id = ?').get(id);
+      if (!r) return undefined;
+      const task = {
+        id: r.id,
+        type: r.type,
+        status: r.status,
+        progress: r.progress,
+        message: r.message,
+        meta: r.meta ? JSON.parse(r.meta) : {},
+        result: r.result ? JSON.parse(r.result) : null,
+        error: r.error,
+        created_at: r.created_at,
+        updated_at: r.updated_at,
+      };
+      if (task.meta?.diagnosis) task.diagnosis = task.meta.diagnosis;
+      this.tasks.set(id, task);
+      return task;
+    } catch {
+      return undefined;
+    }
   }
 
   list(filter = {}) {
@@ -226,3 +275,4 @@ class TaskManager extends EventEmitter {
 const taskManager = new TaskManager();
 
 module.exports = taskManager;
+module.exports.TaskManager = TaskManager;

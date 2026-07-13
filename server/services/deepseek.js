@@ -20,14 +20,17 @@ function demoScript(theme, duration = '45-60', style = '写实', detailLevel = '
   const durationInfo = parseDurationRange(duration);
   const timing = buildTimingPlan(durationInfo, detailLevel);
   const sceneCount = 4;
-  const baseDuration = Math.max(8, Math.round(durationInfo.target / sceneCount));
+  // Demo 全流程需要在普通开发机上快速、确定地完成。保留用户请求时长用于说明，
+  // 实际演示片上限 32 秒，避免默认 150-210 秒触发沉重的离线编码。
+  const demoTarget = Math.max(8, Math.min(32, durationInfo.target));
+  const baseDuration = Math.max(2, Math.round(demoTarget / sceneCount));
   const demoDurations = Array.from({ length: sceneCount }, (_, index) => {
-    if (index === sceneCount - 1) return Math.max(5, durationInfo.target - baseDuration * (sceneCount - 1));
+    if (index === sceneCount - 1) return Math.max(2, demoTarget - baseDuration * (sceneCount - 1));
     return baseDuration;
   });
   return {
     title: `${cleanTheme}｜Demo 短片`,
-    summary: `围绕「${cleanTheme}」展示从灵感到成片的 AIGC 创作流程，目标时长约 ${durationInfo.target} 秒。`,
+    summary: `围绕「${cleanTheme}」展示从灵感到成片的 AIGC 创作流程，Demo 成片约 ${demoTarget} 秒。`,
     total_duration: demoDurations.reduce((sum, item) => sum + item, 0),
     visual_anchor: 'clean modern studio, young creator operating an AI video workstation, cinematic lighting, consistent character design, realistic product demo style',
     story_bible: {
@@ -90,7 +93,7 @@ function demoScript(theme, duration = '45-60', style = '写实', detailLevel = '
       {
         scene_number: 4,
         description: '最后进入视频预览页，时间线、字幕和导出按钮清晰展示，旁边显示当前项目仍是本地 MVP。',
-        dialog: '这个项目目前是本地 MVP，重点验证 AIGC 视频生产链路。下一步会补任务队列、生成记录持久化和更严格的错误恢复。',
+        dialog: '从任务队列到阶段存档都会留在本地。程序重启后可以续跑，失败阶段也能单独重试，不会要求整条视频从头再来。',
         duration: demoDurations[3],
         characters_in_scene: [{ name: '创作者', role: '主角', action: '播放预览视频', emotion: '平稳自信', location: '预览页', state_note: '形成可讲述结果' }],
         continuity_notes: '收束到边界与下一步。',

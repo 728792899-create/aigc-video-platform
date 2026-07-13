@@ -37,12 +37,20 @@
             <span class="msg-text">{{ t.message || statusText(t) }}</span>
             <span class="msg-pct" v-if="!isFinished(t)">{{ t.progress || 0 }}%</span>
           </div>
+          <WorkflowRail v-if="t.meta?.workflow" :workflow="t.meta.workflow" compact class="task-workflow" />
+          <div v-if="t.type === 'auto-produce'" class="provider-line">
+            <span>{{ providerSummary(t) }}</span>
+            <span>{{ t.meta?.demo_mode ? 'Demo · ¥0' : '成本由 Provider 结算' }}</span>
+          </div>
           <div v-if="canRetry(t)" class="task-actions">
             <el-button v-if="hasDiagnosis(t)" size="small" plain @click="showDiagnosis(t)">
               {{ $t('task.viewReason') }}
             </el-button>
             <el-button size="small" type="primary" plain :loading="retrying[t.id]" @click="retry(t)">
               {{ $t('common.regenerate') }}
+            </el-button>
+            <el-button v-if="t.meta?.workflow" size="small" type="warning" plain :loading="retrying[t.id]" @click="retryStage(t)">
+              重试当前阶段
             </el-button>
           </div>
           <div v-else-if="hasDiagnosis(t)" class="task-actions">
@@ -70,6 +78,7 @@ import {
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { useTaskStore } from '../stores/tasks'
 import api from '../api'
+import WorkflowRail from './WorkflowRail.vue'
 
 const { t } = useI18n()
 const store = useTaskStore()
@@ -98,7 +107,12 @@ function canRetry(t) {
 }
 
 function canCancel(t) {
-  return t.type === 'auto-produce' && (t.status === 'waiting' || t.status === 'pending')
+  return t.type === 'auto-produce' && ['waiting', 'pending', 'running', 'composing'].includes(t.status)
+}
+
+function providerSummary(task) {
+  const providers = task.meta?.providers || {}
+  return [providers.script, providers.image, providers.video, providers.voice].filter(Boolean).join(' · ') || '本地工作流'
 }
 
 function hasDiagnosis(t) {
@@ -157,6 +171,23 @@ async function retry(task) {
     }
   } catch (e) {
     ElMessage.error(t('task.retryReqFailed') + (e?.message || t('task.unknownError')))
+  } finally {
+    retrying.value = { ...retrying.value, [task.id]: false }
+  }
+}
+
+async function retryStage(task) {
+  const stage = task.meta?.workflow?.current_stage
+  if (!stage) return retry(task)
+  retrying.value = { ...retrying.value, [task.id]: true }
+  try {
+    const res = await api.post(`/tasks/${task.id}/retry-stage`, { stage })
+    if (res.data.code === 200) {
+      ElMessage.success(`已重试阶段：${stage}`)
+      store.fetchOnce()
+    } else ElMessage.error(res.data.message || '阶段重试失败')
+  } catch (e) {
+    ElMessage.error(e?.response?.data?.message || e?.message || '阶段重试失败')
   } finally {
     retrying.value = { ...retrying.value, [task.id]: false }
   }
@@ -320,6 +351,8 @@ onUnmounted(() => store.stopPolling())
   margin-top: 6px;
   text-align: right;
 }
+.task-workflow { margin-top: 7px; }
+.provider-line { display:flex; justify-content:space-between; gap:8px; margin-top:6px; color:#64748b; font-size:10px; }
 .spin {
   animation: dock-spin 1s linear infinite;
 }
