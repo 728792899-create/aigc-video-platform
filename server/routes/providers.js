@@ -112,9 +112,23 @@ router.get('/', (req, res) => {
 // 启动/设置页使用的 Provider 健康快照：区分当前不可用与历史失败。
 router.get('/health', (req, res) => {
   const items = providerHealthItems();
+  const demoMode = ['1', 'true'].includes(String(process.env.DEMO_MODE || '').toLowerCase());
+  const hasLlm = items.some((item) => item.kind === 'llm' && item.configured);
+  const hasImage = items.some((item) => item.kind === 't2i' && item.configured);
+  const needsSetup = !demoMode && (!hasLlm || !hasImage);
+  const setupMessage = '首次使用请在「设置 → 模型路由」配置至少一个文案模型和一个生图模型的 API Key。';
+  if (needsSetup) {
+    for (const item of items) {
+      const missingKind = (item.kind === 'llm' && !hasLlm) || (item.kind === 't2i' && !hasImage);
+      if (missingKind && !item.configured) {
+        item.needs_setup = true;
+        item.setup_message = setupMessage;
+      }
+    }
+  }
   const routed = items.filter((x) => x.routed);
   const badRouted = routed.filter((x) => !['available'].includes(x.status));
-  const overall = badRouted.length ? 'warn' : 'ok';
+  const overall = badRouted.length || needsSetup ? 'warn' : 'ok';
   res.json({
     code: 200,
     data: {
@@ -122,7 +136,11 @@ router.get('/health', (req, res) => {
       checked_at: Date.now(),
       config_file: config.SETTINGS_FILE,
       items,
-      summary: badRouted.length
+      needs_setup: needsSetup,
+      setup_message: needsSetup ? setupMessage : '',
+      summary: needsSetup
+        ? setupMessage
+        : badRouted.length
         ? `${badRouted.length} 个使用中的模型需要处理`
         : '使用中的模型配置正常',
     },

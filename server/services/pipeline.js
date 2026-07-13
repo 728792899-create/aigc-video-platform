@@ -16,12 +16,14 @@ const { generateTTS } = require('./tts');
 const ttsProvider = require('./ttsProvider');
 const usage = require('./usage');
 const imageGen = require('./imageGen');
+const imageStats = require('./imageStats');
 const { getDb } = require('../db');
 const { toRelative, safeUnlinkMany } = require('../utils/fileCleanup');
 const assetHealth = require('./assetHealth');
 const assetNaming = require('./assetNaming');
 const continuity = require('./continuity');
 const promptCompiler = require('./promptCompiler');
+const taskManager = require('./taskManager');
 
 // 进度区间划分（总 0-100）
 const STAGE = {
@@ -136,10 +138,22 @@ async function runAutoProduce(opts, onProgress = () => {}) {
 
   // —— 3) 逐分镜配图 + 配音 ——
   const total = savedRows.length;
-  let imageOk = 0;
+  const cancelRequested = () => {
+    if (!opts.taskId) return false;
+    return !!taskManager.get(opts.taskId)?.meta?.cancel_requested;
+  };
+  let canceled = false;
+  let hasVisual = 0;      // 有画面（含占位图）——决定能否进入合成
+  let realImageOk = 0;    // 真实生成成功（不含占位图）——用于对外成功口径
   let placeholderCount = 0; // 占位图兜底数（生图全失败）
   let downgradedCount = 0;  // 自动降级到备用模型才成功的数
   for (let i = 0; i < total; i++) {
+    // 协作式取消在分镜边界生效：不截断正在写文件/落库的单个阶段，避免留下半文件；
+    // 当前镜头完成后不再启动下一镜，并保留此前已生成素材。
+    if (cancelRequested()) {
+      canceled = true;
+      break;
+    }
     const sb = savedRows[i];
     const baseRatio = i / total;
     onProgress(lerp(STAGE.ASSETS, baseRatio + 0.02 / total),
@@ -183,11 +197,12 @@ async function runAutoProduce(opts, onProgress = () => {}) {
       } catch (_) {}
       if (cached?.result?.image_ids?.length) {
         const imageId = cached.result.selected_image_id || cached.result.image_ids[0];
-        const imageRow = db.prepare('SELECT id FROM images WHERE id = ?').get(imageId);
-        if (imageRow) {
+        const imageRow = db.prepare('SELECT id, gen_status FROM images WHERE id = ?').get(imageId);
+        if (imageRow && imageRow.gen_status !== 'placeholder') {
           db.prepare('UPDATE storyboards SET selected_image_id = ?, prompt = ? WHERE id = ?')
             .run(imageRow.id, compiledPrompt.prompt, sb.id);
-          imageOk++;
+          hasVisual++;
+          realImageOk++;
           onProgress(lerp(STAGE.ASSETS, baseRatio + 0.3 / total), `分镜 ${i + 1}/${total}：已复用缓存画面…`);
           imageHandled = true;
         }
@@ -210,6 +225,19 @@ async function runAutoProduce(opts, onProgress = () => {}) {
         },
       }));
       const insertedIds = saveImageResults(sb.id, imgResult);
+      imageStats.record({
+        projectId,
+        storyboardId: sb.id,
+        requestedModel: model,
+        firstModel: imgResult.attempts?.[0]?.model || '',
+        firstAttemptOk: !!imgResult.attempts?.[0]?.ok,
+        finalOk: !imgResult.is_placeholder,
+        usedPlaceholder: !!imgResult.is_placeholder,
+        downgraded: !!imgResult.downgraded,
+        attemptsCount: imgResult.attempts?.length || 0,
+        finalProvider: imgResult.provider || '',
+        source: 'pipeline',
+      });
       const checks = insertedIds.map((id) => {
         try { return continuity.evaluateStoryboard(projectId, sb.id, id); } catch (_) { return null; }
       }).filter(Boolean);
@@ -219,7 +247,8 @@ async function runAutoProduce(opts, onProgress = () => {}) {
         db.prepare('UPDATE storyboards SET selected_image_id = ?, prompt = ?, quality_status = ? WHERE id = ?')
           .run(best.id, compiledPrompt.prompt, checks.some((c) => c.status === 'risk') ? 'review' : 'stable', sb.id);
         try {
-          promptCompiler.saveGenerationCache({
+          // 占位图只保证流程可继续，不可进入生成缓存伪装成后续真实命中。
+          if (!imgResult.is_placeholder) promptCompiler.saveGenerationCache({
             kind: 'image',
             model,
             provider: imgResult.provider,
@@ -238,9 +267,13 @@ async function runAutoProduce(opts, onProgress = () => {}) {
             },
           });
         } catch (_) {}
-        imageOk++;
-        if (imgResult.is_placeholder) placeholderCount++;
-        else if (imgResult.downgraded) downgradedCount++;
+        hasVisual++;
+        if (imgResult.is_placeholder) {
+          placeholderCount++;
+        } else {
+          realImageOk++;
+          if (imgResult.downgraded) downgradedCount++;
+        }
       }
       }
     } catch (e) {
@@ -275,12 +308,48 @@ async function runAutoProduce(opts, onProgress = () => {}) {
     }
   }
 
-  if (imageOk === 0) throw new Error('所有分镜配图均失败，无法合成视频');
-  let assetMsg = `素材就绪（${imageOk}/${total} 个分镜有画面），开始合成…`;
+  // 取消可能在最后一个镜头处理中到达；合成前再检查一次，避免继续进入高成本 FFmpeg 阶段。
+  if (cancelRequested()) canceled = true;
+  if (canceled) {
+    try { db.prepare('UPDATE projects SET status = ?, continuity_status = ? WHERE id = ?').run('partial', 'partial', projectId); } catch {}
+    const imageCount = Number(db.prepare(
+      `SELECT COUNT(*) AS n FROM images i
+       JOIN storyboards s ON s.id = i.storyboard_id WHERE s.project_id = ?`
+    ).get(projectId)?.n) || 0;
+    const selectedCount = Number(db.prepare(
+      'SELECT COUNT(*) AS n FROM storyboards WHERE project_id = ? AND selected_image_id IS NOT NULL'
+    ).get(projectId)?.n) || 0;
+    const audioCount = Number(db.prepare(
+      "SELECT COUNT(*) AS n FROM storyboards WHERE project_id = ? AND COALESCE(audio_url, '') <> ''"
+    ).get(projectId)?.n) || 0;
+    const partialResult = {
+      storyboard_count: total,
+      image_count: imageCount,
+      selected_image_count: selectedCount,
+      audio_count: audioCount,
+    };
+    onProgress(Math.min(STAGE.ASSETS[1], 79), '已在分镜边界停止，已生成素材均已保留');
+    return {
+      project_id: projectId,
+      title: script.title || theme,
+      storyboard_count: total,
+      has_visual: hasVisual,
+      real_image_ok: realImageOk,
+      image_ok: realImageOk,
+      placeholder_count: placeholderCount,
+      downgraded_count: downgradedCount,
+      partial: true,
+      canceled: true,
+      partialResult,
+    };
+  }
+
+  if (hasVisual === 0) throw new Error('所有分镜配图均失败，无法合成视频');
+  let assetMsg = `素材就绪（${hasVisual}/${total} 个分镜有画面，其中真实生成 ${realImageOk} 个、占位兜底 ${placeholderCount} 个），开始合成…`;
   if (placeholderCount > 0) {
-    assetMsg = `素材就绪（${imageOk}/${total} 个分镜有画面，其中 ${placeholderCount} 个生图失败用占位图代替，建议在「设置」多配置几个生图模型），开始合成…`;
+    assetMsg = `素材就绪（${hasVisual}/${total} 个分镜有画面，其中真实生成 ${realImageOk} 个、占位兜底 ${placeholderCount} 个；建议在「设置」配置可用生图模型），开始合成…`;
   } else if (downgradedCount > 0) {
-    assetMsg = `素材就绪（${imageOk}/${total} 个分镜有画面，${downgradedCount} 个由备用模型生成），开始合成…`;
+    assetMsg = `素材就绪（真实生成 ${realImageOk}/${total} 个，其中 ${downgradedCount} 个由备用模型生成），开始合成…`;
   }
   onProgress(STAGE.ASSETS[1], assetMsg);
 
@@ -317,7 +386,9 @@ async function runAutoProduce(opts, onProgress = () => {}) {
     project_id: projectId,
     title: script.title || theme,
     storyboard_count: total,
-    image_ok: imageOk,
+    has_visual: hasVisual,
+    real_image_ok: realImageOk,
+    image_ok: realImageOk, // 兼容旧客户端；语义已收敛为“真实生成成功数”
     placeholder_count: placeholderCount,
     downgraded_count: downgradedCount,
     ...result,
@@ -358,7 +429,7 @@ function saveImageResults(storyboardId, result) {
        VALUES (?, ?, ?, ?, ?, ?)`
     ).run(
       storyboardId, result.prompt || '', toRelative(lf.local_path), lf.file_url,
-      result.submit_id || '', 'success'
+      result.submit_id || '', result.is_placeholder ? 'placeholder' : 'success'
     );
     insertedIds.push(insRes.lastInsertRowid);
     try {

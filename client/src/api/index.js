@@ -9,6 +9,8 @@ const api = axios.create({
 // 请求拦截器：为幂等接口自动注入 Idempotency-Key（UUID v4）
 // 防止用户双击/网络重放导致重复扣 AI 配额、创建重复项目。
 api.interceptors.request.use(config => {
+  const apiToken = import.meta.env.VITE_API_TOKEN
+  if (apiToken) config.headers.Authorization = `Bearer ${apiToken}`
   // 仅对 POST /ai/auto-produce 和 /ai/generate-image 加幂等 key
   if (config.method === 'post' &&
       (config.url === '/ai/auto-produce' || config.url === '/ai/generate-image')) {

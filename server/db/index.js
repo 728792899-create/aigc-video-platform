@@ -524,6 +524,26 @@ async function initDb() {
     )
   `);
 
+  // 图片生成结果埋点——用于计算可复核的首次直出率、最终真实出图率与占位兜底率。
+  // 这里只记录模型链结果，不保存提示词、图片或密钥等内容。
+  db.run(`
+    CREATE TABLE IF NOT EXISTS image_gen_stats (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      project_id INTEGER,
+      storyboard_id INTEGER,
+      requested_model TEXT,
+      first_model TEXT,
+      first_attempt_ok INTEGER,
+      final_ok INTEGER,
+      used_placeholder INTEGER,
+      downgraded INTEGER,
+      attempts_count INTEGER,
+      final_provider TEXT,
+      source TEXT,
+      created_at INTEGER
+    )
+  `);
+
   // 草稿快照表（功能⑥）— 项目编辑节点存档，可回滚分镜+脚本状态
   db.run(`
     CREATE TABLE IF NOT EXISTS snapshots (
@@ -565,6 +585,7 @@ async function initDb() {
     'CREATE INDEX IF NOT EXISTS idx_continuity_checks_project_id ON continuity_checks(project_id, created_at DESC)',
     'CREATE INDEX IF NOT EXISTS idx_workbench_checks_project_id ON workbench_checks(project_id, created_at DESC)',
     'CREATE INDEX IF NOT EXISTS idx_generation_cache_project_id ON generation_cache(project_id, updated_at DESC)',
+    'CREATE INDEX IF NOT EXISTS idx_image_gen_stats_created_at ON image_gen_stats(created_at DESC)',
   ];
   for (const sql of indexes) {
     try { db.run(sql); } catch (e) {

@@ -68,7 +68,7 @@ const DEFAULTS = {
     voice: { provider: 'edge', model: '' },
     // 生图备用模型链（v1.6.4，v1.6.5 调整）：主模型失败时按顺序自动切换。
     // 数组元素可为本地模型 key（'flux'/'turbo'/'dreamina'…）或 'provider__model' 云端规格。
-    // 默认主图源为内置免费的智谱 CogView-3-Flash（实测效果优于 cogview-3/4，开箱即用）。
+    // 默认主图源为智谱 CogView-3-Flash；首次使用需在设置页配置自己的智谱 Key。
     // 默认置空 = 完全走 imageGen 内置兜底链（cogview-3-flash → cogview-3/4 次选 → flux/turbo 最后保底）。
     // 用户可在「设置 → 模型路由」追加自己的智谱/通义万相等 Key 提升稳定性。
     imageChain: [],
@@ -104,7 +104,7 @@ function load() {
 load();
 
 // v1.6.5 一次性迁移：老用户 settings.json 里残留的旧默认主图源（Pollinations flux/turbo）
-// 会盖掉新默认的内置智谱 CogView-3-Flash。仅当用户从未显式改过、且仍是旧默认值时，
+// 会盖掉新默认的智谱 CogView-3-Flash。仅当用户从未显式改过、且仍是旧默认值时，
 // 自动迁移到 cogview-3-flash（实测效果更好且内置免费）。用 _migrations 标记避免重复执行，
 // 也避免覆盖用户后续的主动选择。
 function runMigrations() {

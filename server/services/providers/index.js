@@ -160,8 +160,7 @@ function resolveCredentials(name) {
   if (credKey === 'deepseek') {
     apiKey = apiKey || config.get('deepseek.apiKey');
     baseUrl = baseUrl || config.get('deepseek.baseUrl');
-    // 内置兜底（随安装包分发）：用户/env 都没配 key 时，用混淆内置的默认 DeepSeek 凭证，
-    // 让答辩机、轻薄本等未单独配置的机器也能开箱即用一键成片。优先级最低，不覆盖用户配置。
+    // 可选的本地/答辩环境兜底：默认关闭，且凭证只能来自运行环境变量，绝不随包硬编码。
     if ((!apiKey || !apiKey.trim()) && builtinCreds) {
       try {
         const b = builtinCreds.builtinDeepSeek();
@@ -172,8 +171,7 @@ function resolveCredentials(name) {
       } catch (_) { /* 忽略，回退到空 */ }
     }
   }
-  // 内置智谱（BigModel）兜底：CogView-3-Flash 永久免费，作为生图的内置可用图源，
-  // 让任何机器（含全新答辩机）零配置即可稳定出图。用户自配的智谱 Key 优先。
+  // 可选智谱兜底同样只读运行环境变量；公开分发包默认未配置。
   if (credKey === 'zhipu' && (!apiKey || !apiKey.trim()) && builtinCreds && builtinCreds.builtinZhipu) {
     try {
       const z = builtinCreds.builtinZhipu();

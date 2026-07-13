@@ -136,6 +136,220 @@ router.post('/batch', (req, res) => {
   res.json({ code: 200, data: result, message: '保存成功' });
 });
 
+// 增量对齐脚本改稿：只让描述/对白发生变化的分镜失效，未变化镜头保留已有图、音与视频。
+router.post('/reconcile', (req, res) => {
+  try {
+    const {
+      project_id, storyboards, visual_anchor, script_result,
+      duration_min, duration_max, targetDurationSec, target_duration_sec,
+    } = req.body || {};
+    if (!project_id || !Array.isArray(storyboards)) {
+      return res.status(400).json({ code: 400, data: null, message: '参数不完整' });
+    }
+    const db = getDb();
+    const project = db.prepare('SELECT * FROM projects WHERE id = ?').get(project_id);
+    if (!project) return res.status(404).json({ code: 404, data: null, message: '项目不存在' });
+
+    const current = db.prepare(
+      'SELECT * FROM storyboards WHERE project_id = ? ORDER BY sort_order ASC'
+    ).all(project_id);
+    const byId = new Map(current.map((item) => [Number(item.id), item]));
+    const byScene = new Map();
+    for (const item of current) {
+      const key = Number(item.scene_number);
+      if (!byScene.has(key)) byScene.set(key, []);
+      byScene.get(key).push(item);
+    }
+    const usedIds = new Set();
+    const cleanupFiles = [];
+    const changedIds = [];
+    const createdIds = [];
+    const preservedIds = [];
+    const removedIds = [];
+    const normalizeContent = (value) => String(value ?? '').trim();
+    const asJson = (value, fallback = '[]') => {
+      if (value === undefined) return fallback;
+      return typeof value === 'string' ? value : JSON.stringify(value || []);
+    };
+
+    const reconcileRows = db.transaction((incoming) => {
+      const insert = db.prepare(
+        `INSERT INTO storyboards
+          (project_id, scene_number, description, dialog, duration, sort_order, prompt,
+           subtitle_text, transition, voice, no_voice, chapter_index, chapter_title,
+           characters_in_scene, continuity_notes, scene_state_before, scene_state_after,
+           sync_status, quality_status)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+      );
+      const update = db.prepare(
+        `UPDATE storyboards SET
+          scene_number=?, description=?, dialog=?, duration=?, sort_order=?, prompt=?,
+          subtitle_text=?, subtitle_style=?, transition=?, voice=?, motion=?, no_voice=?,
+          chapter_index=?, chapter_title=?, characters_in_scene=?, continuity_notes=?,
+          scene_state_before=?, scene_state_after=?, selected_image_id=?, audio_url=?,
+          audio_words=?, video_path=?, sync_status=?, quality_status=?
+         WHERE id=?`
+      );
+
+      incoming.forEach((raw, index) => {
+        const item = raw || {};
+        const sceneNumber = Number(item.scene_number) || index + 1;
+        let existing = null;
+        if (item.id != null) {
+          existing = byId.get(Number(item.id));
+          if (!existing) throw new Error(`分镜 ${item.id} 不属于当前项目`);
+          if (usedIds.has(Number(existing.id))) throw new Error(`分镜 ${item.id} 重复提交`);
+        } else {
+          existing = (byScene.get(sceneNumber) || []).find((row) => !usedIds.has(Number(row.id))) || null;
+        }
+
+        if (!existing) {
+          const created = insert.run(
+            project_id,
+            sceneNumber,
+            item.description || '',
+            item.dialog || '',
+            Number(item.duration) || 5,
+            index,
+            item.prompt || item.description || '',
+            item.subtitle_text ?? item.dialog ?? '',
+            item.transition || 'none',
+            item.voice || null,
+            item.no_voice ? 1 : 0,
+            Number(item.chapter_index || item.chapter || 1) || 1,
+            item.chapter_title || '',
+            asJson(item.characters_in_scene),
+            item.continuity_notes || '',
+            item.scene_state_before || '',
+            item.scene_state_after || '',
+            'pending',
+            'unchecked'
+          );
+          createdIds.push(Number(created.lastInsertRowid));
+          return;
+        }
+
+        const id = Number(existing.id);
+        usedIds.add(id);
+        const contentChanged =
+          normalizeContent(item.description ?? existing.description) !== normalizeContent(existing.description) ||
+          normalizeContent(item.dialog ?? existing.dialog) !== normalizeContent(existing.dialog);
+
+        if (contentChanged) {
+          const images = db.prepare('SELECT file_path, file_url FROM images WHERE storyboard_id = ?').all(id);
+          cleanupFiles.push(existing.audio_url, existing.video_path,
+            ...images.map((image) => image.file_path || image.file_url));
+          // selected_image_id 没有外键，必须显式清空；随后删除该镜头旧图片记录。
+          db.prepare('DELETE FROM images WHERE storyboard_id = ?').run(id);
+          changedIds.push(id);
+        } else {
+          preservedIds.push(id);
+        }
+
+        const description = item.description !== undefined ? item.description : existing.description;
+        const dialog = item.dialog !== undefined ? item.dialog : existing.dialog;
+        const prompt = item.prompt !== undefined
+          ? item.prompt
+          : (contentChanged ? (description || '') : existing.prompt);
+        const subtitleText = item.subtitle_text !== undefined
+          ? item.subtitle_text
+          : (contentChanged ? (dialog || '') : existing.subtitle_text);
+        update.run(
+          sceneNumber,
+          description || '',
+          dialog || '',
+          Number(item.duration ?? existing.duration) || 5,
+          index,
+          prompt || '',
+          subtitleText,
+          item.subtitle_style !== undefined
+            ? (typeof item.subtitle_style === 'string' ? item.subtitle_style : JSON.stringify(item.subtitle_style))
+            : existing.subtitle_style,
+          item.transition !== undefined ? item.transition : existing.transition,
+          item.voice !== undefined ? item.voice : existing.voice,
+          item.motion !== undefined ? item.motion : existing.motion,
+          item.no_voice !== undefined ? (item.no_voice ? 1 : 0) : existing.no_voice,
+          Number(item.chapter_index ?? item.chapter ?? existing.chapter_index ?? 1) || 1,
+          item.chapter_title !== undefined ? item.chapter_title : existing.chapter_title,
+          asJson(item.characters_in_scene, existing.characters_in_scene || '[]'),
+          item.continuity_notes !== undefined ? item.continuity_notes : existing.continuity_notes,
+          item.scene_state_before !== undefined ? item.scene_state_before : existing.scene_state_before,
+          item.scene_state_after !== undefined ? item.scene_state_after : existing.scene_state_after,
+          contentChanged ? null : existing.selected_image_id,
+          contentChanged ? null : existing.audio_url,
+          contentChanged ? null : existing.audio_words,
+          contentChanged ? null : existing.video_path,
+          contentChanged ? 'pending' : (existing.sync_status || 'synced'),
+          contentChanged ? 'unchecked' : (existing.quality_status || 'unchecked'),
+          id
+        );
+      });
+
+      for (const existing of current) {
+        const id = Number(existing.id);
+        if (usedIds.has(id)) continue;
+        const images = db.prepare('SELECT file_path, file_url FROM images WHERE storyboard_id = ?').all(id);
+        cleanupFiles.push(existing.audio_url, existing.video_path,
+          ...images.map((image) => image.file_path || image.file_url));
+        db.prepare('DELETE FROM storyboards WHERE id = ?').run(id);
+        removedIds.push(id);
+      }
+    });
+    reconcileRows(storyboards);
+
+    // DB 事务成功并持久化后再删物理文件；事务失败时不会误删仍被引用的素材。
+    const cleanedFiles = safeUnlinkMany(cleanupFiles.filter(Boolean));
+    const result = db.prepare(
+      'SELECT * FROM storyboards WHERE project_id = ? ORDER BY sort_order ASC'
+    ).all(project_id);
+    syncChaptersFromStoryboards(project_id, result, {
+      duration_min, duration_max, targetDurationSec, target_duration_sec,
+    });
+
+    try {
+      const anchor = visual_anchor !== undefined
+        ? String(visual_anchor || '').trim()
+        : (project.visual_anchor || '');
+      const seed = project.image_seed != null ? project.image_seed : Math.floor(Math.random() * 2147483647);
+      db.prepare('UPDATE projects SET visual_anchor = ?, image_seed = ? WHERE id = ?')
+        .run(anchor, seed, project_id);
+      if (script_result) {
+        db.prepare('UPDATE projects SET script_content = ?, continuity_status = ? WHERE id = ?')
+          .run(JSON.stringify(script_result), 'script_saved', project_id);
+      }
+      continuity.ensureSeriesForProject(project_id);
+      continuity.extractCharacters(project_id, { script: script_result || null });
+      continuity.saveStoryboardBindings(project_id, result);
+    } catch (_) { /* 连续性辅助失败不影响脚本保存 */ }
+
+    const regenerateIds = [...changedIds, ...createdIds];
+    opLog.log('storyboard.reconcile', 'project', project_id, {
+      changed: changedIds.length,
+      created: createdIds.length,
+      removed: removedIds.length,
+      preserved: preservedIds.length,
+    });
+    res.json({
+      code: 200,
+      data: {
+        storyboards: result,
+        regenerate_ids: regenerateIds,
+        changed_ids: changedIds,
+        created_ids: createdIds,
+        removed_ids: removedIds,
+        preserved_ids: preservedIds,
+        cleaned_files: cleanedFiles,
+      },
+      message: regenerateIds.length
+        ? `保存成功，${regenerateIds.length} 个分镜需要重生成素材`
+        : '保存成功，现有素材均已保留',
+    });
+  } catch (err) {
+    const status = /不属于当前项目|重复提交/.test(err.message) ? 400 : 500;
+    res.status(status).json({ code: status, data: null, message: `增量保存失败: ${err.message}` });
+  }
+});
+
 // 更新单个分镜（支持部分字段更新，未提供的字段保留原值）
 router.put('/:id', (req, res) => {
   const id = req.params.id;

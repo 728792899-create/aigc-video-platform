@@ -438,6 +438,19 @@ router.post('/:id/cover', async (req, res) => {
       model: 'auto', // 自动走配置的主图源（默认 CogView）+ 备用链
       batchSize: 1,
     });
+    require('../services/imageStats').record({
+      projectId: Number(id),
+      storyboardId: null,
+      requestedModel: 'auto',
+      firstModel: result.attempts?.[0]?.model || '',
+      firstAttemptOk: !!result.attempts?.[0]?.ok,
+      finalOk: !result.is_placeholder,
+      usedPlaceholder: !!result.is_placeholder,
+      downgraded: !!result.downgraded,
+      attemptsCount: result.attempts?.length || 0,
+      finalProvider: result.provider || '',
+      source: 'manual',
+    });
     const fileUrl = result?.local_files?.[0]?.file_url;
     if (!fileUrl) throw new Error('封面生成未返回有效图片');
 

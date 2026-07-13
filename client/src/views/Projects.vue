@@ -331,7 +331,7 @@
         </el-button>
         <div v-if="autoDone" class="auto-result">
           <video v-if="autoVideoUrl" :src="autoVideoUrl" controls class="auto-video" />
-          <p class="auto-success-text">{{ $t('projects.autoSuccessText', { title: (autoResult?.title || ''), ok: autoResult?.image_ok, total: autoResult?.storyboard_count }) }}</p>
+          <p class="auto-success-text">{{ $t('projects.autoSuccessText', { title: (autoResult?.title || ''), ok: (autoResult?.real_image_ok ?? autoResult?.image_ok ?? 0), total: autoResult?.storyboard_count }) }}</p>
         </div>
       </div>
 

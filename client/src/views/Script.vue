@@ -359,6 +359,7 @@ const saving = ref(false)
 const optimizing = ref(false)
 const scriptResult = ref(null)
 const storyboards = ref([])
+const savedStoryboardIds = ref([])
 const activeScenes = ref([])
 // ⑥⑦ 台词详细程度 + 创作技能
 const detailLevel = ref('standard')
@@ -625,8 +626,11 @@ const loadStoryboards = async () => {
     const list = res.data.data || res.data || []
     if (list.length) {
       storyboards.value = list
+      savedStoryboardIds.value = list.map((item) => item.id).filter(Boolean)
       scriptResult.value = { title: t('script.savedStoryboards'), summary: '' }
       activeScenes.value = [0]
+    } else {
+      savedStoryboardIds.value = []
     }
   } catch (e) {
     // No existing storyboards
@@ -734,7 +738,8 @@ const expandSceneDialog = async (scene) => {
 const saveStoryboards = async () => {
   saving.value = true
   try {
-    await api.post('/storyboards/batch', {
+    const hadSavedStoryboards = savedStoryboardIds.value.length > 0
+    const response = await api.post('/storyboards/reconcile', {
       project_id: projectId,
       storyboards: storyboards.value,
       visual_anchor: (scriptResult.value && scriptResult.value.visual_anchor) || undefined,
@@ -745,13 +750,61 @@ const saveStoryboards = async () => {
       durationPreset: durationPreset.value,
       durationMode: 'tolerance',
     })
-    ElMessage.success(t('script.saveStoryboardsSuccess'))
+    const detail = response.data.data || {}
+    const regenerateIds = detail.regenerate_ids || []
+    ElMessage.success(regenerateIds.length
+      ? `分镜保存成功，${regenerateIds.length} 个镜头的旧素材已失效`
+      : t('script.saveStoryboardsSuccess'))
+
+    // 已有项目改稿时给用户明确选择；确认后只重生成后端 diff 返回的受影响镜头。
+    // 首次保存不会自动调用模型，保持既有“先存脚本、再进入素材阶段”的行为。
+    if (hadSavedStoryboards && regenerateIds.length) {
+      try {
+        await ElMessageBox.confirm(
+          `检测到 ${regenerateIds.length} 个新增或内容变化的分镜。是否立即仅为这些分镜重新生成配图和配音？此操作会调用已配置的模型。`,
+          '局部重生成',
+          { confirmButtonText: '仅重生成变化镜头', cancelButtonText: '稍后手动生成', type: 'warning' }
+        )
+        await regenerateStoryboardAssets(regenerateIds, detail.storyboards || [])
+      } catch (e) {
+        if (e !== 'cancel' && e !== 'close') throw e
+      }
+    }
     await Promise.all([loadContinuity(), loadWorkbenchStatus(), loadStoryboards()])
   } catch (e) {
     ElMessage.error(t('script.saveFailed'))
   } finally {
     saving.value = false
   }
+}
+
+async function regenerateStoryboardAssets(ids, rows) {
+  let submitted = 0
+  let failed = 0
+  for (const id of ids) {
+    const scene = rows.find((item) => Number(item.id) === Number(id))
+    if (!scene) continue
+    const jobs = [api.post('/ai/generate-image', {
+      storyboard_id: id,
+      async: true,
+      batch_size: 1,
+      repair_mode: true,
+      auto_select_best: true,
+      reuse_cache: false,
+    })]
+    if (String(scene.dialog || '').trim() && !scene.no_voice) {
+      jobs.push(api.post('/ai/generate-tts', {
+        text: scene.dialog,
+        storyboard_id: id,
+        voice: scene.voice || undefined,
+      }))
+    }
+    const results = await Promise.allSettled(jobs)
+    if (results.some((item) => item.status === 'rejected')) failed++
+    else submitted++
+  }
+  if (failed) ElMessage.warning(`已提交 ${submitted} 个镜头，另有 ${failed} 个镜头需稍后手动重试`)
+  else ElMessage.success(`已仅为 ${submitted} 个变化镜头提交素材重生成`)
 }
 
 const loadContinuity = async () => {

@@ -10,6 +10,19 @@ ROOT="$(pwd)"
 unset PORT
 export NODE_ENV=development   # 确保 vite/electron-builder devDeps 可用
 
+# 公开分发默认不携带共享密钥。答辩/受控环境如需使用临时环境凭证，必须显式开启，
+# 并由 CI 或当前 shell 注入；脚本不会把值写入源码、日志或版本库。
+if [ "${ALLOW_BUILTIN_KEYS:-0}" = "1" ]; then
+  if [ -z "${BUILTIN_DEEPSEEK_KEY:-}" ] && [ -z "${BUILTIN_ZHIPU_KEY:-}" ]; then
+    echo "[error] ALLOW_BUILTIN_KEYS=1，但未提供 BUILTIN_DEEPSEEK_KEY 或 BUILTIN_ZHIPU_KEY"
+    exit 1
+  fi
+  echo "==> 使用运行环境注入的临时模型凭证（不会打印或写入仓库）"
+else
+  unset BUILTIN_DEEPSEEK_KEY BUILTIN_ZHIPU_KEY
+  echo "==> 公开分发模式：不使用任何内置模型密钥"
+fi
+
 echo "==> [1/4] 前端构建"
 ( cd client && npm run build )
 

@@ -1,6 +1,7 @@
 const express = require('express');
 const fs = require('fs');
 const path = require('path');
+const imageStats = require('../services/imageStats');
 const router = express.Router();
 
 // 系统信息路由（挂 /api/system）：版本、诊断日志、检查更新
@@ -79,6 +80,15 @@ router.get('/check-update', (req, res) => {
     },
     message: 'success',
   });
+});
+
+// GET /api/system/image-success-rate —— 图片模型链真实成功率（占位图不计成功）
+router.get('/image-success-rate', (req, res) => {
+  try {
+    res.json({ code: 200, data: imageStats.summary(), message: 'success' });
+  } catch (e) {
+    res.status(500).json({ code: 500, data: null, message: e.message });
+  }
 });
 
 module.exports = router;

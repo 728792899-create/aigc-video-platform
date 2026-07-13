@@ -71,7 +71,13 @@ router.post('/:id/cancel', (req, res) => {
   if (task.type === 'auto-produce') {
     const queue = require('../services/autoProduceQueue');
     const result = queue.cancel(task.id);
-    if (result.ok) return res.json({ code: 200, data: taskManager.get(task.id), message: '已取消任务' });
+    if (result.ok) {
+      return res.json({
+        code: 200,
+        data: taskManager.get(task.id),
+        message: result.queued ? '已取消排队任务' : '已请求取消，将在当前分镜结束后停止',
+      });
+    }
   }
   if (task.type === 'image-batch' && !TERMINAL_STATUSES.has(task.status)) {
     taskManager.update(task.id, { meta: { ...(task.meta || {}), cancel_requested: true } });

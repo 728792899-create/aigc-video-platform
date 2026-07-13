@@ -15,6 +15,9 @@ npm run demo
 
 ```bash
 npm run test:smoke
+npm run quality
+npm run security:audit       # 生产依赖审计；发现漏洞时返回非零状态
+npm run security:audit:all   # 含开发依赖的完整审计
 npm --prefix client run build
 ```
 
@@ -144,6 +147,7 @@ bash start-all.sh
 
 > 凭证保存在 `server/db/settings.json`（前端只回显后 4 位脱敏值）。该文件含明文密钥，请勿外传或提交到版本库。
 > 某阶段所选 Provider 缺密钥或调用失败时，会自动降级到对应免费 Provider，主流程不中断。
+> 公开源码与默认分发包不包含任何内置共享密钥；首次使用需在「设置 → 模型路由」配置自己的模型凭证。`DEMO_MODE=1` 不需要真实 Key。
 
 ---
 
@@ -198,8 +202,9 @@ aigc-video-platform/
 - 后端默认仅监听本地，CORS 白名单限制为本地前端来源。
 - 已启用基础安全响应头（nosniff / SAMEORIGIN / Referrer-Policy 等）并移除 X-Powered-By。
 - AI 生成端点有按 IP 的速率限制（60 次/分钟）。
-- 该平台为本地单机使用设计，**未内置用户认证**；如需公网部署，请自行在前置网关补充鉴权与 HTTPS。
+- 该平台为本地单机使用设计，不含账号体系；受控的远程/桌面客户端可设置 `API_TOKEN` 启用统一 Bearer Token 保护，并仍应在前置网关配置 HTTPS。公开网页不能把共享 Token 当作用户认证方案。
 - `server/db/settings.json` 含明文 API 密钥，不要提交到版本库或公开分享。
+- 图片生成真实成功率可通过 `GET /api/system/image-success-rate` 或 `node server/scripts/report-image-success.mjs` 查看；占位图不计真实成功。
 
 ---
 

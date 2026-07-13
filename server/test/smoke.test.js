@@ -59,6 +59,8 @@ let testImageUrl = null;
 let testImageTrashId = null;
 let testGroupedTrashId = null;
 let testCustomSkillId = null;
+let reconcileProjectId = null;
+const reconcileFiles = [];
 
 function uploadAbs(url) {
   const rel = String(url || '').replace(/^[\\/]+/, '').replace(/^uploads[\\/]+/i, '');
@@ -88,6 +90,12 @@ after(async () => {
   if (testGroupedTrashId != null) {
     await req('DELETE', `/api/trash/${testGroupedTrashId}`);
   }
+  if (reconcileProjectId != null) {
+    await req('DELETE', `/api/projects/${reconcileProjectId}?permanent=true`);
+  }
+  for (const file of reconcileFiles) {
+    try { fs.rmSync(file, { force: true }); } catch (_) {}
+  }
   if (testTrashId != null) {
     // 软删除已把项目移入回收站 → 彻底清除回收站条目（含 .trash 文件）
     await req('DELETE', `/api/trash/${testTrashId}`);
@@ -109,6 +117,20 @@ test('健康检查 /api/health 返回 overall + checks 数组', async () => {
   for (const k of ['ffmpeg', 'database', 'storage']) {
     assert.ok(keys.includes(k), `健康检查应包含 ${k} 项`);
   }
+});
+
+test('生图统计：返回真实出图与占位兜底的可审计口径', async () => {
+  const { status, body } = await req('GET', '/api/system/image-success-rate');
+  assert.strictEqual(status, 200);
+  assert.strictEqual(body.code, 200);
+  for (const key of [
+    'total', 'first_attempt_success', 'first_attempt_rate',
+    'final_real_success', 'final_real_rate', 'placeholder_count', 'placeholder_rate',
+  ]) {
+    assert.strictEqual(typeof body.data[key], 'number', `${key} 应为数字`);
+  }
+  assert.ok(Array.isArray(body.data.by_model), 'by_model 应为数组');
+  assert.ok(Array.isArray(body.data.by_provider), 'by_provider 应为数组');
 });
 
 // ── 2. 项目 CRUD 完整生命周期（创建→读取→更新→列表→封面派生→删除）──
@@ -223,6 +245,77 @@ test('分镜更新：PUT 单条改 duration 为 PATCH 语义', async () => {
   assert.strictEqual(status, 200);
   assert.strictEqual(body.data.duration, 8, 'duration 应更新为 8');
   assert.strictEqual(body.data.description, '测试镜头一：城市夜景全景', 'description 应保留');
+});
+
+test('分镜增量改稿：只清理变化镜头素材，未变化镜头完整保留', async () => {
+  const createdProject = await req('POST', '/api/projects', {
+    name: '[smoke测试]分镜增量改稿',
+    theme: 'reconcile',
+    style: '写实',
+  });
+  assert.strictEqual(createdProject.status, 200);
+  reconcileProjectId = createdProject.body.data.id;
+
+  const batch = await req('POST', '/api/storyboards/batch', {
+    project_id: reconcileProjectId,
+    storyboards: [
+      { scene_number: 1, description: '镜头一保持', dialog: '对白一', duration: 5 },
+      { scene_number: 2, description: '镜头二原稿', dialog: '对白二', duration: 5 },
+      { scene_number: 3, description: '镜头三保持', dialog: '对白三', duration: 5 },
+    ],
+  });
+  assert.strictEqual(batch.status, 200);
+  const rows = batch.body.data;
+  const imageByStoryboard = new Map();
+  for (const row of rows) {
+    const originalUrl = `/uploads/images/reconcile-${row.id}-${Date.now()}.png`;
+    const originalAbs = uploadAbs(originalUrl);
+    fs.mkdirSync(path.dirname(originalAbs), { recursive: true });
+    fs.writeFileSync(originalAbs, Buffer.from(`reconcile-${row.id}`));
+    const image = await req('POST', '/api/images', {
+      storyboard_id: row.id,
+      file_path: originalUrl,
+      file_url: originalUrl,
+      gen_status: 'success',
+    });
+    assert.strictEqual(image.status, 200);
+    imageByStoryboard.set(row.id, image.body.data);
+    reconcileFiles.push(uploadAbs(image.body.data.file_url));
+    const selected = await req('PUT', `/api/storyboards/${row.id}`, {
+      selected_image_id: image.body.data.id,
+    });
+    assert.strictEqual(selected.status, 200);
+  }
+
+  const changedAsset = uploadAbs(imageByStoryboard.get(rows[1].id).file_url);
+  const reconcile = await req('POST', '/api/storyboards/reconcile', {
+    project_id: reconcileProjectId,
+    storyboards: [
+      { ...rows[0], description: '镜头一保持' },
+      { ...rows[1], description: '镜头二改稿后' },
+      { ...rows[2], description: '镜头三保持' },
+    ],
+  });
+  assert.strictEqual(reconcile.status, 200);
+  assert.deepStrictEqual(reconcile.body.data.changed_ids, [rows[1].id], '仅第 2 镜应标记变化');
+  assert.deepStrictEqual(reconcile.body.data.regenerate_ids, [rows[1].id], '仅第 2 镜需要重生成');
+  assert.ok(reconcile.body.data.preserved_ids.includes(rows[0].id));
+  assert.ok(reconcile.body.data.preserved_ids.includes(rows[2].id));
+
+  const firstImages = (await req('GET', `/api/images/storyboard/${rows[0].id}`)).body.data;
+  const secondImages = (await req('GET', `/api/images/storyboard/${rows[1].id}`)).body.data;
+  const thirdImages = (await req('GET', `/api/images/storyboard/${rows[2].id}`)).body.data;
+  assert.strictEqual(firstImages[0].id, imageByStoryboard.get(rows[0].id).id, '第 1 镜图片记录应保留');
+  assert.strictEqual(secondImages.length, 0, '第 2 镜旧图片记录应清空');
+  assert.strictEqual(thirdImages[0].id, imageByStoryboard.get(rows[2].id).id, '第 3 镜图片记录应保留');
+  assert.strictEqual(fs.existsSync(changedAsset), false, '第 2 镜旧图片物理文件应删除');
+  assert.strictEqual(fs.existsSync(uploadAbs(firstImages[0].file_url)), true, '第 1 镜物理文件应保留');
+  assert.strictEqual(fs.existsSync(uploadAbs(thirdImages[0].file_url)), true, '第 3 镜物理文件应保留');
+
+  const reconciledRows = (await req('GET', `/api/storyboards/project/${reconcileProjectId}`)).body.data;
+  assert.strictEqual(reconciledRows[0].selected_image_id, imageByStoryboard.get(rows[0].id).id);
+  assert.strictEqual(reconciledRows[1].selected_image_id, null, '变化镜头 selected_image_id 应清空');
+  assert.strictEqual(reconciledRows[2].selected_image_id, imageByStoryboard.get(rows[2].id).id);
 });
 
 test('资产健康检查：缺少分镜图片时返回可理解的 error 与建议', async () => {

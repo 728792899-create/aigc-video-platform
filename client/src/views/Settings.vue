@@ -1,6 +1,14 @@
 <template>
   <div class="settings-page">
     <h1 class="text-gradient">{{ $t('settings.title') }}</h1>
+    <el-alert
+      v-if="health.needs_setup"
+      type="warning"
+      :closable="false"
+      show-icon
+      class="first-setup-alert"
+      :title="health.setup_message || '首次使用请在「模型路由」中配置至少一个文案模型和一个生图模型的 API Key。'"
+    />
     <el-tabs v-model="activeTab" class="settings-tabs">
       <!-- 常规 -->
       <el-tab-pane :label="$t('settings.tabGeneral')" name="general">
@@ -1103,6 +1111,9 @@ async function onFilePicked(e) {
 }
 .health-box {
   padding: 4px 0;
+}
+.first-setup-alert {
+  margin-bottom: 16px;
 }
 .health-head {
   display: flex;

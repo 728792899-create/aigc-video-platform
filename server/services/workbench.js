@@ -305,7 +305,7 @@ async function generateStoryboardImage({
   if (reuseCache && cached?.result?.image_ids?.length) {
     const first = cached.result.image_ids[0];
     const row = db.prepare('SELECT * FROM images WHERE id = ?').get(first);
-    if (row) {
+    if (row && row.gen_status !== 'placeholder') {
       db.prepare('UPDATE storyboards SET selected_image_id = ?, prompt = ? WHERE id = ?').run(row.id, compiled.prompt, storyboard.id);
       return { reused: true, image_ids: [row.id], prompt: compiled.prompt, reason };
     }
@@ -340,13 +340,26 @@ async function generateStoryboardImage({
     } catch (_) {}
     try { checks.push(continuity.evaluateStoryboard(project.id, storyboard.id, ins.lastInsertRowid)); } catch (_) {}
   }
+  require('./imageStats').record({
+    projectId: project.id,
+    storyboardId: storyboard.id,
+    requestedModel: model,
+    firstModel: result.attempts?.[0]?.model || '',
+    firstAttemptOk: !!result.attempts?.[0]?.ok,
+    finalOk: !result.is_placeholder,
+    usedPlaceholder: !!result.is_placeholder,
+    downgraded: !!result.downgraded,
+    attemptsCount: result.attempts?.length || 0,
+    finalProvider: result.provider || '',
+    source: 'manual',
+  });
   const rows = inserted.map((id) => db.prepare('SELECT * FROM images WHERE id = ?').get(id)).filter(Boolean);
   const ranked = promptCompiler.rankImageCandidates(rows, checks);
   if (ranked[0]) {
     db.prepare('UPDATE storyboards SET selected_image_id = ?, prompt = ?, quality_status = ? WHERE id = ?')
       .run(ranked[0].image.id, compiled.prompt, ranked[0].score >= 80 ? 'stable' : 'review', storyboard.id);
   }
-  promptCompiler.saveGenerationCache({
+  if (!result.is_placeholder) promptCompiler.saveGenerationCache({
     kind: 'image',
     model,
     provider: result.provider,

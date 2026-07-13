@@ -200,10 +200,9 @@ function resolveChain(modelKey) {
       else if (item.provider) push(stageToTarget(item));
     }
   }
-  // 3) 内置兜底图源（按"效果优先级 + 可靠性"排序，保证全新机器零配置也能出图）：
-  //    a. 智谱 CogView-3-Flash —— 随包内置免费 Key，实测效果优于 cogview-3/4，国内直连稳定，首选；
-  //    b. 智谱 CogView-3 / CogView-4 —— 同 Key 次选，仅当 Flash 不可用时尝试；
-  //    c. Pollinations flux / turbo —— 免费但对新网络常 402 限流，作为最后保底（一般用不到）。
+  // 3) 通用兜底链（按效果与可用性排序）：
+  //    a. 智谱 CogView-3-Flash / CogView-3 / CogView-4 —— 配置用户自己的智谱 Key 后启用；
+  //    b. Pollinations flux / turbo —— 无密钥免费图源，失败时最终落到本地占位图。
   push({ kind: 'cloud', provider: 'cogview', model: 'cogview-3-flash' });
   push({ kind: 'cloud', provider: 'cogview', model: 'cogview-3' });
   push({ kind: 'cloud', provider: 'cogview', model: 'cogview-4' });
@@ -277,6 +276,28 @@ async function generate({
   const negativeDefault = negativePromptOverride || DEFAULT_NEGATIVE;
   const N = Math.max(1, Math.min(4, batchSize)); // 限制 1-4 张
   const chain = resolveChain(model);
+
+  // DEMO_MODE 固定使用本地占位图，不访问任何真实图源或消耗额度。
+  if (['1', 'true'].includes(String(process.env.DEMO_MODE || '').toLowerCase())) {
+    const demoResult = await buildPlaceholderResult(ratio);
+    if (onProgress) onProgress(1, 1);
+    return {
+      prompt,
+      negative_prompt: negativeDefault,
+      model: 'DEMO 本地占位图',
+      provider: 'demo',
+      downgraded: false,
+      is_placeholder: true,
+      attempts: [{ model: 'DEMO 本地占位图', ok: false }],
+      notice: 'DEMO_MODE 使用本地占位图，不调用真实生图模型。',
+      reference_mode: referenceImages?.length ? 'text-anchor-seed-fallback' : 'text-anchor',
+      reference_images: referenceImages || [],
+      submit_id: demoResult.submit_id,
+      gen_status: demoResult.gen_status,
+      image_urls: demoResult.image_urls,
+      local_files: demoResult.local_files,
+    };
+  }
 
   const notify = (msg) => { try { if (onNotice) onNotice(msg); } catch {} };
   const attempts = []; // [{ model, ok, error }]

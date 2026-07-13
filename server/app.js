@@ -80,6 +80,10 @@ if (clientDist && fs.existsSync(clientDist)) {
   console.log(`[static] 托管前端构建产物: ${clientDist}`);
 }
 
+// 可选远程部署保护：API_TOKEN 未配置时维持本地单机行为；配置后保护所有 /api/*。
+// 健康检查、静态资源与 CORS 预检由中间件显式放行。
+app.use(require('./middleware/auth').optionalAuth);
+
 // AI 生成类接口限流：保护高成本的文案/图片/语音/视频生成被刷。
 // 只拦截以 generate / auto-produce / voice-preview 开头的写操作，
 // 只读端点（/voices /image-models /dreamina-credit）不受限。

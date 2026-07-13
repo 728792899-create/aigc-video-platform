@@ -3,6 +3,7 @@ const router = express.Router();
 const { generateScript, expandDialog, optimizeTheme } = require('../services/deepseek');
 const { generateTTS } = require('../services/tts');
 const imageGen = require('../services/imageGen');
+const imageStats = require('../services/imageStats');
 const { getDb } = require('../db');
 const taskManager = require('../services/taskManager');
 const { toRelative } = require('../utils/fileCleanup');
@@ -97,10 +98,9 @@ async function runAutoProduceTask(taskId, projectId, produceParams) {
   taskManager.start(taskId, '准备中...');
   try {
     const result = await runAutoProduce(
-      { ...produceParams, projectId },
+      { ...produceParams, projectId, taskId },
       (progress, message) => {
         const task = taskManager.get(taskId);
-        if (task?.meta?.cancel_requested) throw new Error('用户已取消任务');
         if (progress >= 80 || /合成|视频/.test(String(message || ''))) {
           taskManager.update(taskId, {
             status: 'composing',
@@ -112,6 +112,10 @@ async function runAutoProduceTask(taskId, projectId, produceParams) {
         }
       }
     );
+    if (result?.canceled) {
+      taskManager.partial(taskId, result, '已在分镜边界停止，半成品已保留');
+      return;
+    }
     taskManager.succeed(taskId, result, '🎬 视频已生成');
   } catch (err) {
     console.error('[auto-produce] 失败:', err);
@@ -318,9 +322,11 @@ router.post('/generate-image', idempotency({ ttlMs: 5 * 60 * 1000 }), validateBo
     });
 
     const insertedIds = saveImageResults(storyboard_id, result);
+    recordImageResult(sb, storyboard_id, model, result);
     const checks = insertedIds.map((id) => continuity.evaluateStoryboard(sb.project_id, storyboard_id, id)).filter(Boolean);
     const selected = shouldAutoSelectBest ? autoSelectBestImage(storyboard_id, insertedIds, checks) : null;
-    promptCompiler.saveGenerationCache({
+    // 占位图不计真实成功，也不进入缓存，避免下次被当成真实生成结果复用。
+    if (!result.is_placeholder) promptCompiler.saveGenerationCache({
       kind: 'image',
       model: model || 'auto',
       provider: result.provider,
@@ -434,9 +440,10 @@ async function doImageGeneration(taskId, sb, style, userPrompt, ratio, model, st
 
     taskManager.progress(taskId, 85, '正在保存图片…');
     const insertedIds = saveImageResults(storyboard_id, result);
+    recordImageResult(sb, storyboard_id, model, result);
     const checks = insertedIds.map((id) => continuity.evaluateStoryboard(sb.project_id, storyboard_id, id)).filter(Boolean);
     const selected = options.autoSelectBest ? autoSelectBestImage(storyboard_id, insertedIds, checks) : null;
-    promptCompiler.saveGenerationCache({
+    if (!result.is_placeholder) promptCompiler.saveGenerationCache({
       kind: 'image',
       model: model || 'auto',
       provider: result.provider,
@@ -487,7 +494,14 @@ function saveImageResults(storyboard_id, result) {
     const insRes = getDb().prepare(
       `INSERT INTO images (storyboard_id, prompt, file_path, file_url, submit_id, gen_status)
        VALUES (?, ?, ?, ?, ?, ?)`
-    ).run(storyboard_id, result.prompt, toRelative(lf.local_path), lf.file_url, result.submit_id || '', 'success');
+    ).run(
+      storyboard_id,
+      result.prompt,
+      toRelative(lf.local_path),
+      lf.file_url,
+      result.submit_id || '',
+      result.is_placeholder ? 'placeholder' : 'success'
+    );
     insertedIds.push(insRes.lastInsertRowid);
     try {
       const normalizedUrl = assetNaming.normalizeImageRecord(insRes.lastInsertRowid);
@@ -511,6 +525,22 @@ function saveImageResults(storyboard_id, result) {
     }
   }
   return insertedIds;
+}
+
+function recordImageResult(sb, storyboardId, requestedModel, result) {
+  imageStats.record({
+    projectId: sb.project_id,
+    storyboardId,
+    requestedModel: requestedModel || 'flux',
+    firstModel: result.attempts?.[0]?.model || '',
+    firstAttemptOk: !!result.attempts?.[0]?.ok,
+    finalOk: !result.is_placeholder,
+    usedPlaceholder: !!result.is_placeholder,
+    downgraded: !!result.downgraded,
+    attemptsCount: result.attempts?.length || 0,
+    finalProvider: result.provider || '',
+    source: 'manual',
+  });
 }
 
 function autoSelectBestImage(storyboardId, insertedIds = [], checks = []) {

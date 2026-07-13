@@ -152,7 +152,7 @@ function checkProviders() {
       const routedStage = Object.entries(stageModels).find(([, sel]) => sel && sel.provider === p.key);
       let status = 'ok';
       let msg = configured ? '已配置' : '未配置';
-      if (!configured && routedStage) { status = 'error'; msg = `当前阶段「${routedStage[0]}」指向但未配密钥`; }
+      if (!configured && routedStage) { status = 'warn'; msg = `当前阶段「${routedStage[0]}」指向但未配密钥`; }
       else if (!configured) { status = 'ok'; msg = '未配置（未使用）'; }
       if (RANK[status] > RANK[worst]) worst = status;
       const lastError = u && u.last_error ? u.last_error.slice(0, 120) : '';
@@ -174,12 +174,28 @@ function checkProviders() {
     last_error_at: edgeU && edgeU.last_error ? edgeU.last_at : 0,
     usage: edgeU ? { ok: edgeU.ok, fail: edgeU.fail, success_rate: edgeU.success_rate, last_ms: edgeU.last_ms } : null,
   });
+  const demoMode = ['1', 'true'].includes(String(process.env.DEMO_MODE || '').toLowerCase());
+  const hasLlm = items.some((item) => item.kind === 'llm' && item.configured);
+  const hasImage = items.some((item) => item.kind === 't2i' && item.configured);
+  const needsSetup = !demoMode && (!hasLlm || !hasImage);
+  const setupMessage = '首次使用请在「设置 → 模型路由」配置至少一个文案模型和一个生图模型的 API Key。';
+  if (needsSetup) {
+    for (const item of items) {
+      const missingKind = (item.kind === 'llm' && !hasLlm) || (item.kind === 't2i' && !hasImage);
+      if (missingKind && !item.configured) {
+        item.needs_setup = true;
+        item.setup_message = setupMessage;
+      }
+    }
+  }
   return {
     key: 'providers', label: 'AI 服务接入', status: worst,
     message: worst === 'ok'
       ? `${items.filter((i) => i.configured).length}/${items.length} 个已配置，当前路由可用`
       : `${items.filter((i) => i.configured).length}/${items.length} 个已配置，当前路由存在缺失凭证`,
-    metrics: { items },
+    metrics: { items, needs_setup: needsSetup, setup_message: needsSetup ? setupMessage : '' },
+    needs_setup: needsSetup,
+    setup_message: needsSetup ? setupMessage : '',
   };
 }
 
@@ -187,7 +203,8 @@ router.get('/', async (req, res) => {
   const checks = [];
   // 并行做能并行的探测
   const [ffmpeg] = await Promise.all([checkFfmpeg()]);
-  checks.push(ffmpeg, checkDatabase(), checkDeepseek(), checkStorage(), checkProviders());
+  const providerCheck = checkProviders();
+  checks.push(ffmpeg, checkDatabase(), checkDeepseek(), checkStorage(), providerCheck);
 
   // 进程运行时信息
   const mem = process.memoryUsage();
@@ -204,7 +221,16 @@ router.get('/', async (req, res) => {
   checks.push(runtime);
 
   const overall = checks.reduce((acc, c) => (RANK[c.status] > RANK[acc] ? c.status : acc), 'ok');
-  res.json({ code: 200, data: { overall, checked_at: Date.now(), checks } });
+  res.json({
+    code: 200,
+    data: {
+      overall,
+      checked_at: Date.now(),
+      checks,
+      needs_setup: !!providerCheck.needs_setup,
+      setup_message: providerCheck.setup_message || '',
+    },
+  });
 });
 
 module.exports = router;
