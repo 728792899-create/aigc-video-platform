@@ -16,6 +16,12 @@
   <img alt="Demo no paid API" src="https://img.shields.io/badge/Demo-0%20paid%20API-f97316">
 </p>
 
+<p align="center">
+  <a href="README.en.md">English quick guide</a> ·
+  <a href="docs/README.md">文档中心</a> ·
+  <a href="CONTRIBUTING.md">参与贡献</a>
+</p>
+
 ![AIGC 视频工作台产品主视觉](docs/images/product-hero.jpg)
 
 AIGC 视频工作台把容易中断、难以复现的模型调用，整理为一条明确的桌面生产线：
@@ -37,6 +43,19 @@ AIGC 视频工作台把容易中断、难以复现的模型调用，整理为一
 - [测试与质量门禁](#测试与质量门禁)
 - [桌面打包与发布](#桌面打包与发布)
 - [完整文档地图](#完整文档地图)
+
+## 一分钟产品导览
+
+| 时间 | 你会看到什么 | 为什么重要 |
+| --- | --- | --- |
+| 0–15 秒 | 无 Key 启动 Demo，从模板或主题创建项目 | 首次体验不依赖任何付费模型 |
+| 15–30 秒 | 脚本、分镜和逐镜素材进入八阶段工作流 | 每一步都可编辑、保存和追踪 |
+| 30–45 秒 | 后台任务展示 Provider、进度、成本和失败诊断 | 长任务离开页面后仍可观察 |
+| 45–60 秒 | 预览时间线，选择系统目录并导出真实 MP4 | Demo 不是静态原型，而是完整媒体闭环 |
+
+![无 Key Demo 正在执行八阶段任务](docs/screenshots/task-running.jpg)
+
+想按创作者视角完整走一遍，请看 [创作操作手册](docs/user-guide.md)；想现场演示，请直接使用 [五分钟 Demo 脚本](docs/demo-script.md)。
 
 ## 为什么做这个项目
 
@@ -157,7 +176,9 @@ flowchart LR
 
 ### Electron 桌面端
 
-![Electron 桌面端验收截图](docs/screenshots/electron-desktop-acceptance.png)
+| 隔离 Demo 启动 | 系统目录选择 | 导出成功 |
+| --- | --- | --- |
+| ![Electron 隔离 Demo 启动](docs/screenshots/electron-startup.jpg) | ![macOS 原生目录选择器](docs/screenshots/electron-folder-picker.jpg) | ![Electron 导出成功](docs/screenshots/electron-export-success.jpg) |
 
 桌面端复用相同的 Vue 工作台与 Express API，并增加系统目录选择、安全凭证库、应用数据目录、崩溃日志和打包更新能力。UI 中展示路径时会隐藏操作系统账户名，截图可以安全用于公开文档。
 
@@ -177,7 +198,29 @@ flowchart LR
 | --- | --- |
 | ![预览时间线](docs/screenshots/preview-timeline.jpg) | ![Provider 路由](docs/screenshots/provider-settings.jpg) |
 
+### 管理与恢复画廊
+
+| 历史任务 | 文件管理 |
+| --- | --- |
+| ![历史任务与尝试链](docs/screenshots/history-jobs.jpg) | ![分类文件管理](docs/screenshots/files-manager.jpg) |
+
+| 成片库 | 创作技能 |
+| --- | --- |
+| ![成片库](docs/screenshots/library-exports.jpg) | ![创作技能库](docs/screenshots/skills-library.jpg) |
+
+| 回收站恢复 | 备份与恢复 |
+| --- | --- |
+| ![回收站与恢复入口](docs/screenshots/trash-restore.jpg) | ![备份与恢复设置](docs/screenshots/settings-backup.jpg) |
+
+| 空状态修复 | 单阶段重试 |
+| --- | --- |
+| ![空状态与修复入口](docs/screenshots/empty-repair.jpg) | ![失败诊断和单阶段重试](docs/screenshots/task-retry.jpg) |
+
 ## 可靠性与恢复
+
+![检查点与可恢复创作流程概念视觉](docs/images/workflow-recovery-concept.jpg)
+
+> 上图是使用内置 ImageGen 生成的原创概念视觉，不是产品界面截图。它表达“八阶段资产围绕检查点持续保存，并可从失败点回到导出”的设计意图。
 
 ### 阶段状态
 
@@ -345,7 +388,12 @@ flowchart LR
 
 | 想了解什么 | 文档 |
 | --- | --- |
+| 英文快速介绍与 Demo Quick Start | [English quick guide](README.en.md) |
+| 从主题到导出的完整用户操作 | [创作操作手册](docs/user-guide.md) |
 | 从页面和用户任务理解产品 | [产品导览](docs/product-tour.md) |
+| 当前内部兼容 API、幂等和错误格式 | [API 参考](docs/api-reference.md) |
+| schema v3、ERD、快照和迁移 | [数据模型](docs/data-model.md) |
+| 数据库、媒体和恢复验证 | [备份与恢复手册](docs/backup-restore.md) |
 | 状态机、检查点、幂等和重启恢复 | [工作流与崩溃恢复](docs/workflow-recovery.md) |
 | Provider、降级、Demo Mode 和扩展方式 | [Provider 与 Demo 指南](docs/provider-guide.md) |
 | Electron、凭证、数据目录和隐私 | [安全与数据边界](docs/security-and-data.md) |
@@ -393,6 +441,8 @@ flowchart LR
 </details>
 
 ## 参与开发
+
+完整的环境准备、分支约定、TDD、无 Key 测试和提交规范见 [CONTRIBUTING.md](CONTRIBUTING.md)。
 
 提交代码前请至少执行：
 

@@ -2,6 +2,10 @@
 
 这份文档说明八阶段状态机如何保存进度、处理部分成功、避免重复成本，并在进程重启后恢复任务。对应实现主要位于：
 
+![检查点与可恢复创作流程概念视觉](images/workflow-recovery-concept.jpg)
+
+> 这是内置 ImageGen 为本文生成的原创概念视觉，不是产品界面截图。八个模块表示工作流阶段，中心时间线/存储表示持久化检查点，回环表示失败或进程退出后从最近阶段继续。
+
 - `server/services/workflowStateMachine.js`
 - `server/services/taskManager.js`
 - `server/services/taskRecovery.js`

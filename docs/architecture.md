@@ -69,3 +69,5 @@ Demo Mode 在脚本、图片和配音入口先短路为本地实现，保证测�
 ## 发布与可观测性
 
 GitHub Actions 在 Linux 执行全质量门禁，在 Windows 生成 unsigned 预检包、在 macOS 生成可校验但不受 Gatekeeper 信任的 ad-hoc 预检包。正式 tag 工作流从 GitHub Secrets 注入签名/公证凭据，输出安装包、blockmap 和更新清单。Sentry 是显式 opt-in；本地 crash dump 与 `logs/backend.log` 在无 DSN 时仍可用于离线诊断。
+
+继续阅读：[内部 API 参考](api-reference.md)、[schema v3 数据模型](data-model.md)、[工作流与崩溃恢复](workflow-recovery.md)、[备份与恢复手册](backup-restore.md)。

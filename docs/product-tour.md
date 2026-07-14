@@ -51,6 +51,20 @@ journey
 | 文件管理 | 浏览图片、音频、字幕和视频 | 引用状态、文件类型 | 归一化命名或移入回收站 |
 | 设置 | Provider、存储、备份、监控 | 凭证是否配置、目录可写 | 测试连接与恢复备份 |
 
+### 管理页面实机图
+
+| 历史任务与尝试链 | 分类文件管理 |
+| --- | --- |
+| ![历史任务](screenshots/history-jobs.jpg) | ![文件管理](screenshots/files-manager.jpg) |
+
+| 成片库 | 创作技能库 |
+| --- | --- |
+| ![成片库](screenshots/library-exports.jpg) | ![创作技能库](screenshots/skills-library.jpg) |
+
+| 回收站恢复 | 设置中的备份恢复 |
+| --- | --- |
+| ![回收站恢复](screenshots/trash-restore.jpg) | ![备份恢复](screenshots/settings-backup.jpg) |
+
 ## 脚本与分镜工作区
 
 ![脚本与分镜工作区](screenshots/script-storyboard.jpg)
@@ -100,7 +114,11 @@ flowchart LR
 
 ## 桌面体验
 
-![Electron 桌面验收](screenshots/electron-desktop-acceptance.png)
+以下三张图来自隔离 Electron 用户目录中的无 Key Demo。目录选择器已切换到空的临时目录并隐藏系统侧边栏，不包含真实用户名、用户文件或凭证。
+
+| 桌面启动 | 原生目录选择 | 导出完成 |
+| --- | --- | --- |
+| ![Electron 桌面启动](screenshots/electron-startup.jpg) | ![macOS 原生目录选择器](screenshots/electron-folder-picker.jpg) | ![Electron 成功导出](screenshots/electron-export-success.jpg) |
 
 Electron 增加了浏览器模式没有的系统能力：
 
@@ -120,6 +138,10 @@ Electron 增加了浏览器模式没有的系统能力：
 
 ## 长任务与弱网反馈
 
+| 运行中任务 | 失败诊断与单阶段重试 |
+| --- | --- |
+| ![运行中任务](screenshots/task-running.jpg) | ![失败诊断与单阶段重试](screenshots/task-retry.jpg) |
+
 后台任务浮层持续展示：任务类型、阶段、进度、Provider、消息和终态。离开当前页面不会丢失任务。弱网或 Provider 抖动时，界面会区分：
 
 - 正在重试；
@@ -132,6 +154,8 @@ Electron 增加了浏览器模式没有的系统能力：
 取消操作在安全边界生效。例如媒体文件正在写入时，不强制截断进程，而是在当前可取消点停止并保留已完成资产。
 
 ## 键盘与误操作保护
+
+![空状态和修复入口](screenshots/empty-repair.jpg)
 
 - 项目卡片和主要动作可通过 Tab 聚焦；
 - Enter/Space 可以触发主要卡片动作；
