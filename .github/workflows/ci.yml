@@ -90,6 +90,7 @@ jobs:
           cp -R "$mount/AIGC 视频工作台.app" "$install/"
           hdiutil detach "$mount"
           trap - EXIT
+          codesign --force --deep --sign - --options runtime --entitlements resources/entitlements.adhoc.plist "$install/AIGC 视频工作台.app"
           codesign --verify --deep --strict --verbose=2 "$install/AIGC 视频工作台.app"
           AIGC_DESKTOP_EXECUTABLE="$install/AIGC 视频工作台.app/Contents/MacOS/AIGC 视频工作台" npm run desktop:install-smoke
           rm -rf "$install/AIGC 视频工作台.app"
