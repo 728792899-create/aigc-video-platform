@@ -101,47 +101,60 @@
   </section>
 </template>
 
-<script setup>
+<script setup lang="ts">
 import { computed, ref } from 'vue'
 import { Camera, FullScreen, Mute, Picture, VideoPause, VideoPlay } from '@element-plus/icons-vue'
 
-const props = defineProps({
-  mode: { type: String, default: 'draft-canvas' },
-  videoUrl: { type: String, default: '' },
-  storyboards: { type: Array, default: () => [] },
-  durations: { type: Array, default: () => [] },
-  currentTime: { type: Number, default: 0 },
-  currentSceneIndex: { type: Number, default: 0 },
-  totalDuration: { type: Number, default: 0 },
-  ratio: { type: String, default: '16:9' },
-  videoSpeed: { type: Number, default: 1 },
-  subtitleEnabled: { type: Boolean, default: true },
-  isPlaying: { type: Boolean, default: false },
-  muted: { type: Boolean, default: false },
-  volume: { type: Number, default: 1 },
-  syncSummary: { type: String, default: '' },
-  loading: { type: Boolean, default: false },
-  loadingText: { type: String, default: '' },
-  error: { type: String, default: '' },
+interface PlayerStoryboard {
+  id: string | number
+  duration?: number
+  thumbnailUrl?: string | null
+  selected_image_url?: string | null
+  sync_status?: string | null
+  quality_status?: string | null
+}
+
+const props = withDefaults(defineProps<{
+  mode?: string
+  videoUrl?: string
+  storyboards?: PlayerStoryboard[]
+  durations?: number[]
+  currentTime?: number
+  currentSceneIndex?: number
+  totalDuration?: number
+  ratio?: string
+  videoSpeed?: number
+  subtitleEnabled?: boolean
+  isPlaying?: boolean
+  muted?: boolean
+  volume?: number
+  syncSummary?: string
+  loading?: boolean
+  loadingText?: string
+  error?: string
+}>(), {
+  mode: 'draft-canvas', videoUrl: '', storyboards: () => [], durations: () => [], currentTime: 0,
+  currentSceneIndex: 0, totalDuration: 0, ratio: '16:9', videoSpeed: 1, subtitleEnabled: true,
+  isPlaying: false, muted: false, volume: 1, syncSummary: '', loading: false, loadingText: '', error: '',
 })
 
-const emit = defineEmits([
-  'toggle-play',
-  'seek',
-  'speed-change',
-  'toggle-subtitle',
-  'mute-change',
-  'volume-change',
-  'snapshot',
-  'mode-change',
-  'scene-seek',
-  'fullscreen',
-])
+const emit = defineEmits<{
+  'toggle-play': []
+  seek: [seconds: number]
+  'speed-change': [speed: number]
+  'toggle-subtitle': []
+  'mute-change': [muted: boolean]
+  'volume-change': [volume: number]
+  snapshot: []
+  'mode-change': [mode: string]
+  'scene-seek': [seconds: number]
+  fullscreen: []
+}>()
 
-const rootRef = ref(null)
-const progressRef = ref(null)
+const rootRef = ref<HTMLElement | null>(null)
+const progressRef = ref<HTMLElement | null>(null)
 const speedOptions = [0.5, 0.75, 1, 1.25, 1.5, 2]
-const ratioSize = {
+const ratioSize: Record<string, string> = {
   '16:9': '16 / 9',
   '9:16': '9 / 16',
   '1:1': '1 / 1',
@@ -164,6 +177,12 @@ const scenes = computed(() => {
       : sb.sync_status && sb.sync_status !== 'synced' ? 'sync'
         : sb.quality_status === 'failed' ? 'failed'
           : 'ok'
+    const labels: Record<string, string> = {
+      ok: '正常',
+      sync: '待同步',
+      failed: '失败',
+      'missing-image': '缺图',
+    }
     const item = {
       id: sb.id,
       index,
@@ -171,12 +190,7 @@ const scenes = computed(() => {
       duration,
       thumb: sb.thumbnailUrl || sb.selected_image_url || '',
       status,
-      statusLabel: {
-        ok: '正常',
-        sync: '待同步',
-        failed: '失败',
-        'missing-image': '缺图',
-      }[status] || '正常',
+      statusLabel: labels[status] || '正常',
     }
     cursor += duration
     return item
@@ -189,26 +203,26 @@ const currentSceneLabel = computed(() => {
   return `S${String(index + 1).padStart(2, '0')}`
 })
 
-function formatTime(seconds) {
+function formatTime(seconds: number): string {
   const safe = Math.max(0, Number(seconds) || 0)
   const m = Math.floor(safe / 60)
   const s = Math.floor(safe % 60)
   return `${m}:${String(s).padStart(2, '0')}`
 }
 
-function seekFromEvent(e) {
+function seekFromEvent(event: MouseEvent) {
   const rect = progressRef.value?.getBoundingClientRect()
   if (!rect || !props.totalDuration) return
-  const pct = Math.max(0, Math.min(1, (e.clientX - rect.left) / rect.width))
+  const pct = Math.max(0, Math.min(1, (event.clientX - rect.left) / rect.width))
   emit('seek', pct * props.totalDuration)
 }
 
-function onKeydown(e) {
-  const key = String(e.key || '').toLowerCase()
+function onKeydown(event: KeyboardEvent) {
+  const key = String(event.key || '').toLowerCase()
   const handled = [' ', 'arrowleft', 'arrowright', 'm', 'f', ',', '.'].includes(key)
   if (!handled) return
-  e.preventDefault()
-  e.stopPropagation()
+  event.preventDefault()
+  event.stopPropagation()
   if (key === ' ') emit('toggle-play')
   else if (key === 'arrowleft') emit('seek', Math.max(0, props.currentTime - 5))
   else if (key === 'arrowright') emit('seek', Math.min(props.totalDuration, props.currentTime + 5))

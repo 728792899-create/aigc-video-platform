@@ -22,10 +22,10 @@ function flattenKeys(obj, prefix = '') {
 }
 
 async function loadAllZhKeys() {
-  const files = readdirSync(MODULES_DIR).filter(f => f.endsWith('.js'))
+  const files = readdirSync(MODULES_DIR).filter(f => /\.(?:js|ts)$/.test(f))
   const all = new Set()
   for (const f of files) {
-    const ns = f.replace(/\.js$/, '')
+    const ns = f.replace(/\.(?:js|ts)$/, '')
     const mod = await import(join(MODULES_DIR, f))
     for (const k of flattenKeys(mod.default.zh)) all.add(`${ns}.${k}`)
   }
@@ -57,7 +57,7 @@ function extractKeys(content) {
 describe('模板 $t() 引用键存在性（问题2 防线）', () => {
   it('所有 .vue/.js 里静态 $t(\'ns.key\') 引用的键都必须在 locale 中存在', async () => {
     const zhKeys = await loadAllZhKeys()
-    const files = walk(SRC, ['.vue', '.js']).filter(f => !f.includes('locales'))
+    const files = walk(SRC, ['.vue', '.js', '.ts']).filter(f => !f.includes('locales'))
     const missing = []
     for (const f of files) {
       const content = readFileSync(f, 'utf-8')

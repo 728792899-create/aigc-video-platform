@@ -47,7 +47,7 @@
     <div v-if="activeType !== 'script'" v-loading="loading" class="file-grid">
       <div v-for="f in files" :key="f.url" class="file-card" :class="{ sel: selected.has(f.url) }">
         <div class="file-check">
-          <el-checkbox :model-value="selected.has(f.url)" @change="() => toggleOne(f.url)" />
+          <el-checkbox :model-value="selected.has(f.url)" @change="toggleOne(f.url)" />
         </div>
         <div class="file-media" @click="toggleOne(f.url)">
           <img v-if="activeType==='image'" :src="mediaUrl(f.url)" loading="lazy" />
@@ -114,37 +114,48 @@
   </div>
 </template>
 
-<script setup>
+<script setup lang="ts">
 import { ref, computed, reactive, onMounted } from 'vue'
-import { ElMessage, ElMessageBox } from 'element-plus'
+import { ElMessage } from 'element-plus/es/components/message/index'
+import { ElMessageBox } from 'element-plus/es/components/message-box/index'
 import { useI18n } from 'vue-i18n'
 import { Document } from '@element-plus/icons-vue'
 import { mediaUrl } from '../api/config'
-import { listFiles, normalizeNames, deleteFiles, revealFile, listScripts, getScript, scriptExportUrl } from '../api/files'
-import { getStorageStats, cleanTemp } from '../api/settings'
+import {
+  listFiles, normalizeNames, deleteFiles, revealFile, listScripts, getScript, scriptExportUrl,
+  type ManagedFile, type ManagedFileType, type ScriptDetail, type ScriptOverview,
+} from '../api/files'
+import { getStorageStats, cleanTemp, type StorageStats } from '../api/settings'
+
+type FileTab = ManagedFileType | 'script'
+type StatusTag = '' | 'success' | 'warning' | 'info' | 'danger'
+
+function errorMessage(cause: unknown): string {
+  return cause instanceof Error ? cause.message : String(cause)
+}
 
 const { t } = useI18n()
-const activeType = ref('image')
-const files = ref([])
+const activeType = ref<FileTab>('image')
+const files = ref<ManagedFile[]>([])
 const loading = ref(false)
 const normalizing = ref(false)
-const selected = reactive(new Set())
+const selected = reactive(new Set<string>())
 const selectAll = ref(false)
-const storage = reactive({ root: '', totalSize: 0, totalFiles: 0, breakdown: {} })
+const storage = reactive<StorageStats>({ root: '', totalSize: 0, totalFiles: 0, breakdown: {} })
 
 // 剧本（虚拟文件）
-const scripts = ref([])
+const scripts = ref<ScriptOverview[]>([])
 const scriptLoading = ref(false)
 const scriptDialog = ref(false)
-const curScript = ref(null)
+const curScript = ref<ScriptDetail | null>(null)
 
-const STATUS_MAP = {
+const STATUS_MAP: Record<string, { key: string; type: StatusTag }> = {
   draft: { key: 'files.statusDraft', type: 'info' },
   generating: { key: 'files.statusGenerating', type: 'warning' },
   completed: { key: 'files.statusCompleted', type: 'success' },
 }
-function statusLabel(s) { return STATUS_MAP[s] ? t(STATUS_MAP[s].key) : (s || t('files.statusDraft')) }
-function statusType(s) { return (STATUS_MAP[s] || {}).type || 'info' }
+function statusLabel(status: string | undefined): string { return status && STATUS_MAP[status] ? t(STATUS_MAP[status].key) : (status || t('files.statusDraft')) }
+function statusType(status: string | undefined): StatusTag { return (status && STATUS_MAP[status]?.type) || 'info' }
 
 const SEG_META = [
   { key: 'images', labelKey: 'files.segImages', color: '#007aff' },
@@ -162,15 +173,15 @@ const storageSegs = computed(() => {
   }).filter((s) => s.size > 0 || s.count > 0)
 })
 
-function fmtSize(n) {
+function fmtSize(n: number): string {
   if (!n) return '0 B'
   const u = ['B', 'KB', 'MB', 'GB']
   let i = 0; let v = n
   while (v >= 1024 && i < u.length - 1) { v /= 1024; i++ }
-  return `${v.toFixed(i ? 1 : 0)} ${u[i]}`
+  return `${v.toFixed(i ? 1 : 0)} ${u[i] ?? 'B'}`
 }
 
-function fileTitle(f) {
+function fileTitle(f: ManagedFile): string {
   const lines = [
     f.display_name || f.name,
     f.original_name && f.original_name !== (f.display_name || f.name) ? `${t('files.originalName')}: ${f.original_name}` : '',
@@ -183,7 +194,7 @@ async function loadStorage() {
   try {
     const d = await getStorageStats()
     Object.assign(storage, d)
-  } catch (e) { ElMessage.error(t('files.loadStorageFailed') + e.message) }
+  } catch (cause) { ElMessage.error(t('files.loadStorageFailed') + errorMessage(cause)) }
 }
 
 async function loadFiles() {
@@ -191,51 +202,52 @@ async function loadFiles() {
   selected.clear()
   selectAll.value = false
   try {
+    if (activeType.value === 'script') return
     const d = await listFiles(activeType.value)
     files.value = d.list || []
-  } catch (e) {
-    ElMessage.error(t('files.loadFilesFailed') + e.message)
+  } catch (cause) {
+    ElMessage.error(t('files.loadFilesFailed') + errorMessage(cause))
   } finally {
     loading.value = false
   }
 }
 
-function toggleOne(url) {
+function toggleOne(url: string) {
   if (selected.has(url)) selected.delete(url)
   else selected.add(url)
   selectAll.value = selected.size === files.value.length && files.value.length > 0
 }
 
-function toggleAll(val) {
+function toggleAll(value: string | number | boolean) {
   selected.clear()
-  if (val) files.value.forEach((f) => selected.add(f.url))
+  if (Boolean(value)) files.value.forEach((f) => selected.add(f.url))
 }
 
-async function doDelete(urls) {
+async function doDelete(urls: string[]) {
   const res = await deleteFiles(urls)
   ElMessage.success(res.message || t('files.deleted'))
   await Promise.all([loadFiles(), loadStorage()])
 }
 
-async function deleteOne(f) {
+async function deleteOne(f: ManagedFile) {
   try {
     await ElMessageBox.confirm(t('files.deleteOneConfirm', { name: f.name }), t('files.deleteConfirmTitle'), { type: 'warning' })
     await doDelete([f.url])
-  } catch (e) { if (e !== 'cancel') ElMessage.error(t('files.deleteFailed') + (e.message || e)) }
+  } catch (cause) { if (cause !== 'cancel') ElMessage.error(t('files.deleteFailed') + errorMessage(cause)) }
 }
 
 async function deleteSelected() {
   try {
     await ElMessageBox.confirm(t('files.deleteSelectedConfirm', { n: selected.size }), t('common.batchDelete'), { type: 'warning' })
     await doDelete([...selected])
-  } catch (e) { if (e !== 'cancel') ElMessage.error(t('files.deleteFailed') + (e.message || e)) }
+  } catch (cause) { if (cause !== 'cancel') ElMessage.error(t('files.deleteFailed') + errorMessage(cause)) }
 }
 
-async function reveal(f) {
+async function reveal(f: ManagedFile) {
   try {
     await revealFile(f.url)
     ElMessage.success(t('files.revealSuccess'))
-  } catch (e) { ElMessage.error(t('files.revealFailed') + (e.message || e)) }
+  } catch (cause) { ElMessage.error(t('files.revealFailed') + errorMessage(cause)) }
 }
 
 async function doCleanTemp() {
@@ -245,7 +257,7 @@ async function doCleanTemp() {
     ElMessage.success(res.message || t('files.cleaned'))
     loadStorage()
     if (activeType.value === 'image') loadFiles()
-  } catch (e) { if (e !== 'cancel') ElMessage.error(t('files.cleanFailed') + (e.message || e)) }
+  } catch (cause) { if (cause !== 'cancel') ElMessage.error(t('files.cleanFailed') + errorMessage(cause)) }
 }
 
 async function doNormalizeNames() {
@@ -267,8 +279,8 @@ async function doNormalizeNames() {
     const res = await normalizeNames({ types: [activeType.value], dry_run: false })
     ElMessage.success(res.message || t('files.normalizeDone', { count: (res.data && res.data.renamed) || count }))
     await Promise.all([loadFiles(), loadStorage()])
-  } catch (e) {
-    if (e !== 'cancel') ElMessage.error(t('files.normalizeFailed') + (e?.response?.data?.message || e.message || e))
+  } catch (cause) {
+    if (cause !== 'cancel') ElMessage.error(t('files.normalizeFailed') + errorMessage(cause))
   } finally {
     normalizing.value = false
   }
@@ -284,27 +296,27 @@ async function loadScripts() {
   try {
     const d = await listScripts()
     scripts.value = d.list || []
-  } catch (e) {
-    ElMessage.error(t('files.loadScriptsFailed') + (e.message || e))
+  } catch (cause) {
+    ElMessage.error(t('files.loadScriptsFailed') + errorMessage(cause))
   } finally {
     scriptLoading.value = false
   }
 }
 
-async function viewScript(row) {
+async function viewScript(row: ScriptOverview) {
   try {
     curScript.value = await getScript(row.project_id)
     scriptDialog.value = true
-  } catch (e) {
-    ElMessage.error(t('files.loadScriptDetailFailed') + (e.message || e))
+  } catch (cause) {
+    ElMessage.error(t('files.loadScriptDetailFailed') + errorMessage(cause))
   }
 }
 
-function downloadScript(row, format) {
+function downloadScript(row: ScriptOverview, format: 'txt' | 'json') {
   window.open(scriptExportUrl(row.project_id, format), '_blank')
 }
 
-onMounted(() => { loadStorage(); loadFiles() })
+onMounted(() => { void loadStorage(); void loadFiles() })
 </script>
 
 <style scoped>

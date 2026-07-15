@@ -1,4 +1,4 @@
-# Snoopy King - Code Signing Toolchain (self-signed cert)
+# AIGC Video Studio - development code-signing helper (self-signed cert)
 # Usage:
 #   gencert: powershell -File sign-app.ps1 -Action gencert
 #   sign:    powershell -File sign-app.ps1 -Action sign -File "path\xxx.exe"
@@ -7,16 +7,20 @@ param(
   [ValidateSet('gencert','sign','verify')]
   [string]$Action = 'verify',
   [string]$File = '',
-  [string]$Subject = 'CN=Snoopy King Studio, O=Snoopy King, C=CN',
-  [string]$PfxPath = 'build\codesign\snoopy-codesign.pfx',
-  [string]$Password = 'SnoopyKing#1.4.0'
+  [string]$Subject = 'CN=AIGC Video Studio Development, O=AIGC Video Studio, C=CN',
+  [string]$PfxPath = 'build\codesign\aigc-video-studio-dev.pfx',
+  [string]$Password = $env:WINDOWS_PFX_PASSWORD
 )
 $ErrorActionPreference = 'Stop'
 $tsUrl = 'http://timestamp.digicert.com'
 
 function Resolve-Pfx { Join-Path (Get-Location) $PfxPath }
+function Require-Password {
+  if (-not $Password) { throw 'Set WINDOWS_PFX_PASSWORD or pass -Password. Never store the password in source control.' }
+}
 
 function Do-GenCert {
+  Require-Password
   $pfx = Resolve-Pfx
   $dir = Split-Path $pfx -Parent
   if (-not (Test-Path $dir)) { New-Item -ItemType Directory -Force -Path $dir | Out-Null }
@@ -44,10 +48,10 @@ function Do-GenCert {
 }
 
 function Do-Sign {
+  Require-Password
   if (-not $File -or -not (Test-Path $File)) { throw "Need -File pointing to an existing file: '$File'" }
   $pfx = Resolve-Pfx
   if (-not (Test-Path $pfx)) { throw "Cert not found $pfx, run -Action gencert first" }
-  $sec = ConvertTo-SecureString -String $Password -Force -AsPlainText
   $cert = New-Object System.Security.Cryptography.X509Certificates.X509Certificate2 `
             -ArgumentList $pfx, $Password, 'Exportable,PersistKeySet'
   Write-Output ("[sign] file: " + $File)
@@ -81,4 +85,3 @@ switch ($Action) {
   'sign'    { Do-Sign }
   'verify'  { Do-Verify }
 }
-

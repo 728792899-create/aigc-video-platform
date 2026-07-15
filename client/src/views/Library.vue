@@ -35,7 +35,7 @@
           <el-tag v-if="it.file_exists === false" type="danger" size="small" class="lib-missing">{{ $t('library.fileMissing') }}</el-tag>
         </div>
         <div class="lib-meta">
-          <div class="lib-name" :title="it.project_name">{{ it.project_name || $t('library.unnamedProject') }}</div>
+          <div class="lib-name" :title="it.project_name || undefined">{{ it.project_name || $t('library.unnamedProject') }}</div>
           <div class="lib-sub">
             <span>{{ fmtDuration(it.duration) }}</span>
             <span>·</span>
@@ -53,7 +53,7 @@
           </div>
           <div v-if="it.external_file_path" class="lib-external" :class="{ missing: !it.external_file_exists }">
             <span>{{ it.external_file_exists ? '本机副本' : '副本缺失' }}</span>
-            <code>{{ it.external_file_path }}</code>
+            <code>{{ displayLocalPath(it.external_file_path) }}</code>
           </div>
           <div class="lib-time">{{ fmtTime(it.created_at) }}</div>
         </div>
@@ -68,54 +68,82 @@
   </div>
 </template>
 
-<script setup>
+<script setup lang="ts">
+import { z } from 'zod'
 import { ref, computed, onMounted, watch, nextTick } from 'vue'
 import { useRouter } from 'vue-router'
-import { ElMessage, ElMessageBox } from 'element-plus'
+import { ElMessage } from 'element-plus/es/components/message/index'
+import { ElMessageBox } from 'element-plus/es/components/message-box/index'
 import { useI18n } from 'vue-i18n'
 import { mediaUrl } from '../api/config'
 import { listLibrary, deleteExport } from '../api/features'
+import { displayLocalPath } from '../utils/localPath'
+
+type EntityId = string | number
+const LibraryItemSchema = z.object({
+  id: z.union([z.string(), z.number()]),
+  project_id: z.union([z.string(), z.number()]),
+  project_name: z.string().nullish(),
+  file_url: z.string(),
+  file_exists: z.boolean().optional(),
+  file_size: z.number().nullish(),
+  duration: z.number().nullish(),
+  vtt_url: z.string().nullish(),
+  burn_subtitle: z.union([z.string(), z.number(), z.boolean()]).optional(),
+  subtitle_status: z.string().nullish(),
+  subtitle_error: z.string().nullish(),
+  long_video_mode: z.coerce.boolean().optional(),
+  chapter_count: z.number().nullish(),
+  external_file_path: z.string().nullish(),
+  external_file_exists: z.boolean().optional(),
+  created_at: z.union([z.string(), z.number()]).nullish(),
+}).passthrough()
+type LibraryItem = z.infer<typeof LibraryItemSchema>
+
+function errorMessage(cause: unknown): string {
+  return cause instanceof Error ? cause.message : String(cause)
+}
 
 const { t } = useI18n()
 const router = useRouter()
-const items = ref([])
+const items = ref<LibraryItem[]>([])
 const loading = ref(false)
-const filterProject = ref('')
-const currentPlayingId = ref(null)
-const videoRefs = new Map()
+const filterProject = ref<EntityId | ''>('')
+const currentPlayingId = ref<EntityId | null>(null)
+const videoRefs = new Map<EntityId, HTMLVideoElement>()
 
 const totalSize = computed(() => items.value.reduce((s, i) => s + (i.file_size || 0), 0))
 const filtered = computed(() =>
   filterProject.value ? items.value.filter((i) => i.project_id === filterProject.value) : items.value
 )
 const projectOptions = computed(() => {
-  const seen = new Map()
+  const seen = new Map<EntityId, string>()
   items.value.forEach((i) => { if (!seen.has(i.project_id)) seen.set(i.project_id, i.project_name || t('library.unnamedProject')) })
   return [...seen].map(([id, name]) => ({ id, name }))
 })
 
-function fmtSize(n) {
+function fmtSize(n: number | null | undefined): string {
   if (!n) return '0 B'
   const u = ['B', 'KB', 'MB', 'GB']; let i = 0; let v = n
   while (v >= 1024 && i < u.length - 1) { v /= 1024; i++ }
-  return `${v.toFixed(i ? 1 : 0)} ${u[i]}`
+  return `${v.toFixed(i ? 1 : 0)} ${u[i] ?? 'B'}`
 }
-function fmtDuration(s) {
+function fmtDuration(s: number | null | undefined): string {
   if (!s) return '—'
   const m = Math.floor(s / 60); const sec = Math.round(s % 60)
   return m ? t('library.durationMin', { m, s: sec }) : t('library.durationSec', { s: sec })
 }
-function fmtTime(t) {
-  if (!t) return ''
-  return new Date(t).toLocaleString('zh-CN', { hour12: false })
+function fmtTime(value: string | number | null | undefined): string {
+  if (!value) return ''
+  return new Date(value).toLocaleString('zh-CN', { hour12: false })
 }
 
-function setVideoRef(id, el) {
-  if (el) videoRefs.set(id, el)
+function setVideoRef(id: EntityId, element: unknown) {
+  if (element instanceof HTMLVideoElement) videoRefs.set(id, element)
   else videoRefs.delete(id)
 }
 
-function pauseAll(exceptId = null) {
+function pauseAll(exceptId: EntityId | null = null) {
   for (const [id, el] of videoRefs.entries()) {
     if (!el || id === exceptId) continue
     try {
@@ -125,7 +153,7 @@ function pauseAll(exceptId = null) {
   }
 }
 
-function cleanupVideoRefs(validRows = items.value) {
+function cleanupVideoRefs(validRows: LibraryItem[] = items.value) {
   const validIds = new Set(validRows.map((i) => i.id))
   for (const id of videoRefs.keys()) {
     if (!validIds.has(id)) videoRefs.delete(id)
@@ -133,30 +161,31 @@ function cleanupVideoRefs(validRows = items.value) {
   if (currentPlayingId.value && !validIds.has(currentPlayingId.value)) currentPlayingId.value = null
 }
 
-function handlePlay(id) {
+function handlePlay(id: EntityId) {
   pauseAll(id)
   currentPlayingId.value = id
 }
 
-function handlePause(id) {
+function handlePause(id: EntityId) {
   if (currentPlayingId.value === id) currentPlayingId.value = null
 }
 
-function handleEnded(id) {
+function handleEnded(id: EntityId) {
   if (currentPlayingId.value === id) currentPlayingId.value = null
 }
 
-function handleLoadedMetadata(id) {
+function handleLoadedMetadata(id: EntityId) {
   const el = videoRefs.get(id)
   if (!el?.textTracks?.length) return
-  try { el.textTracks[0].mode = 'showing' } catch {}
+  const firstTrack = el.textTracks[0]
+  try { if (firstTrack) firstTrack.mode = 'showing' } catch {}
 }
 
-function showSoftTrack(it) {
+function showSoftTrack(it: LibraryItem): boolean {
   return !!it.vtt_url && Number(it.burn_subtitle) !== 1 && ['soft', 'soft_missing_vtt'].includes(String(it.subtitle_status || ''))
 }
 
-function subtitleInfo(it) {
+function subtitleInfo(it: LibraryItem): { label: string; type: 'success' | 'warning' | 'danger' | 'info'; detail: string } {
   const status = String(it.subtitle_status || 'legacy')
   if (status === 'burned') {
     return { label: '已内嵌字幕', type: 'success', detail: '字幕已烧入 MP4，下载后任意播放器都应可见。' }
@@ -181,35 +210,35 @@ async function load() {
   currentPlayingId.value = null
   loading.value = true
   try {
-    items.value = await listLibrary()
+    items.value = LibraryItemSchema.array().parse(await listLibrary())
     await nextTick()
     cleanupVideoRefs()
-  } catch (e) {
-    ElMessage.error(t('library.loadFailed') + (e.message || e))
+  } catch (cause) {
+    ElMessage.error(t('library.loadFailed') + errorMessage(cause))
   } finally {
     loading.value = false
   }
 }
 
-function download(it) {
+function download(it: LibraryItem) {
   const a = document.createElement('a')
   a.href = mediaUrl(it.file_url)
   a.download = `${it.project_name || 'video'}.mp4`
   document.body.appendChild(a); a.click(); a.remove()
 }
 
-function goProject(id) {
+function goProject(id: EntityId) {
   router.push(`/projects/${id}/preview`)
 }
 
-async function remove(it) {
+async function remove(it: LibraryItem) {
   try {
     await ElMessageBox.confirm(t('library.deleteConfirm'), t('library.deleteTitle'), { type: 'warning' })
     if (currentPlayingId.value === it.id) currentPlayingId.value = null
     await deleteExport(it.id)
     ElMessage.success(t('library.deleted'))
     await load()
-  } catch (e) { if (e !== 'cancel') ElMessage.error(t('library.deleteFailed') + (e.message || e)) }
+  } catch (cause) { if (cause !== 'cancel') ElMessage.error(t('library.deleteFailed') + errorMessage(cause)) }
 }
 
 watch(filterProject, () => {

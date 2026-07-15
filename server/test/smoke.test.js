@@ -60,6 +60,8 @@ let testImageTrashId = null;
 let testGroupedTrashId = null;
 let testCustomSkillId = null;
 let reconcileProjectId = null;
+let p2ProjectId = null;
+let p2StoryboardId = null;
 const reconcileFiles = [];
 
 function uploadAbs(url) {
@@ -92,6 +94,9 @@ after(async () => {
   }
   if (reconcileProjectId != null) {
     await req('DELETE', `/api/projects/${reconcileProjectId}?permanent=true`);
+  }
+  if (p2ProjectId != null) {
+    await req('DELETE', `/api/projects/${p2ProjectId}?permanent=true`);
   }
   for (const file of reconcileFiles) {
     try { fs.rmSync(file, { force: true }); } catch (_) {}
@@ -171,6 +176,65 @@ test('项目读取：GET /:id 返回项目并带 cover_url 派生字段', async 
   assert.ok('asset_health' in body.data, '项目详情应包含 asset_health 字段');
 });
 
+test('Studio 布局：默认读取、乐观并发保存与非法节点拒绝', async () => {
+  const initial = await req('GET', `/api/projects/${testProjectId}/studio-layout`);
+  assert.strictEqual(initial.status, 200);
+  assert.strictEqual(initial.body.data.revision, 0);
+  assert.deepEqual(initial.body.data.positions, {});
+
+  const rejected = await req('PUT', `/api/projects/${testProjectId}/studio-layout`, {
+    schema_version: 1,
+    base_revision: 0,
+    positions: { 'arbitrary-node': { x: 10, y: 20 } },
+  });
+  assert.strictEqual(rejected.status, 400);
+
+  const saved = await req('PUT', `/api/projects/${testProjectId}/studio-layout`, {
+    schema_version: 1,
+    base_revision: 0,
+    positions: {
+      [`project:${testProjectId}:topic`]: { x: 10, y: 20 },
+      [`project:${testProjectId}:script`]: { x: 360, y: 20 },
+    },
+  });
+  assert.strictEqual(saved.status, 200);
+  assert.strictEqual(saved.body.data.revision, 1);
+
+  const conflict = await req('PUT', `/api/projects/${testProjectId}/studio-layout`, {
+    schema_version: 1,
+    base_revision: 0,
+    positions: { [`project:${testProjectId}:topic`]: { x: 999, y: 999 } },
+  });
+  assert.strictEqual(conflict.status, 409);
+  assert.strictEqual(conflict.body.error.code, 'STUDIO_LAYOUT_CONFLICT');
+
+  const loaded = await req('GET', `/api/projects/${testProjectId}/studio-layout`);
+  assert.strictEqual(loaded.status, 200);
+  assert.strictEqual(loaded.body.data.revision, 1);
+  assert.deepEqual(loaded.body.data.positions[`project:${testProjectId}:topic`], { x: 10, y: 20 });
+});
+
+test('Director Advisor：根据真实项目证据生成可审查白名单动作且不自动调用 Provider', async () => {
+  const { status, body } = await req('GET', `/api/projects/${testProjectId}/director-advice`);
+  assert.strictEqual(status, 200);
+  assert.match(body.data.plan_id, /^director:[a-f0-9]{16}$/);
+  assert.strictEqual(body.data.project_id, testProjectId);
+  assert.strictEqual(body.data.evidence.shots, 0);
+  assert.ok(body.data.actions.some((item) => item.operation === 'edit-script'));
+  assert.ok(body.data.actions.every((item) => item.route.startsWith('/')));
+  assert.ok(body.data.actions.every((item) => !('code' in item) && !('prompt' in item)));
+  assert.strictEqual(body.data.next_action_id, body.data.actions[0].id);
+});
+
+test('Studio 新接口：非法项目 ID 稳定返回结构化 400', async () => {
+  for (const path of ['/api/projects/not-a-number/studio-layout', '/api/projects/0/director-advice']) {
+    const { status, body } = await req('GET', path);
+    assert.strictEqual(status, 400);
+    assert.strictEqual(body.error.code, 'PROJECT_ID_INVALID');
+    assert.strictEqual(body.error.retryable, false);
+  }
+});
+
 test('项目读取：不存在的 id 返回 404', async () => {
   const { status, body } = await req('GET', '/api/projects/99999999');
   assert.strictEqual(status, 404, '不存在的项目应 404');
@@ -247,7 +311,68 @@ test('分镜更新：PUT 单条改 duration 为 PATCH 语义', async () => {
   assert.strictEqual(body.data.description, '测试镜头一：城市夜景全景', 'description 应保留');
 });
 
-test('分镜增量改稿：只清理变化镜头素材，未变化镜头完整保留', async () => {
+test('Prompt revision：版本、diff、恢复与 Demo 逐场景重生成完整可用', async () => {
+  let projectId = null;
+  try {
+    const project = await req('POST', '/api/projects', {
+      name: '[smoke测试]Prompt revision 隔离项目', theme: '版本和局部重生成', style: '写实',
+    });
+    assert.strictEqual(project.status, 200);
+    projectId = project.body.data.id;
+    const created = await req('POST', '/api/storyboards/batch', {
+      project_id: projectId,
+      storyboards: [{ scene_number: 1, description: '城市夜景', dialog: '开始生成', duration: 5 }],
+    });
+    assert.strictEqual(created.status, 200);
+    const storyboardId = created.body.data[0].id;
+
+    const first = await req('POST', `/api/projects/${projectId}/prompts`, {
+      storyboard_id: storyboardId,
+      kind: 'image',
+      content: '城市夜景\n广角全景',
+      source: 'manual',
+      prompt_version: 'smoke-v1',
+    });
+    assert.strictEqual(first.status, 201);
+    assert.strictEqual(first.body.data.revision, 1);
+
+    const second = await req('POST', `/api/projects/${projectId}/prompts`, {
+      storyboard_id: storyboardId,
+      kind: 'image',
+      content: '城市夜景\n青色霓虹\n广角全景',
+      source: 'polish',
+      prompt_version: 'smoke-v2',
+      parent_revision_id: first.body.data.id,
+    });
+    assert.strictEqual(second.status, 201);
+    assert.strictEqual(second.body.data.revision, 2);
+
+    const diff = await req('GET', `/api/prompts/${second.body.data.id}/diff`);
+    assert.strictEqual(diff.status, 200);
+    assert.ok(diff.body.data.lines.some((line) => line.type === 'added' && line.line === '青色霓虹'));
+
+    const restored = await req('POST', `/api/prompts/${first.body.data.id}/restore`, {});
+    assert.strictEqual(restored.status, 201);
+    assert.strictEqual(restored.body.data.revision, 3, '恢复应创建新 revision，不覆盖历史');
+
+    const beforeCandidates = (await req('GET', `/api/images/storyboard/${storyboardId}`)).body.data.length;
+    const regeneration = await req('POST', `/api/storyboards/${storyboardId}/regenerate`, {
+      stages: ['image'],
+      prompt_revision_id: second.body.data.id,
+      idempotencyKey: `smoke-prompt-${storyboardId}`,
+    });
+    assert.strictEqual(regeneration.status, 202);
+    const task = await waitForTask(regeneration.body.data.task_id, 10000);
+    assert.strictEqual(task.status, 'success');
+    const candidates = (await req('GET', `/api/images/storyboard/${storyboardId}`)).body.data;
+    assert.strictEqual(candidates.length, beforeCandidates + 1, '新结果应追加为 Candidate');
+    assert.ok(candidates.some((candidate) => candidate.prompt_revision_id === second.body.data.id));
+  } finally {
+    if (projectId != null) await req('DELETE', `/api/projects/${projectId}?permanent=true`);
+  }
+});
+
+test('分镜增量改稿：变化镜头旧素材标记 stale 且保留，未变化镜头不受影响', async () => {
   const createdProject = await req('POST', '/api/projects', {
     name: '[smoke测试]分镜增量改稿',
     theme: 'reconcile',
@@ -306,16 +431,41 @@ test('分镜增量改稿：只清理变化镜头素材，未变化镜头完整�
   const secondImages = (await req('GET', `/api/images/storyboard/${rows[1].id}`)).body.data;
   const thirdImages = (await req('GET', `/api/images/storyboard/${rows[2].id}`)).body.data;
   assert.strictEqual(firstImages[0].id, imageByStoryboard.get(rows[0].id).id, '第 1 镜图片记录应保留');
-  assert.strictEqual(secondImages.length, 0, '第 2 镜旧图片记录应清空');
+  assert.strictEqual(secondImages[0].id, imageByStoryboard.get(rows[1].id).id, '第 2 镜旧图片记录应保留供比较');
+  assert.strictEqual(secondImages[0].stale, 1, '第 2 镜旧图片应明确标记 stale');
+  assert.strictEqual(secondImages[0].stale_reason, 'SCRIPT_CONTENT_CHANGED');
   assert.strictEqual(thirdImages[0].id, imageByStoryboard.get(rows[2].id).id, '第 3 镜图片记录应保留');
-  assert.strictEqual(fs.existsSync(changedAsset), false, '第 2 镜旧图片物理文件应删除');
+  assert.strictEqual(firstImages[0].stale, 0, '第 1 镜不应被误标 stale');
+  assert.strictEqual(thirdImages[0].stale, 0, '第 3 镜不应被误标 stale');
+  assert.strictEqual(fs.existsSync(changedAsset), true, '第 2 镜旧图片物理文件应保留');
   assert.strictEqual(fs.existsSync(uploadAbs(firstImages[0].file_url)), true, '第 1 镜物理文件应保留');
   assert.strictEqual(fs.existsSync(uploadAbs(thirdImages[0].file_url)), true, '第 3 镜物理文件应保留');
 
   const reconciledRows = (await req('GET', `/api/storyboards/project/${reconcileProjectId}`)).body.data;
   assert.strictEqual(reconciledRows[0].selected_image_id, imageByStoryboard.get(rows[0].id).id);
-  assert.strictEqual(reconciledRows[1].selected_image_id, null, '变化镜头 selected_image_id 应清空');
+  assert.strictEqual(reconciledRows[1].selected_image_id, imageByStoryboard.get(rows[1].id).id, '变化镜头原选择应保留，交由用户决定');
+  assert.strictEqual(reconciledRows[1].assets_stale, 1, '变化镜头应显示下游素材需复查');
+  assert.strictEqual(reconciledRows[1].sync_status, 'stale');
   assert.strictEqual(reconciledRows[2].selected_image_id, imageByStoryboard.get(rows[2].id).id);
+
+  const artifacts = await req('GET', `/api/projects/${reconcileProjectId}/artifacts`);
+  assert.strictEqual(artifacts.status, 200);
+  assert.ok(artifacts.body.data.current.some((item) => item.stage === 'script' && item.revision === 1));
+  assert.ok(artifacts.body.data.current.some((item) => item.stage === 'storyboard' && item.revision === 1));
+  const storyboardArtifact = artifacts.body.data.current.find((item) => item.stage === 'storyboard');
+  assert.ok(storyboardArtifact.dependency_snapshot.script.artifact_id, '分镜产物应记录脚本 revision 依赖');
+
+  const invalid = await req('POST', '/api/storyboards/reconcile', {
+    project_id: reconcileProjectId,
+    storyboards: [{ ...reconciledRows[0], description: { raw: 'sk-must-not-be-reflected' } }],
+  });
+  assert.strictEqual(invalid.status, 422, '异常可编辑脚本必须在写库前被拒绝');
+  assert.strictEqual(invalid.body.data.code, 'SCRIPT_OUTPUT_INVALID');
+  assert.match(invalid.body.data.diagnostic_ref, /^script_[a-f0-9]{16}$/);
+  assert.strictEqual(JSON.stringify(invalid.body).includes('sk-must-not-be-reflected'), false, '响应不得回显原始 Provider/用户内容');
+  const afterInvalid = (await req('GET', `/api/storyboards/project/${reconcileProjectId}`)).body.data;
+  assert.strictEqual(afterInvalid.length, 3, '失败验证不能改写已有项目');
+  assert.strictEqual(afterInvalid[0].description, reconciledRows[0].description);
 });
 
 test('资产健康检查：缺少分镜图片时返回可理解的 error 与建议', async () => {
@@ -327,6 +477,229 @@ test('资产健康检查：缺少分镜图片时返回可理解的 error 与建�
   const missing = body.data.issues.find((i) => i.code === 'MISSING_IMAGES');
   assert.ok(missing, '应明确给出 MISSING_IMAGES 问题');
   assert.ok(Array.isArray(missing.suggestions) && missing.suggestions.length, '缺图问题应包含修正建议');
+});
+
+test('重复生图只把编译 Prompt 写入 Candidate，不污染用户可编辑的分镜 Prompt', async () => {
+  let projectId = null;
+  try {
+    const project = await req('POST', '/api/projects', {
+      name: '[smoke测试]Prompt 边界', theme: 'Prompt 不应递归膨胀', style: '写实',
+    });
+    projectId = project.body.data.id;
+    const created = await req('POST', '/api/storyboards/batch', {
+      project_id: projectId,
+      storyboards: [{
+        scene_number: 1,
+        description: '创作者在工作台前操作',
+        dialog: '保持输入可编辑。',
+        duration: 5,
+        prompt: '用户原始画面 Prompt',
+      }],
+    });
+    const storyboardId = created.body.data[0].id;
+
+    for (let attempt = 0; attempt < 2; attempt += 1) {
+      const submission = await req('POST', '/api/ai/generate-image', {
+        storyboard_id: storyboardId,
+        prompt: '用户原始画面 Prompt',
+        model: 'flux',
+        ratio: '16:9',
+        batch_size: 1,
+        async: true,
+      });
+      assert.strictEqual(submission.status, 200);
+      const task = await waitForTask(submission.body.data.task_id);
+      assert.strictEqual(task.status, 'success');
+    }
+
+    const rows = (await req('GET', `/api/storyboards/project/${projectId}`)).body.data;
+    assert.strictEqual(rows[0].prompt, '用户原始画面 Prompt', 'compiled prompt 不得覆盖用户输入');
+    const candidates = (await req('GET', `/api/images/storyboard/${storyboardId}`)).body.data;
+    assert.ok(candidates.length >= 2, '两次生成应分别保留 Candidate');
+    assert.ok(candidates.every((item) => String(item.prompt).includes('当前镜头：用户原始画面 Prompt')),
+      'Candidate 应保存实际发送的 compiled prompt');
+  } finally {
+    if (projectId != null) await req('DELETE', `/api/projects/${projectId}?permanent=true`);
+  }
+});
+
+test('P2 多候选评审：切换使用稳定 ID，保留历史并保护当前选中项', async () => {
+  const project = await req('POST', '/api/projects', {
+    name: '[smoke测试]P2 资产与候选', theme: '隔离的本地候选评审', style: '写实',
+  });
+  assert.strictEqual(project.status, 200);
+  p2ProjectId = project.body.data.id;
+  const storyboards = await req('POST', '/api/storyboards/batch', {
+    project_id: p2ProjectId,
+    storyboards: [{ scene_number: 1, description: 'P2 镜头', dialog: '本地测试', duration: 5 }],
+  });
+  assert.strictEqual(storyboards.status, 200);
+  p2StoryboardId = storyboards.body.data[0].id;
+  const first = await req('POST', '/api/images', {
+    storyboard_id: p2StoryboardId,
+    prompt: '候选 A',
+    file_url: '/uploads/images/candidate-a.png',
+    file_path: '/uploads/images/candidate-a.png',
+    gen_status: 'success',
+    task_id: 'task-candidate-a',
+    provider: 'demo',
+    model: 'placeholder-v1',
+  });
+  const second = await req('POST', '/api/images', {
+    storyboard_id: p2StoryboardId,
+    prompt: '候选 B',
+    file_url: '/uploads/images/candidate-b.png',
+    file_path: '/uploads/images/candidate-b.png',
+    gen_status: 'success',
+    task_id: 'task-candidate-b',
+    provider: 'demo',
+    model: 'placeholder-v1',
+    parent_image_id: first.body.data.id,
+  });
+  assert.strictEqual(first.status, 200);
+  assert.strictEqual(second.status, 200);
+  assert.strictEqual(second.body.data.parent_image_id, first.body.data.id);
+  assert.strictEqual(second.body.data.provider, 'demo');
+  assert.ok(second.body.data.media_reference, '候选应返回受控 MediaReference');
+
+  const selectFirst = await req('POST', `/api/images/${first.body.data.id}/select`, {
+    storyboard_id: p2StoryboardId,
+  });
+  assert.strictEqual(selectFirst.status, 200);
+  const favoriteSecond = await req('PUT', `/api/images/${second.body.data.id}/review`, { favorite: true });
+  assert.strictEqual(favoriteSecond.status, 200);
+  assert.strictEqual(favoriteSecond.body.data.favorite, true);
+
+  const protectedArchive = await req('PUT', `/api/images/${first.body.data.id}/review`, { archived: true });
+  assert.strictEqual(protectedArchive.status, 409, '正在使用的候选不能归档');
+  const selectSecond = await req('POST', `/api/images/${second.body.data.id}/select`, {
+    storyboard_id: p2StoryboardId,
+  });
+  assert.strictEqual(selectSecond.status, 200);
+  const archiveFirst = await req('PUT', `/api/images/${first.body.data.id}/review`, { archived: true });
+  assert.strictEqual(archiveFirst.status, 200);
+
+  const visible = await req('GET', `/api/images/storyboard/${p2StoryboardId}`);
+  assert.ok(visible.body.data.some((row) => row.id === second.body.data.id && row.selected && row.favorite));
+  assert.ok(!visible.body.data.some((row) => row.id === first.body.data.id), '默认列表隐藏已归档候选');
+  const history = await req('GET', `/api/images/storyboard/${p2StoryboardId}?include_archived=true`);
+  assert.ok(history.body.data.some((row) => row.id === first.body.data.id && row.archived_at), '归档候选仍保留在历史中');
+});
+
+test('P2 资产 Variant：revision 递增、镜头绑定快照与引用保护可用', async () => {
+  const extracted = await req('POST', `/api/projects/${p2ProjectId}/characters/extract`, {});
+  assert.strictEqual(extracted.status, 200);
+  assert.ok(extracted.body.data.length > 0);
+  const character = extracted.body.data[0];
+  const candidateList = await req('GET', `/api/images/storyboard/${p2StoryboardId}`);
+  const candidate = candidateList.body.data.find((row) => row.selected) || candidateList.body.data[0];
+
+  const first = await req('POST', `/api/assets/characters/${character.id}/variants`, {
+    project_id: p2ProjectId,
+    label: '系列定妆 v1',
+    image_id: candidate.id,
+    file_url: candidate.file_url,
+    provider: 'demo',
+    model: 'placeholder-v1',
+  });
+  assert.strictEqual(first.status, 200);
+  assert.strictEqual(first.body.data.revision, 1);
+  assert.strictEqual(first.body.data.selected, 1);
+  const second = await req('POST', `/api/assets/characters/${character.id}/variants`, {
+    project_id: p2ProjectId,
+    label: '系列定妆 v2',
+    image_id: candidate.id,
+    file_url: candidate.file_url,
+    provider: 'demo',
+    model: 'placeholder-v2',
+    parent_variant_id: first.body.data.id,
+  });
+  assert.strictEqual(second.status, 200);
+  assert.strictEqual(second.body.data.revision, 2);
+  assert.strictEqual(second.body.data.parent_variant_id, first.body.data.id);
+
+  const selected = await req('POST', `/api/assets/characters/${character.id}/variants/${second.body.data.id}/select`, {});
+  assert.strictEqual(selected.status, 200);
+  const binding = await req('PUT', `/api/assets/storyboards/${p2StoryboardId}/bindings`, {
+    project_id: p2ProjectId,
+    asset_type: 'character',
+    asset_id: character.id,
+    variant_id: second.body.data.id,
+    source_scope: 'series',
+  });
+  assert.strictEqual(binding.status, 200);
+  assert.strictEqual(binding.body.data.snapshot.revision, 2);
+  assert.strictEqual(binding.body.data.snapshot.model, 'placeholder-v2');
+  const protectedArchive = await req('DELETE', `/api/assets/variants/${second.body.data.id}`);
+  assert.strictEqual(protectedArchive.status, 409, '选中且绑定的 Variant 不能归档');
+
+  const library = await req('GET', `/api/assets/projects/${p2ProjectId}`);
+  assert.strictEqual(library.status, 200);
+  const unit = library.body.data.units.find((item) => item.id === character.id);
+  assert.deepStrictEqual(unit.variants.map((item) => item.revision), [1, 2]);
+  assert.strictEqual(unit.selected_variant_id, second.body.data.id);
+  assert.ok(library.body.data.bindings.some((item) => item.storyboard_id === p2StoryboardId && item.snapshot.revision === 2));
+
+  const styleUnit = await req('POST', `/api/assets/projects/${p2ProjectId}/units`, {
+    asset_type: 'style',
+    name: '烟青水墨',
+    scope: 'episode',
+    metadata: { palette: 'cyan-ink' },
+  });
+  assert.strictEqual(styleUnit.status, 201, 'Style 应写入 v7 通用资产表');
+  assert.strictEqual(styleUnit.body.data.scope, 'episode');
+  const styleVariant = await req('POST', `/api/assets/units/${styleUnit.body.data.id}/variants`, {
+    label: '水墨参考 v1',
+    provider: 'demo',
+    model: 'placeholder-v1',
+    media_reference: { kind: 'project_media', media_id: candidate.id, url: candidate.file_url },
+  });
+  assert.strictEqual(styleVariant.status, 201);
+  assert.strictEqual(styleVariant.body.data.asset_type, 'style');
+  const styleBinding = await req('PUT', `/api/assets/storyboards/${p2StoryboardId}/bindings`, {
+    project_id: p2ProjectId,
+    asset_type: 'style',
+    asset_id: styleUnit.body.data.id,
+    variant_id: styleVariant.body.data.id,
+    source_scope: 'episode',
+  });
+  assert.strictEqual(styleBinding.status, 200);
+  assert.strictEqual(styleBinding.body.data.asset_unit_id, styleUnit.body.data.id);
+  assert.strictEqual(styleBinding.body.data.snapshot.source_scope, 'episode');
+
+  const genericLibrary = await req('GET', `/api/assets/projects/${p2ProjectId}`);
+  assert.ok(genericLibrary.body.data.supported_asset_types.includes('style'));
+  assert.ok(genericLibrary.body.data.units.some((item) => (
+    item.id === styleUnit.body.data.id && item.variants[0]?.id === styleVariant.body.data.id
+  )), '通用 Style 资产和 Variant 应可重新读取');
+
+  const nextStyleVariant = await req('POST', `/api/assets/units/${styleUnit.body.data.id}/variants`, {
+    label: '水墨参考 v2',
+    provider: 'demo',
+    model: 'placeholder-v2',
+    parent_variant_id: styleVariant.body.data.id,
+    media_reference: { kind: 'project_media', media_id: candidate.id, url: candidate.file_url },
+  });
+  assert.strictEqual(nextStyleVariant.status, 201);
+  const selectedStyleVariant = await req('POST', `/api/assets/units/${styleUnit.body.data.id}/variants/${nextStyleVariant.body.data.id}/select`, {});
+  assert.strictEqual(selectedStyleVariant.status, 200, '通用资产应支持切换默认 Variant');
+  assert.strictEqual(selectedStyleVariant.body.data.selected, 1);
+
+  const disposableVariant = await req('POST', `/api/assets/units/${styleUnit.body.data.id}/variants`, {
+    label: '可归档草稿',
+    provider: 'demo',
+    model: 'placeholder-draft',
+    media_reference: { kind: 'project_media', media_id: candidate.id, url: candidate.file_url },
+  });
+  assert.strictEqual(disposableVariant.status, 201);
+  const archivedDraft = await req('DELETE', `/api/assets/variants/${disposableVariant.body.data.id}`);
+  assert.strictEqual(archivedDraft.status, 200, '未选中且未绑定的 Variant 可以安全归档');
+  assert.strictEqual(archivedDraft.body.data.status, 'archived');
+
+  const invalidUnit = await req('POST', `/api/assets/projects/${p2ProjectId}/units`, {
+    asset_type: 'scene', name: '   ', scope: 'episode',
+  });
+  assert.strictEqual(invalidUnit.status, 400, '外部资产写入必须先通过 Zod 契约');
 });
 
 test('回收站：文件删除后可按分类查看详情，并只恢复指定图片内容', async () => {
@@ -574,6 +947,23 @@ test('Provider 列表：GET /api/providers 按 kind 分组（llm/t2i/t2v/tts）'
   assert.ok(body.data.llm.some((p) => p.key === 'deepseek'), 'llm 分组应含 deepseek');
 });
 
+test('Provider 账单状态：无 Key 时零计费且不伪造余额', async () => {
+  const { status, body } = await req('GET', '/api/providers/kling/billing-status');
+  assert.strictEqual(status, 200);
+  assert.strictEqual(body.data.capability, 'unverified');
+  assert.strictEqual(body.data.status, 'unknown');
+  assert.strictEqual(body.data.reason_code, 'PROVIDER_BILLING_UNVERIFIED');
+  assert.strictEqual(body.data.balance, null);
+});
+
+test('Demo Mode：积分探测不启动外部 Dreamina CLI', async () => {
+  const { status, body } = await req('GET', '/api/ai/dreamina-credit');
+  assert.equal(status, 200);
+  assert.equal(body.data.demo_mode, true);
+  assert.equal(body.data.available, false);
+  assert.match(body.message, /不探测外部 CLI/);
+});
+
 test('Provider 健康：GET /api/providers/health 返回启动自检快照与配置文件路径', async () => {
   const { status, body } = await req('GET', '/api/providers/health');
   assert.strictEqual(status, 200);
@@ -590,6 +980,19 @@ test('阶段路由：GET /api/providers/stage-models 返回四阶段配置', asy
   for (const stage of ['script', 'image', 'video', 'voice']) {
     assert.ok(body.data[stage] && body.data[stage].provider, `应含 ${stage} 阶段路由`);
   }
+});
+
+test('模型能力目录与阶段路由：静态能力独立返回，未知模型在保存前失败', async () => {
+  const catalog = await req('GET', '/api/providers/catalog?modality=video');
+  assert.strictEqual(catalog.status, 200);
+  assert.ok(catalog.body.data.some((item) => item.id === 'cogvideo__cogvideox-flash'));
+  assert.ok(catalog.body.data.every((item) => !Object.hasOwn(item, 'configured')), '能力目录不应混入运行时健康状态');
+
+  const invalid = await req('POST', '/api/providers/stage-models', {
+    image: { provider: 'cogview', model: 'not-a-real-model' },
+  });
+  assert.strictEqual(invalid.status, 400);
+  assert.equal(invalid.body.data.error_code, 'MODEL_NOT_FOUND');
 });
 
 const settingsMutationTest = process.env.SETTINGS_FILE ? test : test.skip;

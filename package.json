@@ -1,37 +1,63 @@
 {
-  "name": "snoopy-king",
+  "name": "aigc-video-studio",
   "version": "1.0.3",
-  "description": "史努比大王 - AIGC 辅助的短视频创意生成与制作平台（桌面版）",
+  "description": "AIGC 视频工作台 - 本地优先、可恢复的桌面视频创作应用",
   "author": "王从天降",
   "license": "MIT",
-  "main": "electron/main.js",
+  "main": "electron/dist/main.js",
   "scripts": {
-    "install:all": "npm install && npm --prefix server install && npm --prefix client install",
+    "install:all": "npm install && npm --prefix packages/contracts install && npm --prefix server install && npm --prefix client install",
     "dev": "node scripts/dev.mjs",
     "demo": "node scripts/dev.mjs --demo",
-    "test:smoke": "node scripts/run-smoke.mjs",
+    "test:smoke": "node scripts/run-smoke.mjs && node scripts/demo-acceptance.mjs",
+    "test:demo": "npm --prefix server run build && node scripts/demo-acceptance.mjs",
     "build:client": "cd client && npm run build",
     "check:server": "npm --prefix server run preflight && npm run test:smoke",
     "check:client": "npm --prefix client test && npm --prefix client run build",
-    "security:audit": "npm --prefix server audit --omit=dev && npm --prefix client audit --omit=dev",
-    "security:audit:all": "npm --prefix server audit && npm --prefix client audit",
-    "quality": "npm run check:server && npm run check:client",
-    "electron:dev": "electron .",
-    "pack": "npm run build:client && electron-builder --dir",
-    "dist": "npm run build:client && electron-builder",
+    "security:audit": "npm audit --omit=dev && npm --prefix packages/contracts audit --omit=dev && npm --prefix server audit --omit=dev && npm --prefix client audit --omit=dev",
+    "security:audit:all": "npm audit && npm --prefix packages/contracts audit && npm --prefix server audit && npm --prefix client audit",
+    "build:contracts": "npm --prefix packages/contracts run build",
+    "test:contracts": "npm --prefix packages/contracts test",
+    "build:server": "npm --prefix server run build",
+    "build:electron": "tsc -p electron/tsconfig.build.json",
+    "test:electron": "npm run build:electron && node --test electron/test/*.test.js",
+    "typecheck:electron": "tsc -p electron/tsconfig.json --noEmit",
+    "typecheck": "npm run build:contracts && npm --prefix server run typecheck && npm --prefix client run typecheck && npm run typecheck:electron",
+    "lint": "eslint packages/contracts/src/**/*.ts client/src/**/*.{ts,vue} server/**/*.ts electron/**/*.ts --no-error-on-unmatched-pattern --max-warnings=0",
+    "type-coverage": "node scripts/check-typescript-coverage.mjs",
+    "quality": "npm run typecheck && npm run lint && npm run type-coverage && npm run test:contracts && npm run test:electron && npm run check:server && npm run check:client",
+    "electron:dev": "npm run build:contracts && npm run build:server && npm run build:client && npm run build:electron && electron .",
+    "prepare:desktop": "node scripts/prepare-desktop.mjs",
+    "electron:preflight": "node scripts/electron-preflight.mjs",
+    "release:verify-credentials": "node scripts/verify-release-credentials.mjs",
+    "desktop:install-smoke": "node scripts/desktop-install-smoke.mjs",
+    "update:verify-artifacts": "node scripts/verify-update-artifacts.mjs",
+    "pack": "npm run prepare:desktop && npm run electron:preflight && node scripts/package-preflight.mjs",
+    "dist": "npm run prepare:desktop && npm run electron:preflight && electron-builder",
     "build:secure": "bash scripts/secure-build.sh"
   },
   "build": {
-    "appId": "com.wanyan.snoopyking",
-    "productName": "史努比大王",
-    "asar": false,
+    "appId": "com.aigcvideo.studio",
+    "productName": "AIGC 视频工作台",
+    "artifactName": "AIGC-Video-Studio-${version}-${os}-${arch}.${ext}",
+    "asar": true,
+    "asarUnpack": [
+      "node_modules/ffmpeg-static/**/*",
+      "node_modules/better-sqlite3/**/*"
+    ],
     "directories": {
       "output": "dist-electron",
-      "buildResources": "build"
+      "buildResources": "resources"
     },
     "files": [
-      "electron/**/*",
+      "electron/dist/**/*",
       "node_modules/**/*",
+      "!node_modules/**/*.ts",
+      "!node_modules/**/*.tsx",
+      "!node_modules/**/*.mts",
+      "!node_modules/**/*.cts",
+      "!node_modules/**/*.map",
+      "!node_modules/**/*.tsbuildinfo",
       "package.json"
     ],
     "extraResources": [
@@ -46,6 +72,12 @@
           "!uploads/**",
           "!logs/**",
           "!test/**",
+          "!**/*.ts",
+          "!**/*.tsx",
+          "!**/*.mts",
+          "!**/*.cts",
+          "!**/*.map",
+          "!**/*.tsbuildinfo",
           "!**/_backup_*/**"
         ]
       },
@@ -55,8 +87,48 @@
       }
     ],
     "win": {
-      "target": [{ "target": "nsis", "arch": ["x64"] }],
-      "icon": "build/icon.ico"
+      "icon": "resources/icon.ico",
+      "target": [
+        {
+          "target": "nsis",
+          "arch": [
+            "x64"
+          ]
+        }
+      ],
+      "requestedExecutionLevel": "asInvoker"
+    },
+    "mac": {
+      "icon": "resources/icon.icns",
+      "target": [
+        {
+          "target": "dmg",
+          "arch": [
+            "x64",
+            "arm64"
+          ]
+        },
+        {
+          "target": "zip",
+          "arch": [
+            "x64",
+            "arm64"
+          ]
+        }
+      ],
+      "category": "public.app-category.video",
+      "hardenedRuntime": true,
+      "gatekeeperAssess": false,
+      "entitlements": "resources/entitlements.mac.plist",
+      "entitlementsInherit": "resources/entitlements.mac.plist"
+    },
+    "afterSign": "scripts/notarize.js",
+    "afterPack": "scripts/after-pack.js",
+    "publish": {
+      "provider": "github",
+      "owner": "728792899-create",
+      "repo": "aigc-video-platform",
+      "releaseType": "draft"
     },
     "nsis": {
       "oneClick": false,
@@ -64,16 +136,32 @@
       "allowToChangeInstallationDirectory": true,
       "createDesktopShortcut": true,
       "createStartMenuShortcut": true,
-      "shortcutName": "史努比大王"
+      "shortcutName": "AIGC 视频工作台",
+      "deleteAppDataOnUninstall": false
     }
   },
   "devDependencies": {
+    "@electron/notarize": "3.1.1",
+    "@types/node": "22.20.1",
     "bytenode": "^1.5.7",
-    "electron": "^33.2.0",
-    "electron-builder": "^25.1.8",
-    "javascript-obfuscator": "^5.4.3"
+    "electron": "40.10.6",
+    "electron-builder": "26.15.3",
+    "eslint": "10.7.0",
+    "eslint-plugin-vue": "10.9.2",
+    "javascript-obfuscator": "^5.4.3",
+    "typescript": "5.9.3",
+    "typescript-eslint": "8.64.0",
+    "vue-eslint-parser": "10.4.1"
   },
   "dependencies": {
-    "ffmpeg-static": "5.3.0"
+    "@aigc-video/contracts": "file:packages/contracts",
+    "@sentry/electron": "7.15.0",
+    "better-sqlite3": "12.9.0",
+    "electron-updater": "6.8.9",
+    "ffmpeg-static": "5.3.0",
+    "knex": "3.2.5"
+  },
+  "overrides": {
+    "esbuild": "0.28.1"
   }
 }

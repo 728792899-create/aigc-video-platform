@@ -37,78 +37,28 @@
           </el-skeleton>
         </div>
       </template>
-      <div
+      <ProjectCard
         v-for="project in projects"
         :key="project.id"
-        class="project-card"
-        @click="goToScript(project.id)"
-      >
-        <div class="card-thumb" :class="'thumb-' + project.status" :style="!project.cover_url ? coverGradient(project.name) : null">
-          <img
-            v-if="project.cover_url"
-            :src="mediaUrl(project.cover_url)"
-            class="cover-img"
-            loading="lazy"
-            :alt="$t('projects.cover')"
-            @error="onCoverError(project)"
-          />
-          <span v-else class="cover-initial">{{ coverInitial(project.name) }}</span>
-          <button
-            class="cover-gen-btn"
-            :class="{ 'is-loading': coverGenerating[project.id] }"
-            :title="$t('projects.genCoverTip')"
-            @click.stop="generateCover(project)"
-          >
-            <el-icon v-if="coverGenerating[project.id]" class="spin"><Loading /></el-icon>
-            <el-icon v-else><MagicStick /></el-icon>
-            {{ coverGenerating[project.id] ? $t('projects.coverGenerating') : (project.cover_url ? $t('projects.changeCover') : $t('projects.genCover')) }}
-          </button>
-        </div>
-        <div class="card-header">
-          <span class="project-name">{{ project.name }}</span>
-          <span class="status-badge" :class="'badge-' + project.status">
-            <span class="badge-dot"></span>{{ statusLabel(project.status) }}
-          </span>
-        </div>
-        <div class="card-body">
-          <p class="project-theme">{{ $t('projects.theme') }}: {{ project.theme || $t('projects.notSet') }}</p>
-          <p class="project-style">{{ $t('projects.style') }}: {{ project.style || $t('projects.notSet') }}</p>
-          <p class="project-duration">{{ $t('projects.duration') }}: {{ formatDurationRange([project.duration_min, project.duration_max]) }}</p>
-          <div v-if="project.series_id" class="continuity-chip">
-            <span class="asset-dot"></span>
-            <span>{{ $t('projects.seriesEpisode', { n: project.episode_index || 1 }) }}</span>
-          </div>
-          <div
-            v-if="project.asset_health"
-            class="asset-health"
-            :class="'asset-' + assetHealthStatus(project)"
-            :title="assetHealthTitle(project)"
-          >
-            <span class="asset-dot"></span>
-            <span>{{ assetHealthLabel(project) }}</span>
-          </div>
-        </div>
-        <div class="card-footer">
-          <span class="time-info">{{ formatRelativeTime(project) }}</span>
-          <div class="card-actions" @click.stop>
-            <el-button size="small" text @click="openEditDialog(project)">
-              <el-icon><Edit /></el-icon>
-            </el-button>
-            <el-button size="small" text type="success" @click="refreshProjectCompletion(project)">
-              {{ $t('projects.completeCheck') }}
-            </el-button>
-            <el-button size="small" text type="primary" @click="handleContinueProject(project)">
-              {{ $t('projects.continueStory') }}
-            </el-button>
-            <el-button size="small" text @click="openSeriesDialog(project)">
-              系列
-            </el-button>
-            <el-button size="small" text type="danger" @click="confirmDelete(project)">
-              <el-icon><Delete /></el-icon>
-            </el-button>
-          </div>
-        </div>
-      </div>
+        :project="project"
+        :cover-style="coverGradient(project.name)"
+        :initial="coverInitial(project.name)"
+        :cover-loading="!!coverGenerating[project.id]"
+        :status-text="statusLabel(project.status)"
+        :duration-text="formatDurationRange([project.duration_min, project.duration_max])"
+        :relative-time="formatRelativeTime(project)"
+        :health-status="assetHealthStatus(project)"
+        :health-text="assetHealthLabel(project)"
+        :health-title="assetHealthTitle(project)"
+        @open="goToScript(project.id)"
+        @cover-error="onCoverError(project)"
+        @generate-cover="generateCover(project)"
+        @edit="openEditDialog(project)"
+        @complete-check="refreshProjectCompletion(project)"
+        @continue="handleContinueProject(project)"
+        @series="openSeriesDialog(project)"
+        @delete="confirmDelete(project)"
+      />
 
       <div v-if="!loading && projects.length === 0" class="empty-state">
         <el-empty :description="$t('projects.emptyHint')">
@@ -297,7 +247,7 @@
                   </el-upload>
                 </div>
                 <el-slider v-if="autoForm.bgm" v-model="autoForm.bgmVolume" :min="0" :max="1" :step="0.05"
-                           :format-tooltip="v => $t('projects.volumeTip', { v: Math.round(v*100) })" style="margin-top:6px" />
+                           :format-tooltip="formatVolume" style="margin-top:6px" />
               </el-form-item>
               <el-form-item :label="$t('projects.subtitleStyle')">
                 <el-select v-model="autoForm.subtitlePreset" style="width:100%">
@@ -368,7 +318,7 @@
           <el-button type="primary" plain @click="handleContinueProject(seriesCurrentProject)">继续下一集</el-button>
         </div>
         <div class="series-episodes">
-          <div v-for="ep in seriesData.episodes" :key="ep.id" class="series-episode" @click="router.push(`/projects/${ep.id}/script`)">
+          <div v-for="ep in seriesData.episodes" :key="ep.id" class="series-episode" @click="router.push(`/studio/${ep.id}`)">
             <div class="episode-index">{{ String(ep.episode_index || 1).padStart(3, '0') }}</div>
             <div class="episode-main">
               <strong>{{ ep.name }}</strong>
@@ -414,19 +364,35 @@
   </div>
 </template>
 
-<script setup>
+<script setup lang="ts">
+import type { ApiEnvelope } from '@aigc-video/contracts'
+import { z } from 'zod'
 import { ref, computed, nextTick, onMounted, onUnmounted } from 'vue'
 import { useRouter } from 'vue-router'
 import { useI18n } from 'vue-i18n'
-import { ElMessage, ElMessageBox } from 'element-plus'
-import { Plus, Edit, Delete, Search, MagicStick, Loading } from '@element-plus/icons-vue'
-import api from '../api'
+import { ElMessage } from 'element-plus/es/components/message/index'
+import { ElMessageBox } from 'element-plus/es/components/message-box/index'
+import { Plus, Search, MagicStick } from '@element-plus/icons-vue'
+import api, { unwrap } from '../api'
+import ProjectCard from '../components/ProjectCard.vue'
 import { trackTask } from '../api/tasks'
 import { mediaUrl } from '../api/config'
 import { getSettings } from '../api/settings'
-import { listSkills, listActiveSkills } from '../api/skills'
+import { listSkills, listActiveSkills, type CreativeSkill } from '../api/skills'
 import { continueProject } from '../api/continuity'
-import { completeProjectCheck, getProjectSeries } from '../api/projects'
+import { completeProjectCheck, getProjectSeries, listProjects } from '../api/projects'
+import {
+  projectAssetHealthLabel,
+  projectAssetHealthStatus,
+  projectAssetHealthTitle,
+  projectCoverGradient,
+  projectCoverInitial,
+  projectRelativeTime,
+  projectStatusLabel,
+  type EntityId,
+  ProjectViewSchema,
+  type ProjectView,
+} from '../domain/projects'
 import {
   DURATION_PRESET_OPTIONS,
   DEFAULT_DURATION_PRESET,
@@ -440,26 +406,171 @@ import {
   sliderMaxForDuration,
   sliderStepForDuration,
   targetDurationSec,
+  type DurationPresetValue,
+  type DurationRange,
 } from '../utils/durationPresets'
+
+type JsonObject = Record<string, unknown>
+type ContinueMode = 'continue-ending' | 'new-arc' | 'side-story'
+
+interface ContinueForm {
+  mode: ContinueMode
+  theme: string
+}
+
+interface AutoProduceForm {
+  theme: string
+  style: string
+  voice: string
+  ratio: string
+  motion: string
+  bgm: string
+  bgmVolume: number
+  subtitlePreset: string
+  scriptProvider: string
+  scriptModel: string
+  imageModel: string
+  videoMode: string
+  i2v: boolean
+  scriptSkillIds: EntityId[]
+  imageSkillIds: EntityId[]
+  background: boolean
+  consistencyMode: 'standard' | 'strict'
+}
+
+interface AutoProduceResult extends JsonObject {
+  project_id?: EntityId
+  title?: string
+  file_url?: string
+  real_image_ok?: number
+  image_ok?: number
+  storyboard_count?: number
+  diagnosis?: Diagnosis
+}
+
+interface Diagnosis extends JsonObject {
+  title?: string
+  reason?: string
+  rawError?: string
+  advice?: string[]
+  partialResult?: {
+    storyboard_count?: number
+    image_count?: number
+    selected_image_count?: number
+    audio_count?: number
+  }
+  assetHealth?: { issues?: Array<{ message: string }> }
+}
+
+interface SelectControl {
+  blur?(): void
+}
+
+const KeyLabelSchema = z.object({
+  key: z.string(),
+  label: z.string().default(''),
+  name: z.string().optional(),
+}).passthrough()
+type KeyLabelOption = z.infer<typeof KeyLabelSchema>
+
+const ProviderOptionSchema = KeyLabelSchema.extend({
+  configured: z.boolean().default(false),
+  models: z.array(z.string()).default([]),
+  free: z.boolean().optional(),
+})
+type ProviderOption = z.infer<typeof ProviderOptionSchema>
+
+const ImageModelOptionSchema = KeyLabelSchema.extend({
+  cloud: z.boolean().optional(),
+  configured: z.boolean().optional(),
+})
+
+const SubtitlePresetSchema = KeyLabelSchema.extend({
+  style: z.record(z.string(), z.unknown()).optional(),
+})
+
+const ProviderGroupsSchema = z.object({
+  llm: z.array(ProviderOptionSchema).default([]),
+  t2v: z.array(ProviderOptionSchema).default([]),
+})
+
+const SeriesDataSchema = z.object({
+  series: z.object({ title: z.string().optional() }).passthrough().nullish(),
+  story_bible: z.object({
+    mainline: z.string().optional(),
+    worldview: z.string().optional(),
+  }).passthrough().nullish(),
+  episodes: z.array(z.object({
+    id: z.number(),
+    name: z.string(),
+    episode_index: z.number().nullish(),
+    ending_summary: z.string().nullish(),
+    theme: z.string().nullish(),
+    export_count: z.number().optional(),
+    storyboard_count: z.number().optional(),
+  }).passthrough()).default([]),
+  characters: z.array(z.object({
+    id: z.union([z.string(), z.number()]),
+    name: z.string(),
+    locked: z.boolean().optional(),
+    assets: z.array(z.unknown()).default([]),
+  }).passthrough()).default([]),
+})
+type SeriesData = z.infer<typeof SeriesDataSchema>
+
+function isJsonObject(value: unknown): value is JsonObject {
+  return Boolean(value) && typeof value === 'object' && !Array.isArray(value)
+}
+
+function errorMessage(cause: unknown, fallback: string): string {
+  return cause instanceof Error && cause.message ? cause.message : fallback
+}
+
+function stringField(record: JsonObject, key: string): string | undefined {
+  return typeof record[key] === 'string' ? record[key] : undefined
+}
+
+function autoResultFrom(value: unknown): AutoProduceResult {
+  return isJsonObject(value) ? value : {}
+}
+
+function diagnosisFrom(value: unknown): Diagnosis | null {
+  return isJsonObject(value) ? value : null
+}
+
+function normalizeSkill(skill: CreativeSkill): CreativeSkill & { id: EntityId; name: string; icon: string; auto_apply: boolean } | null {
+  if ((typeof skill.id !== 'string' && typeof skill.id !== 'number') || typeof skill.name !== 'string') return null
+  return {
+    ...skill,
+    id: skill.id,
+    name: skill.name,
+    icon: typeof skill.icon === 'string' ? skill.icon : '',
+    auto_apply: skill.auto_apply === true,
+  }
+}
+
+function normalizeSkills(skills: CreativeSkill[]): NormalizedSkill[] {
+  return skills.map(normalizeSkill).filter((skill): skill is NormalizedSkill => skill !== null)
+}
 
 const { t } = useI18n()
 const router = useRouter()
-const projects = ref([])
+const projects = ref<ProjectView[]>([])
 const loading = ref(false)
 const searchKeyword = ref('')
 const dialogVisible = ref(false)
 const isEdit = ref(false)
 const submitting = ref(false)
-const editingId = ref(null)
-const coverGenerating = ref({})  // { [projectId]: true } 封面生成中状态
+const editingId = ref<EntityId | null>(null)
+const coverGenerating = ref<Record<EntityId, boolean>>({})
 const seriesVisible = ref(false)
 const seriesLoading = ref(false)
-const seriesData = ref(null)
-const seriesCurrentProject = ref(null)
+const seriesData = ref<SeriesData | null>(null)
+const seriesCurrentProject = ref<ProjectView | null>(null)
 const continueVisible = ref(false)
 const continueSubmitting = ref(false)
-const continueProjectSource = ref(null)
-const continueForm = ref({ mode: 'continue-ending', theme: '' })
+const continueProjectSource = ref<ProjectView | null>(null)
+const continueForm = ref<ContinueForm>({ mode: 'continue-ending', theme: '' })
 const continueModeOptions = computed(() => [
   { label: t('projects.continueModeEnding'), value: 'continue-ending' },
   { label: t('projects.continueModeNewArc'), value: 'new-arc' },
@@ -477,123 +588,27 @@ const form = ref({
   style: '',
 })
 const durationPresetOptions = DURATION_PRESET_OPTIONS
-const durationPreset = ref(DEFAULT_DURATION_PRESET)
-const durationRange = ref([...DEFAULT_DURATION_RANGE])
+const durationPreset = ref<DurationPresetValue>(DEFAULT_DURATION_PRESET)
+const durationRange = ref<DurationRange>([DEFAULT_DURATION_RANGE[0], DEFAULT_DURATION_RANGE[1]])
 const projectDurationSliderMax = computed(() => sliderMaxForDuration(durationRange.value, durationPreset.value))
 const projectDurationSliderStep = computed(() => sliderStepForDuration(durationRange.value, durationPreset.value))
 
-// Status helpers
-function statusType(status) {
-  const map = { draft: 'info', generating: 'warning', partial: 'warning', ready: 'success', failed: 'danger', completed: 'success' }
-  return map[status] || 'info'
-}
-
-function statusLabel(status) {
-  const map = {
-    draft: t('projects.statusDraft'),
-    generating: t('projects.statusGenerating'),
-    partial: t('projects.statusPartial'),
-    ready: t('projects.statusReady'),
-    failed: t('projects.statusFailed'),
-    completed: t('projects.statusCompleted'),
-  }
-  return map[status] || t('projects.statusDraft')
-}
-
-function assetHealthStatus(project) {
-  const status = project?.asset_health?.status
-  return ['ok', 'warn', 'error'].includes(status) ? status : 'unknown'
-}
-
-function assetHealthLabel(project) {
-  const health = project?.asset_health
-  if (!health) return t('projects.assetUnknown')
-  if (health.status === 'ok') return t('projects.assetOk')
-  if (health.status === 'warn') return health.summary || t('projects.assetWarn')
-  if (health.status === 'error') {
-    const issue = (health.issues || []).find(i => i.level === 'error')
-    if (issue?.code === 'MISSING_IMAGES') return t('projects.assetMissingImages')
-    if (issue?.code === 'FFMPEG_UNAVAILABLE') return t('projects.assetFfmpegMissing')
-    return health.summary || t('projects.assetError')
-  }
-  return t('projects.assetUnknown')
-}
-
-function assetHealthTitle(project) {
-  const issues = project?.asset_health?.issues || []
-  if (!issues.length) return assetHealthLabel(project)
-  return issues.map(i => i.message).join('\n')
-}
-
-// Relative time formatting
-function parseDbTimeMs(value) {
-  if (value == null || value === '') return 0
-  if (typeof value === 'number') return value
-  if (/^\d+$/.test(String(value))) return Number(value)
-  const raw = String(value).trim()
-  const sqlite = raw.match(/^(\d{4})-(\d{2})-(\d{2})[ T](\d{2}):(\d{2}):(\d{2})$/)
-  if (sqlite) {
-    const [, y, mo, d, h, mi, s] = sqlite
-    return Date.UTC(Number(y), Number(mo) - 1, Number(d), Number(h), Number(mi), Number(s))
-  }
-  const parsed = Date.parse(raw)
-  return Number.isFinite(parsed) ? parsed : 0
-}
-
-function projectTimeMs(project) {
-  return Number(project?.updated_at_ms || 0) || parseDbTimeMs(project?.updated_at) || parseDbTimeMs(project?.created_at)
-}
-
-function formatRelativeTime(project) {
-  const timeMs = projectTimeMs(project)
-  if (!timeMs) return ''
-  const now = Date.now()
-  const diff = Math.max(0, now - timeMs)
-  const seconds = Math.floor(diff / 1000)
-  if (seconds < 60) return t('projects.justNow')
-  const minutes = Math.floor(seconds / 60)
-  if (minutes < 60) return t('projects.minutesAgo', { n: minutes })
-  const hours = Math.floor(minutes / 60)
-  if (hours < 24) return t('projects.hoursAgo', { n: hours })
-  const days = Math.floor(hours / 24)
-  if (days < 30) return t('projects.daysAgo', { n: days })
-  const months = Math.floor(days / 30)
-  return t('projects.monthsAgo', { n: months })
-}
-
-// ===== 封面（方案 A 渐变色卡 + 方案 B AI 生成）=====
-// 方案 A：根据项目名稳定哈希出一组品牌渐变色，名字相同则色卡相同，永不失败、零成本
-function hashString(str) {
-  let h = 0
-  const s = String(str || '未命名')
-  for (let i = 0; i < s.length; i++) { h = (h << 5) - h + s.charCodeAt(i); h |= 0 }
-  return Math.abs(h)
-}
-function coverGradient(name) {
-  const h = hashString(name)
-  const hue1 = h % 360
-  const hue2 = (hue1 + 40 + (h % 60)) % 360
-  return { background: `linear-gradient(135deg, hsl(${hue1} 70% 58%), hsl(${hue2} 72% 46%))` }
-}
-function coverInitial(name) {
-  const s = String(name || '').trim()
-  return s ? s.slice(0, 1).toUpperCase() : '?'
-}
+const translate = (key: string, values?: Record<string, unknown>): string => String(t(key, values ?? {}))
+const statusLabel = (status: string | null | undefined): string => projectStatusLabel(status, translate)
+const assetHealthStatus = (project: ProjectView) => projectAssetHealthStatus(project)
+const assetHealthLabel = (project: ProjectView): string => projectAssetHealthLabel(project, translate)
+const assetHealthTitle = (project: ProjectView): string => projectAssetHealthTitle(project, translate)
+const formatRelativeTime = (project: ProjectView): string => projectRelativeTime(project, translate)
+const coverGradient = projectCoverGradient
+const coverInitial = projectCoverInitial
 
 // API calls
-let searchTimer = null
+let searchTimer: ReturnType<typeof setTimeout> | null = null
 async function fetchProjects() {
   loading.value = true
   try {
-    const res = await api.get('/projects', { params: { keyword: searchKeyword.value } })
-    if (res.data?.code === 200) {
-      projects.value = res.data.data || []
-    } else if (Array.isArray(res.data)) {
-      projects.value = res.data
-    } else if (Array.isArray(res.data?.data)) {
-      projects.value = res.data.data
-    }
-  } catch (e) {
+    projects.value = await listProjects({ keyword: searchKeyword.value })
+  } catch {
     ElMessage.error(t('projects.fetchFailed'))
   } finally {
     loading.value = false
@@ -601,27 +616,28 @@ async function fetchProjects() {
 }
 
 function handleSearch() {
-  clearTimeout(searchTimer)
-  searchTimer = setTimeout(() => fetchProjects(), 300)
+  if (searchTimer) clearTimeout(searchTimer)
+  searchTimer = setTimeout(() => void fetchProjects(), 300)
 }
 
 // 方案 B：调后端用 Pollinations 按名称/主题生成 AI 封面
-async function generateCover(project) {
+async function generateCover(project: ProjectView) {
   if (coverGenerating.value[project.id]) return
   coverGenerating.value = { ...coverGenerating.value, [project.id]: true }
   try {
-    const res = await api.post(`/projects/${project.id}/cover`)
-    const data = res.data?.data
-    if (res.data?.code === 200 && data?.cover_url) {
+    const response = await api.post<ApiEnvelope<Partial<ProjectView>>>(`/projects/${project.id}/cover`)
+    const data = unwrap(response)
+    if (response.data.code === 200 && data.cover_url) {
       // 局部更新该卡片，避免整列表刷新闪烁
       const idx = projects.value.findIndex(p => p.id === project.id)
-      if (idx !== -1) projects.value[idx] = { ...projects.value[idx], ...data }
+      const current = projects.value[idx]
+      if (current) projects.value[idx] = { ...current, ...data }
       ElMessage.success(t('projects.coverSuccess'))
     } else {
-      ElMessage.error(res.data?.message || t('projects.coverFailed'))
+      ElMessage.error(response.data.message || t('projects.coverFailed'))
     }
-  } catch (e) {
-    ElMessage.error(e?.response?.data?.message || t('projects.coverFailedRetry'))
+  } catch (cause) {
+    ElMessage.error(errorMessage(cause, t('projects.coverFailedRetry')))
   } finally {
     const next = { ...coverGenerating.value }
     delete next[project.id]
@@ -630,16 +646,17 @@ async function generateCover(project) {
 }
 
 // 封面真图加载失败时回退到渐变色卡（清空 cover_url 触发 v-else）
-function onCoverError(project) {
+function onCoverError(project: ProjectView) {
   const idx = projects.value.findIndex(p => p.id === project.id)
-  if (idx !== -1) projects.value[idx] = { ...projects.value[idx], cover_url: null }
+  const current = projects.value[idx]
+  if (current) projects.value[idx] = { ...current, cover_url: null }
 }
 
-function goToScript(id) {
-  router.push(`/projects/${id}/script`)
+function goToScript(id: EntityId) {
+  router.push(`/studio/${id}`)
 }
 
-function applyProjectDurationPreset(value) {
+function applyProjectDurationPreset(value: DurationPresetValue) {
   if (value === 'custom') return
   durationRange.value = rangeForPreset(value, durationRange.value)
 }
@@ -651,7 +668,7 @@ function markProjectDurationCustom() {
 function resetForm() {
   form.value = { name: '', theme: '', style: '' }
   durationPreset.value = DEFAULT_DURATION_PRESET
-  durationRange.value = [...DEFAULT_DURATION_RANGE]
+  durationRange.value = [DEFAULT_DURATION_RANGE[0], DEFAULT_DURATION_RANGE[1]]
 }
 
 function openCreateDialog() {
@@ -661,7 +678,7 @@ function openCreateDialog() {
   dialogVisible.value = true
 }
 
-function openEditDialog(project) {
+function openEditDialog(project: ProjectView) {
   isEdit.value = true
   editingId.value = project.id
   form.value = {
@@ -689,11 +706,11 @@ async function handleSubmit() {
     let res
     if (isEdit.value) {
       // 编辑时保留原 status / script_content（PUT 是全字段更新）
-      const original = projects.value.find(p => p.id === editingId.value) || {}
+      const original = projects.value.find(p => p.id === editingId.value)
       res = await api.put(`/projects/${editingId.value}`, {
         ...payload,
-        status: original.status || 'draft',
-        script_content: original.script_content || ''
+        status: original?.status || 'draft',
+        script_content: original?.script_content || ''
       })
     } else {
       res = await api.post('/projects', payload)
@@ -712,7 +729,7 @@ async function handleSubmit() {
   }
 }
 
-function confirmDelete(project) {
+function confirmDelete(project: ProjectView) {
   ElMessageBox.confirm(t('projects.deleteConfirm', { name: project.name }), t('projects.deleteConfirmTitle'), {
     confirmButtonText: t('projects.moveToTrash'),
     cancelButtonText: t('common.cancel'),
@@ -739,7 +756,7 @@ const autoDone = ref(false)
 const autoFailed = ref(false)
 const autoProgress = ref(0)
 const autoMessage = ref('')
-const DEFAULT_AUTO_FORM = {
+const DEFAULT_AUTO_FORM: AutoProduceForm = {
   theme: '',
   style: 'realistic',
   voice: 'xiaoxiao',
@@ -758,35 +775,36 @@ const DEFAULT_AUTO_FORM = {
   background: true,
   consistencyMode: 'standard',
 }
-const autoForm = ref({ ...DEFAULT_AUTO_FORM })
-const autoDurationPreset = ref(DEFAULT_DURATION_PRESET)
-const autoDuration = ref([...DEFAULT_DURATION_RANGE])
+const autoForm = ref<AutoProduceForm>({ ...DEFAULT_AUTO_FORM })
+const autoDurationPreset = ref<DurationPresetValue>(DEFAULT_DURATION_PRESET)
+const autoDuration = ref<DurationRange>([DEFAULT_DURATION_RANGE[0], DEFAULT_DURATION_RANGE[1]])
 const autoDurationSliderMax = computed(() => sliderMaxForDuration(autoDuration.value, autoDurationPreset.value))
 const autoDurationSliderStep = computed(() => sliderStepForDuration(autoDuration.value, autoDurationPreset.value))
-const autoResult = ref(null)
-const autoDiagnosis = ref(null)
+const autoResult = ref<AutoProduceResult | null>(null)
+const autoDiagnosis = ref<Diagnosis | null>(null)
 const autoVideoUrl = ref('')
-const ratioOptions = ref([])
-const motionOptions = ref([])
-const bgmList = ref([])
-const subtitlePresets = ref([])
-const llmProviders = ref([])
-const imageModelOptions = ref([])
-const videoModelOptions = ref([])
+const ratioOptions = ref<KeyLabelOption[]>([])
+const motionOptions = ref<KeyLabelOption[]>([])
+const bgmList = ref<KeyLabelOption[]>([])
+const subtitlePresets = ref<z.infer<typeof SubtitlePresetSchema>[]>([])
+const llmProviders = ref<ProviderOption[]>([])
+const imageModelOptions = ref<KeyLabelOption[]>([])
+const videoModelOptions = ref<KeyLabelOption[]>([])
 const consistencyOptions = computed(() => [
   { label: t('projects.consistencyStandard'), value: 'standard' },
   { label: t('projects.consistencyStrict'), value: 'strict' },
 ])
 // 一键成片技能选择（手动可选 + 必用自动生效，与 Script/Images 页一致）
-const scriptSkillOptions = ref([])
-const imageSkillOptions = ref([])
-const autoScriptSkills = ref([])
-const autoImageSkills = ref([])
-const scriptSkillSelectRef = ref(null)
-const imageSkillSelectRef = ref(null)
-let autoStop = null
+type NormalizedSkill = CreativeSkill & { id: EntityId; name: string; icon: string; auto_apply: boolean }
+const scriptSkillOptions = ref<NormalizedSkill[]>([])
+const imageSkillOptions = ref<NormalizedSkill[]>([])
+const autoScriptSkills = ref<NormalizedSkill[]>([])
+const autoImageSkills = ref<NormalizedSkill[]>([])
+const scriptSkillSelectRef = ref<SelectControl | null>(null)
+const imageSkillSelectRef = ref<SelectControl | null>(null)
+let autoStop: (() => void) | null = null
 
-function closeSelectAfterChange(selectRef) {
+function closeSelectAfterChange(selectRef: { value: SelectControl | null }) {
   nextTick(() => selectRef.value?.blur?.())
 }
 
@@ -798,7 +816,7 @@ function closeImageSkillSelect() {
   closeSelectAfterChange(imageSkillSelectRef)
 }
 
-function applyAutoDurationPreset(value) {
+function applyAutoDurationPreset(value: DurationPresetValue) {
   if (value === 'custom') return
   autoDuration.value = rangeForPreset(value, autoDuration.value)
 }
@@ -808,46 +826,50 @@ function markAutoDurationCustom() {
 }
 
 // 比例/运镜下拉的多语言标签：后端按 key 返回，前端按 key 映射 i18n（缺失则回退后端 label）
-const RATIO_KEY = { '16:9': 'ratio169', '9:16': 'ratio916', '1:1': 'ratio11', '4:5': 'ratio45', '4:3': 'ratio43' }
-const MOTION_KEY = { none: 'motionNone', 'zoom-in': 'motionZoomIn', 'zoom-out': 'motionZoomOut', 'pan-right': 'motionPanRight', 'pan-left': 'motionPanLeft' }
+const RATIO_KEY: Record<string, string> = { '16:9': 'ratio169', '9:16': 'ratio916', '1:1': 'ratio11', '4:5': 'ratio45', '4:3': 'ratio43' }
+const MOTION_KEY: Record<string, string> = { none: 'motionNone', 'zoom-in': 'motionZoomIn', 'zoom-out': 'motionZoomOut', 'pan-right': 'motionPanRight', 'pan-left': 'motionPanLeft' }
 const ratioOptionsI18n = computed(() => ratioOptions.value.map((r) => ({
-  key: r.key, label: RATIO_KEY[r.key] ? t('projects.' + RATIO_KEY[r.key]) : r.label,
+  key: r.key, label: RATIO_KEY[r.key] ? t(`projects.${RATIO_KEY[r.key]}`) : r.label,
 })))
 const motionOptionsI18n = computed(() => motionOptions.value.map((m) => ({
-  key: m.key, label: MOTION_KEY[m.key] ? t('projects.' + MOTION_KEY[m.key]) : m.label,
+  key: m.key, label: MOTION_KEY[m.key] ? t(`projects.${MOTION_KEY[m.key]}`) : m.label,
 })))
+
+function formatVolume(value: number): string {
+  return t('projects.volumeTip', { v: Math.round(value * 100) })
+}
 
 async function loadComposeOptions() {
   try {
     const [r, b, s, mo, pv, im] = await Promise.all([
-      api.get('/media/ratios'),
-      api.get('/media/bgm'),
-      api.get('/media/subtitle-presets'),
-      api.get('/media/motions'),
-      api.get('/providers'),
-      api.get('/ai/image-models'),
+      api.get<ApiEnvelope<unknown>>('/media/ratios'),
+      api.get<ApiEnvelope<unknown>>('/media/bgm'),
+      api.get<ApiEnvelope<unknown>>('/media/subtitle-presets'),
+      api.get<ApiEnvelope<unknown>>('/media/motions'),
+      api.get<ApiEnvelope<unknown>>('/providers'),
+      api.get<ApiEnvelope<unknown>>('/ai/image-models'),
     ])
-    ratioOptions.value = r.data.data || []
-    bgmList.value = b.data.data || []
-    subtitlePresets.value = s.data.data || []
-    motionOptions.value = mo.data.data || []
-    llmProviders.value = (pv.data.data && pv.data.data.llm) || []
+    ratioOptions.value = KeyLabelSchema.array().parse(unwrap(r))
+    bgmList.value = KeyLabelSchema.array().parse(unwrap(b))
+    subtitlePresets.value = SubtitlePresetSchema.array().parse(unwrap(s))
+    motionOptions.value = KeyLabelSchema.array().parse(unwrap(mo))
+    const providerGroups = ProviderGroupsSchema.parse(unwrap(pv))
+    llmProviders.value = providerGroups.llm
     // 配图模型：本地全部 + 云端已配置（未配置的过滤掉，避免选了报错）
-    imageModelOptions.value = (im.data.data || [])
-      .filter(m => m.cloud !== true || m.configured)
-      .map(m => ({ key: m.key, label: m.label }))
+    imageModelOptions.value = ImageModelOptionSchema.array().parse(unwrap(im))
+      .filter((model) => model.cloud !== true || model.configured)
+      .map((model) => ({ key: model.key, label: model.label, name: model.name }))
     // 视频生成方式：已配置的 t2v provider 展开为 provider__model（未配置的过滤掉）
-    const t2vList = (pv.data.data && pv.data.data.t2v) || []
-    videoModelOptions.value = t2vList
-      .filter(p => p.configured)
-      .flatMap(p => (p.models || []).map(m => ({
-        key: `${p.key}__${m}`,
-        label: `${t('projects.aiVideoLabel')} · ${p.label} · ${m}${p.free ? t('projects.freeTier') : t('projects.paidTier')}`,
+    videoModelOptions.value = providerGroups.t2v
+      .filter((provider) => provider.configured)
+      .flatMap((provider) => provider.models.map((model) => ({
+        key: `${provider.key}__${model}`,
+        label: `${t('projects.aiVideoLabel')} · ${provider.label} · ${model}${provider.free ? t('projects.freeTier') : t('projects.paidTier')}`,
       })))
     // 默认选中已配置的 provider（优先当前 stageModels.script，否则第一个已配置项）
     const configured = llmProviders.value.filter(p => p.configured)
     if (configured.length && !configured.find(p => p.key === autoForm.value.scriptProvider)) {
-      autoForm.value.scriptProvider = configured[0].key
+      autoForm.value.scriptProvider = configured[0]?.key ?? autoForm.value.scriptProvider
     }
     onScriptProviderChange()
   } catch (e) { /* 选项加载失败不阻断，用默认 */ }
@@ -855,25 +877,25 @@ async function loadComposeOptions() {
 
 // 加载一键成片的技能选项：可选技能（手动勾选）+ 必用技能（自动生效，仅展示）
 function loadAutoSkills() {
-  listSkills('script', true).then((list) => { scriptSkillOptions.value = (list || []).filter(s => !s.auto_apply) }).catch(() => {})
-  listSkills('image', true).then((list) => { imageSkillOptions.value = (list || []).filter(s => !s.auto_apply) }).catch(() => {})
-  listActiveSkills('script').then((list) => { autoScriptSkills.value = list || [] }).catch(() => {})
-  listActiveSkills('image').then((list) => { autoImageSkills.value = list || [] }).catch(() => {})
+  listSkills('script', true).then((list) => { scriptSkillOptions.value = normalizeSkills(list).filter((skill) => !skill.auto_apply) }).catch(() => {})
+  listSkills('image', true).then((list) => { imageSkillOptions.value = normalizeSkills(list).filter((skill) => !skill.auto_apply) }).catch(() => {})
+  listActiveSkills('script').then((list) => { autoScriptSkills.value = normalizeSkills(list) }).catch(() => {})
+  listActiveSkills('image').then((list) => { autoImageSkills.value = normalizeSkills(list) }).catch(() => {})
 }
 
 function onScriptProviderChange() {
   const p = llmProviders.value.find(x => x.key === autoForm.value.scriptProvider)
   const models = p ? p.models : []
   if (models.length && !models.includes(autoForm.value.scriptModel)) {
-    autoForm.value.scriptModel = models[0]
+    autoForm.value.scriptModel = models[0] ?? ''
   }
 }
 
-async function uploadBgm(opt) {
+async function uploadBgm(opt: { file: File }) {
   const fd = new FormData()
   fd.append('file', opt.file)
   try {
-    const res = await api.post('/media/bgm', fd, { headers: { 'Content-Type': 'multipart/form-data' } })
+    const res = await api.post<ApiEnvelope<{ key: string }>>('/media/bgm', fd, { headers: { 'Content-Type': 'multipart/form-data' } })
     if (res.data.code === 200) {
       ElMessage.success(t('projects.bgmUploaded'))
       await loadComposeOptions()
@@ -881,17 +903,17 @@ async function uploadBgm(opt) {
     } else {
       ElMessage.error(res.data.message || t('projects.uploadFailed'))
     }
-  } catch (e) {
-    ElMessage.error(t('projects.uploadFailedDetail', { msg: (e.response?.data?.message || e.message) }))
+  } catch (cause) {
+    ElMessage.error(t('projects.uploadFailedDetail', { msg: errorMessage(cause, t('projects.uploadFailed')) }))
   }
 }
 
 // 常规设置默认值 → 一键成片表单的值域映射。
 // 兼容旧 settings.json 里存的中文 style 值，统一为对话框 el-select 的英文 key。
-const STYLE_VALUE_MAP = { '写实': 'realistic', '动漫': 'animation', '动画': 'animation' }
-function normalizeStyleValue(v) {
-  if (!v) return 'realistic'
-  return STYLE_VALUE_MAP[v] || v
+const STYLE_VALUE_MAP: Record<string, string> = { '写实': 'realistic', '动漫': 'animation', '动画': 'animation' }
+function normalizeStyleValue(value: unknown): string {
+  if (typeof value !== 'string' || !value) return 'realistic'
+  return STYLE_VALUE_MAP[value] || value
 }
 async function openAutoDialog() {
   autoRunning.value = false
@@ -905,7 +927,7 @@ async function openAutoDialog() {
   // 默认值（用户未在常规设置里配置时的兜底）
   autoForm.value = { ...DEFAULT_AUTO_FORM, scriptSkillIds: [], imageSkillIds: [] }
   autoDurationPreset.value = DEFAULT_DURATION_PRESET
-  autoDuration.value = [...DEFAULT_DURATION_RANGE]
+  autoDuration.value = [DEFAULT_DURATION_RANGE[0], DEFAULT_DURATION_RANGE[1]]
   autoVisible.value = true
   loadComposeOptions()
   loadAutoSkills()
@@ -913,11 +935,14 @@ async function openAutoDialog() {
   try {
     const cfg = await getSettings()
     if (cfg) {
-      if (cfg.defaultStyle) autoForm.value.style = normalizeStyleValue(cfg.defaultStyle)
-      if (cfg.defaultVoice) autoForm.value.voice = cfg.defaultVoice
-      if (cfg.defaultImageModel) autoForm.value.imageModel = cfg.defaultImageModel
-      if (cfg.defaultDuration && cfg.defaultDuration !== '60-180') {
-        autoDuration.value = normalizeDurationRange(cfg.defaultDuration, autoDuration.value)
+      const defaultVoice = stringField(cfg, 'defaultVoice')
+      const defaultImageModel = stringField(cfg, 'defaultImageModel')
+      const defaultDuration = stringField(cfg, 'defaultDuration')
+      autoForm.value.style = normalizeStyleValue(cfg.defaultStyle)
+      if (defaultVoice) autoForm.value.voice = defaultVoice
+      if (defaultImageModel) autoForm.value.imageModel = defaultImageModel
+      if (defaultDuration && defaultDuration !== '60-180') {
+        autoDuration.value = normalizeDurationRange(defaultDuration, autoDuration.value)
         autoDurationPreset.value = inferDurationPreset(autoDuration.value)
       }
     }
@@ -937,7 +962,7 @@ async function startAutoProduce() {
   autoMessage.value = t('projects.starting')
   try {
     const preset = subtitlePresets.value.find(s => s.key === autoForm.value.subtitlePreset)
-    const res = await api.post('/ai/auto-produce', {
+    const res = await api.post<ApiEnvelope<{ task_id: string }>>('/ai/auto-produce', {
       theme: autoForm.value.theme.trim(),
       style: autoForm.value.style,
       voice: autoForm.value.voice,
@@ -984,30 +1009,32 @@ async function startAutoProduce() {
         autoDone.value = true
         autoProgress.value = 100
         autoMessage.value = t('projects.completed')
-        autoResult.value = task.result || {}
-        autoVideoUrl.value = mediaUrl(task.result?.file_url || '')
+        const result = autoResultFrom(task.result)
+        autoResult.value = result
+        autoVideoUrl.value = mediaUrl(result.file_url)
         fetchProjects()
       },
       onError: (err) => {
         autoRunning.value = false
         autoFailed.value = true
-        const diagnosis = err.diagnosis || err.task?.diagnosis || err.task?.result?.diagnosis
-        autoDiagnosis.value = diagnosis || null
+        const taskResult = autoResultFrom(err.task?.result)
+        const diagnosis = diagnosisFrom(err.diagnosis) || diagnosisFrom(taskResult.diagnosis)
+        autoDiagnosis.value = diagnosis
         autoMessage.value = diagnosis?.reason || err.message || t('projects.genFailed')
         ElMessage.error(t('projects.autoFailed', { msg: (diagnosis?.reason || err.message || t('projects.unknownError')) }))
         fetchProjects()
       },
     })
-  } catch (e) {
+  } catch (cause) {
     autoRunning.value = false
     autoFailed.value = true
-    autoDiagnosis.value = e?.response?.data?.diagnosis || null
-    autoMessage.value = e?.response?.data?.message || e.message || t('projects.startFailed')
-    ElMessage.error(e.message || t('projects.startFailed'))
+    autoDiagnosis.value = null
+    autoMessage.value = errorMessage(cause, t('projects.startFailed'))
+    ElMessage.error(autoMessage.value)
   }
 }
 
-async function handleContinueProject(project) {
+async function handleContinueProject(project: ProjectView | null) {
   if (!project) return
   continueProjectSource.value = project
   continueForm.value = { mode: 'continue-ending', theme: '' }
@@ -1026,41 +1053,44 @@ async function submitContinueProject() {
     ElMessage.success(t('projects.continueCreated'))
     continueVisible.value = false
     await fetchProjects()
-    if (next?.id) router.push(`/projects/${next.id}/script`)
-  } catch (e) {
-    ElMessage.error(e.message || t('projects.continueFailed'))
+    const nextId = next.id
+    if (typeof nextId === 'string' || typeof nextId === 'number') router.push(`/studio/${nextId}`)
+  } catch (cause) {
+    ElMessage.error(errorMessage(cause, t('projects.continueFailed')))
   } finally {
     continueSubmitting.value = false
   }
 }
 
-async function refreshProjectCompletion(project) {
+async function refreshProjectCompletion(project: ProjectView) {
   if (!project) return
   try {
     const data = await completeProjectCheck(project.id)
     const idx = projects.value.findIndex((p) => Number(p.id) === Number(project.id))
-    if (idx !== -1 && data?.project) projects.value[idx] = { ...projects.value[idx], ...data.project }
-    ElMessage.success(data?.status_label ? t('projects.completeCheckDone', { status: data.status_label }) : t('projects.completeCheckSaved'))
-  } catch (e) {
-    ElMessage.error(e?.message || t('projects.completeCheckFailed'))
+    const parsedProject = ProjectViewSchema.safeParse(data.project)
+    if (idx !== -1 && parsedProject.success) projects.value[idx] = parsedProject.data
+    const statusLabelValue = stringField(data, 'status_label')
+    ElMessage.success(statusLabelValue ? t('projects.completeCheckDone', { status: statusLabelValue }) : t('projects.completeCheckSaved'))
+  } catch (cause) {
+    ElMessage.error(errorMessage(cause, t('projects.completeCheckFailed')))
   }
 }
 
-async function openSeriesDialog(project) {
+async function openSeriesDialog(project: ProjectView) {
   seriesCurrentProject.value = project
   seriesVisible.value = true
   seriesLoading.value = true
   seriesData.value = null
   try {
-    seriesData.value = await getProjectSeries(project.id)
-  } catch (e) {
-    ElMessage.error(e.message || '读取系列失败')
+    seriesData.value = SeriesDataSchema.parse(await getProjectSeries(project.id))
+  } catch (cause) {
+    ElMessage.error(errorMessage(cause, '读取系列失败'))
   } finally {
     seriesLoading.value = false
   }
 }
 
-function showDiagnosis(d) {
+function showDiagnosis(d: Diagnosis | null) {
   if (!d) return
   const partial = d.partialResult
   const partialText = partial
@@ -1085,7 +1115,7 @@ function showDiagnosis(d) {
   )
 }
 
-function escapeHtml(s) {
+function escapeHtml(s: unknown): string {
   return String(s || '')
     .replace(/&/g, '&amp;')
     .replace(/</g, '&lt;')
@@ -1105,497 +1135,4 @@ onUnmounted(() => { if (autoStop) autoStop() })
 onMounted(() => fetchProjects())
 </script>
 
-<style scoped>
-.projects-container {
-  padding: 24px;
-  min-height: 100vh;
-  background: var(--bg-base);
-  color: var(--text);
-}
-
-.projects-header {
-  display: flex;
-  justify-content: space-between;
-  align-items: center;
-  margin-bottom: 24px;
-}
-
-.page-title {
-  font-size: 24px;
-  font-weight: 600;
-  color: var(--text-primary);
-  margin: 0;
-}
-
-.header-actions {
-  display: flex;
-  gap: 12px;
-  align-items: center;
-}
-
-.search-input {
-  width: 240px;
-}
-
-.projects-grid {
-  display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(300px, 1fr));
-  gap: 20px;
-}
-
-/* —— 加载骨架卡 —— */
-.skeleton-card {
-  cursor: default;
-}
-.skeleton-card:hover {
-  transform: none;
-  box-shadow: var(--shadow-sm);
-}
-.sk-thumb {
-  height: 110px;
-  width: 100%;
-  border-radius: var(--radius-md);
-  margin-bottom: 14px;
-}
-.sk-body {
-  padding: 0 2px;
-}
-
-.project-card {
-  background: var(--bg-surface);
-  border: 1px solid var(--border);
-  border-radius: var(--radius-lg);
-  padding: 16px;
-  cursor: pointer;
-  transition: transform 0.28s cubic-bezier(0.34, 1.4, 0.64, 1), box-shadow 0.28s var(--ease-apple);
-  display: flex;
-  flex-direction: column;
-  box-shadow: var(--shadow-sm);
-}
-
-.project-card:hover {
-  transform: translateY(-4px) scale(1.012);
-  box-shadow: var(--shadow-lg);
-}
-.project-card .card-thumb .el-icon {
-  transition: transform 0.3s cubic-bezier(0.34, 1.56, 0.64, 1);
-}
-.project-card:hover .card-thumb .el-icon {
-  transform: scale(1.15);
-}
-
-.card-thumb {
-  position: relative;
-  overflow: hidden;
-  height: 110px;
-  border-radius: var(--radius-md);
-  margin-bottom: 14px;
-  display: grid;
-  place-items: center;
-  font-size: 30px;
-  color: var(--primary);
-  background: linear-gradient(135deg, #e3effe, #f3e8ff);
-}
-.card-thumb.thumb-draft {
-  background: linear-gradient(135deg, #fef3e8, #fde8e8);
-  color: var(--warning);
-}
-.card-thumb.thumb-generating {
-  background: linear-gradient(135deg, #e6f2ff, #e3effe);
-  color: var(--primary);
-}
-.card-thumb.thumb-completed {
-  background: linear-gradient(135deg, #e8f8ee, #e3effe);
-  color: var(--success);
-}
-/* 暗色下缩略图用深色调渐变，避免浅色块突兀 */
-:global([data-theme="dark"]) .card-thumb {
-  background: linear-gradient(135deg, #1c3050, #2a2140);
-}
-:global([data-theme="dark"]) .card-thumb.thumb-draft {
-  background: linear-gradient(135deg, #3a2c18, #3a1f1f);
-}
-:global([data-theme="dark"]) .card-thumb.thumb-generating {
-  background: linear-gradient(135deg, #16314d, #1c3050);
-}
-:global([data-theme="dark"]) .card-thumb.thumb-completed {
-  background: linear-gradient(135deg, #163a28, #1c3050);
-}
-
-/* —— 封面真图（方案 D/B）—— */
-.cover-img {
-  position: absolute;
-  inset: 0;
-  width: 100%;
-  height: 100%;
-  object-fit: cover;
-  transition: transform 0.35s cubic-bezier(0.34, 1.4, 0.64, 1);
-}
-.project-card:hover .cover-img { transform: scale(1.06); }
-
-/* —— 渐变色卡首字（方案 A）—— */
-.cover-initial {
-  font-size: 44px;
-  font-weight: 800;
-  color: rgba(255, 255, 255, 0.92);
-  text-shadow: 0 2px 8px rgba(0, 0, 0, 0.18);
-  letter-spacing: 0;
-  user-select: none;
-}
-
-/* —— ✨ 生成/换封面按钮 —— */
-.cover-gen-btn {
-  position: absolute;
-  right: 8px;
-  bottom: 8px;
-  display: inline-flex;
-  align-items: center;
-  gap: 4px;
-  padding: 4px 10px;
-  font-size: 12px;
-  font-weight: 600;
-  color: #fff;
-  background: rgba(0, 0, 0, 0.42);
-  backdrop-filter: blur(6px);
-  border: 1px solid rgba(255, 255, 255, 0.28);
-  border-radius: 999px;
-  cursor: pointer;
-  opacity: 0;
-  transform: translateY(4px);
-  transition: opacity 0.22s var(--ease-apple), transform 0.22s var(--ease-apple), background 0.2s;
-}
-.project-card:hover .cover-gen-btn { opacity: 1; transform: translateY(0); }
-.cover-gen-btn:hover { background: rgba(0, 122, 255, 0.85); }
-.cover-gen-btn.is-loading { opacity: 1; transform: translateY(0); background: rgba(0, 122, 255, 0.85); cursor: progress; }
-.cover-gen-btn .spin { animation: cover-spin 0.8s linear infinite; }
-@keyframes cover-spin { to { transform: rotate(360deg); } }
-
-.card-header {
-  display: flex;
-  justify-content: space-between;
-  align-items: center;
-  margin-bottom: 10px;
-  gap: 8px;
-}
-
-.project-name {
-  font-size: 16px;
-  font-weight: 600;
-  letter-spacing: -0.01em;
-  color: var(--text);
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-/* —— 状态 badge：圆点 + 柔色底 —— */
-.status-badge {
-  display: inline-flex;
-  align-items: center;
-  gap: 5px;
-  flex-shrink: 0;
-  font-size: 12px;
-  font-weight: 500;
-  padding: 3px 10px;
-  border-radius: var(--radius-pill);
-}
-.status-badge .badge-dot {
-  width: 6px;
-  height: 6px;
-  border-radius: 50%;
-}
-.badge-completed { background: rgba(52, 199, 89, 0.12); color: #248a3d; }
-.badge-completed .badge-dot { background: var(--success); }
-.badge-draft { background: rgba(255, 159, 10, 0.14); color: #b25e00; }
-.badge-draft .badge-dot { background: var(--warning); }
-.badge-generating { background: rgba(0, 122, 255, 0.12); color: #0062cc; }
-.badge-generating .badge-dot { background: var(--primary); }
-.badge-ready { background: rgba(52, 199, 89, 0.12); color: #248a3d; }
-.badge-ready .badge-dot { background: var(--success); }
-.badge-partial { background: rgba(255, 159, 10, 0.14); color: #b25e00; }
-.badge-partial .badge-dot { background: var(--warning); }
-.badge-failed { background: rgba(255, 59, 48, 0.12); color: #c4241d; }
-.badge-failed .badge-dot { background: var(--danger); }
-
-.card-body {
-  flex: 1;
-  margin-bottom: 12px;
-}
-
-.card-body p {
-  margin: 5px 0;
-  font-size: 13px;
-  color: var(--text-second);
-}
-
-.asset-health {
-  display: inline-flex;
-  align-items: center;
-  gap: 6px;
-  max-width: 100%;
-  margin-top: 8px;
-  padding: 4px 9px;
-  border-radius: var(--radius-pill);
-  font-size: 12px;
-  color: var(--text-second);
-  background: rgba(120, 120, 128, 0.1);
-}
-
-.advanced-collapse {
-  margin-top: 4px;
-  border: none;
-}
-
-.advanced-collapse :deep(.el-collapse-item__header) {
-  height: 38px;
-  background: transparent;
-  border-bottom: 1px solid var(--separator);
-  color: var(--text-second);
-  font-size: 13px;
-  font-weight: 600;
-}
-
-.advanced-collapse :deep(.el-collapse-item__wrap) {
-  background: transparent;
-  border-bottom: 0;
-}
-
-.advanced-collapse :deep(.el-collapse-item__content) {
-  padding: 14px 0 0;
-}
-
-.series-loading {
-  padding: 8px;
-}
-
-.series-panel {
-  display: grid;
-  gap: 16px;
-}
-
-.continue-dialog {
-  display: grid;
-  gap: 12px;
-}
-
-.continue-dialog :deep(.el-segmented) {
-  width: 100%;
-}
-
-.series-hero {
-  display: flex;
-  align-items: flex-start;
-  justify-content: space-between;
-  gap: 16px;
-  padding: 16px;
-  border: 1px solid var(--separator);
-  border-radius: var(--radius-md);
-  background: var(--bg-base);
-}
-
-.series-hero h3 {
-  margin: 0 0 6px;
-  color: var(--text);
-}
-
-.series-hero p {
-  margin: 0;
-  color: var(--text-second);
-  font-size: 13px;
-  line-height: 1.6;
-}
-
-.series-episodes {
-  display: grid;
-  gap: 10px;
-}
-
-.series-episode {
-  display: grid;
-  grid-template-columns: 56px minmax(0, 1fr) auto;
-  align-items: center;
-  gap: 12px;
-  padding: 12px;
-  border: 1px solid var(--separator);
-  border-radius: var(--radius-md);
-  cursor: pointer;
-  transition: border-color 0.18s var(--ease-apple), background 0.18s var(--ease-apple);
-}
-
-.series-episode:hover {
-  border-color: rgba(0, 122, 255, 0.25);
-  background: var(--primary-soft);
-}
-
-.episode-index {
-  font-size: 13px;
-  font-weight: 800;
-  color: var(--primary);
-}
-
-.episode-main {
-  min-width: 0;
-  display: flex;
-  flex-direction: column;
-  gap: 3px;
-}
-
-.episode-main strong {
-  color: var(--text);
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.episode-main span {
-  color: var(--text-second);
-  font-size: 12px;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.series-characters h4 {
-  margin: 0 0 10px;
-  color: var(--text);
-}
-
-.series-character {
-  margin: 0 8px 8px 0;
-}
-
-.continuity-chip {
-  display: inline-flex;
-  align-items: center;
-  gap: 6px;
-  max-width: 100%;
-  margin-top: 8px;
-  margin-right: 6px;
-  padding: 4px 9px;
-  border-radius: var(--radius-pill);
-  font-size: 12px;
-  color: var(--primary);
-  background: var(--primary-soft);
-}
-
-.asset-health span:last-child {
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.asset-dot {
-  width: 6px;
-  height: 6px;
-  flex: 0 0 auto;
-  border-radius: 999px;
-  background: currentColor;
-}
-
-.asset-ok {
-  color: var(--success);
-  background: rgba(52, 199, 89, 0.1);
-}
-
-.asset-warn {
-  color: var(--warning);
-  background: rgba(255, 159, 10, 0.12);
-}
-
-.asset-error {
-  color: var(--danger);
-  background: rgba(255, 59, 48, 0.1);
-}
-
-.card-footer {
-  display: flex;
-  justify-content: space-between;
-  align-items: center;
-  border-top: 1px solid var(--separator);
-  padding-top: 12px;
-}
-
-.time-info {
-  font-size: 12px;
-  color: var(--text-muted);
-}
-
-.card-actions {
-  display: flex;
-  gap: 4px;
-}
-
-.empty-state {
-  grid-column: 1 / -1;
-  padding: 60px 0;
-}
-
-/* —— 一键成片 主 CTA：蓝紫渐变 —— */
-.cta-button {
-  background: linear-gradient(135deg, var(--primary), var(--accent-purple));
-  border: none;
-  color: #fff;
-  font-weight: 500;
-  box-shadow: 0 2px 10px rgba(0, 122, 255, 0.28);
-  transition: box-shadow 0.2s var(--ease-apple), transform 0.15s var(--ease-apple);
-}
-.cta-button:hover {
-  background: linear-gradient(135deg, var(--primary), var(--accent-purple));
-  color: #fff;
-  box-shadow: 0 4px 16px rgba(0, 122, 255, 0.36);
-}
-.cta-button:active { transform: scale(0.97); }
-
-:deep(.el-dialog) {
-  border-radius: var(--radius-lg);
-}
-
-.duration-hint {
-  margin-top: 8px;
-  font-size: 12px;
-  color: var(--text-second);
-  text-align: center;
-}
-
-.auto-hint {
-  margin-top: 8px;
-  font-size: 12px;
-  color: var(--text-second);
-  line-height: 1.6;
-}
-
-.auto-progress {
-  padding: 12px 4px;
-}
-
-.auto-msg {
-  margin-top: 16px;
-  text-align: center;
-  font-size: 14px;
-  color: var(--text-primary);
-  min-height: 20px;
-}
-
-.auto-result {
-  margin-top: 16px;
-}
-
-.auto-video {
-  width: 100%;
-  max-height: 280px;
-  border-radius: 8px;
-  background: #000;
-}
-
-.auto-success-text {
-  margin-top: 12px;
-  text-align: center;
-  font-size: 13px;
-  color: var(--text-second);
-}
-
-.auto-running-tip {
-  font-size: 13px;
-  color: var(--text-second);
-}
-</style>
+<style scoped src="../styles/projects.css"></style>

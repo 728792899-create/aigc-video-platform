@@ -150,7 +150,7 @@
               size="small"
               :disabled="item.no_voice"
               style="width: 130px; margin-right: 8px"
-              @change="(val) => updateStoryboardVoice(item, val)"
+              @change="updateStoryboardVoice(item, $event)"
             >
               <el-option v-for="v in voiceOptions" :key="v.value" :label="v.label" :value="v.value" />
             </el-select>
@@ -188,20 +188,64 @@
   </div>
 </template>
 
-<script setup>
+<script setup lang="ts">
+import type { ApiEnvelope } from '@aigc-video/contracts'
+import { z } from 'zod'
 import { ref, reactive, computed, onMounted } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { useI18n } from 'vue-i18n'
-import { ElMessage, ElMessageBox } from 'element-plus'
-import api from '../api'
+import { ElMessage } from 'element-plus/es/components/message/index'
+import { ElMessageBox } from 'element-plus/es/components/message-box/index'
+import api, { unwrap } from '../api'
 import { mediaUrl } from '../api/config'
 import { voicePreview, srtDownloadUrl } from '../api/features'
 import ProjectStageFooter from '../components/ProjectStageFooter.vue'
 
+type EntityId = string | number
+interface VoiceOption { value: string; label: string }
+interface EmotionOption { key: string; label: string }
+interface AudioStoryboard {
+  id: EntityId
+  dialog: string
+  audio_url: string
+  audio_version: number
+  status: 'pending' | 'generating' | 'done' | 'error'
+  voice: string
+  _lastSavedVoice: string
+  no_voice: boolean
+  dirty: boolean
+  loading: boolean
+  chapter_index?: number
+  chapter_title?: string
+}
+
+const StoryboardSourceSchema = z.object({
+  id: z.union([z.string(), z.number()]),
+  dialog: z.string().optional(),
+  text: z.string().optional(),
+  audio_url: z.string().nullish(),
+  voice: z.string().optional(),
+  no_voice: z.union([z.boolean(), z.number()]).optional(),
+  chapter_index: z.number().optional(),
+  chapter_title: z.string().optional(),
+}).passthrough()
+
+const VoicesResponseSchema = z.object({
+  emotions: z.array(z.object({ key: z.string(), label: z.string() })).optional(),
+  voices: z.array(z.object({ key: z.string(), label: z.string() })).optional(),
+}).passthrough()
+
+const TtsResponseSchema = z.object({ file_url: z.string() }).passthrough()
+const AutoFillResponseSchema = z.object({ updated_count: z.number().default(0) }).passthrough()
+
+function errorMessage(cause: unknown): string {
+  return cause instanceof Error ? cause.message : String(cause)
+}
+
 const { t } = useI18n()
 const route = useRoute()
 const router = useRouter()
-const projectId = route.params.id
+const projectId = Array.isArray(route.params.id) ? route.params.id[0] ?? '' : route.params.id ?? ''
 
 const voice = ref('xiaoxiao')
 const speed = ref(1.0)
@@ -209,9 +253,9 @@ const pitch = ref(0)
 const emotion = ref('general')
 const volume = ref(1.0)
 const dialogMode = ref(false)
-const emotionOptions = ref([{ key: 'general', label: t('audio.emotionDefault') }])
+const emotionOptions = ref<EmotionOption[]>([{ key: 'general', label: t('audio.emotionDefault') }])
 const batchLoading = ref(false)
-const storyboards = ref([])
+const storyboards = ref<AudioStoryboard[]>([])
 const selectedChapter = ref('all')
 const previewLoading = ref(false)
 const previewUrl = ref('')
@@ -234,7 +278,7 @@ const subtitlePreviewStyle = computed(() => ({
   fontWeight: subtitleStyle.bold ? 'bold' : 'normal',
 }))
 
-const voiceOptions = ref([
+const voiceOptions = ref<VoiceOption[]>([
   { value: 'xiaoxiao', label: t('audio.voiceXiaoxiao') },
   { value: 'xiaoyi', label: t('audio.voiceXiaoyi') },
   { value: 'yunyang', label: t('audio.voiceYunyang') },
@@ -243,8 +287,8 @@ const voiceOptions = ref([
   { value: 'yunxia', label: t('audio.voiceYunxia') }
 ])
 
-const statusText = (status) => {
-  const map = { pending: t('audio.statusPending'), generating: t('audio.statusGenerating'), done: t('audio.statusDone'), error: t('audio.statusError') }
+const statusText = (status: AudioStoryboard['status']): string => {
+  const map: Record<AudioStoryboard['status'], string> = { pending: t('audio.statusPending'), generating: t('audio.statusGenerating'), done: t('audio.statusDone'), error: t('audio.statusError') }
   return map[status] || t('audio.statusPending')
 }
 
@@ -256,12 +300,13 @@ const batchScopeStoryboards = computed(() => selectedChapter.value === 'all'
   : storyboards.value.filter((s) => String(s.chapter_index || 1) === selectedChapter.value))
 const visibleStoryboards = computed(() => batchScopeStoryboards.value)
 const chapterOptions = computed(() => {
-  const map = new Map()
+  const map = new Map<number, { value: string; label: string; count: number }>()
   storyboards.value.forEach((sb) => {
     const idx = Number(sb.chapter_index || 0)
     if (!idx) return
-    if (!map.has(idx)) map.set(idx, { value: String(idx), label: sb.chapter_title || `第 ${idx} 章`, count: 0 })
-    map.get(idx).count += 1
+    const entry = map.get(idx) ?? { value: String(idx), label: sb.chapter_title || `第 ${idx} 章`, count: 0 }
+    entry.count += 1
+    map.set(idx, entry)
   })
   const list = [...map.values()]
     .sort((a, b) => Number(a.value) - Number(b.value))
@@ -292,24 +337,24 @@ const voiceLabel = computed(() => {
   return found ? found.label : voice.value
 })
 
-const voiceName = (value) => {
+const voiceName = (value: string): string => {
   const found = voiceOptions.value.find(o => o.value === value)
   return found ? found.label : value
 }
 
-const audioSrc = (item) => {
+const audioSrc = (item: AudioStoryboard): string => {
   if (!item.audio_url) return ''
   const sep = item.audio_url.includes('?') ? '&' : '?'
   return `${item.audio_url}${sep}v=${item.audio_version || 0}`
 }
 
-const audioKey = (item) => `${item.id}-${item.audio_url || ''}-${item.audio_version || 0}`
+const audioKey = (item: AudioStoryboard): string => `${item.id}-${item.audio_url || ''}-${item.audio_version || 0}`
 
 const fetchStoryboards = async () => {
   try {
-    const res = await api.get(`/storyboards/project/${projectId}`)
-    const list = res.data.data || res.data || []
-    storyboards.value = list.map(item => ({
+    const response = await api.get<ApiEnvelope<unknown>>(`/storyboards/project/${projectId}`)
+    const list = StoryboardSourceSchema.array().parse(unwrap(response))
+    storyboards.value = list.map((item): AudioStoryboard => ({
       ...item,
       dialog: item.dialog || item.text || '',
       audio_url: item.audio_url ? mediaUrl(item.audio_url) : '',
@@ -326,15 +371,15 @@ const fetchStoryboards = async () => {
   }
 }
 
-const generateTTS = async (item) => {
+const generateTTS = async (item: AudioStoryboard): Promise<boolean> => {
   if (!item.dialog.trim()) {
     ElMessage.warning(t('audio.dialogRequired'))
-    return
+    return false
   }
   item.loading = true
   item.status = 'generating'
   try {
-    const res = await api.post('/ai/generate-tts', {
+    const res = await api.post<ApiEnvelope<unknown>>('/ai/generate-tts', {
       text: item.dialog,
       voice: item.voice || voice.value,
       speed: speed.value,
@@ -344,7 +389,7 @@ const generateTTS = async (item) => {
       dialog: dialogMode.value,
       storyboard_id: item.id
     })
-    const data = res.data.data || res.data
+    const data = TtsResponseSchema.parse(unwrap(res))
     item.audio_url = mediaUrl(data.file_url)
     item.audio_version = Date.now()
     item.status = 'done'
@@ -362,9 +407,9 @@ const generateTTS = async (item) => {
   }
 }
 
-const updateStoryboardVoice = async (item, selectedVoice = item.voice) => {
+const updateStoryboardVoice = async (item: AudioStoryboard, selectedVoice: unknown = item.voice) => {
   const previousVoice = item._lastSavedVoice || item.voice || 'xiaoxiao'
-  item.voice = selectedVoice || previousVoice
+  item.voice = typeof selectedVoice === 'string' && selectedVoice ? selectedVoice : previousVoice
   if (item.audio_url && !item.no_voice && item.dialog.trim()) item.dirty = true
   try {
     await api.put(`/storyboards/${item.id}`, { voice: item.voice })
@@ -373,7 +418,7 @@ const updateStoryboardVoice = async (item, selectedVoice = item.voice) => {
     item.voice = previousVoice
     item.dirty = false
     ElMessage.error(t('audio.ttsFailed'))
-    console.warn('保存音色失败', e)
+    console.warn('保存音色失败')
     return
   }
   // ② 即时应用：改了音色后，若该镜已有配音，立刻按新音色重新生成
@@ -386,7 +431,7 @@ const updateStoryboardVoice = async (item, selectedVoice = item.voice) => {
 }
 
 // ② 台词/设置变化但音频还没跟上时，标记为「待更新」
-const markDirty = (item) => {
+const markDirty = (item: AudioStoryboard) => {
   if (item.audio_url && !item.no_voice) item.dirty = true
 }
 
@@ -406,7 +451,7 @@ const applyAllDirty = async () => {
 }
 
 // ① 切换「此镜不读/旁白」：写回后端 no_voice，并清理朗读状态
-const updateNoVoice = async (item) => {
+const updateNoVoice = async (item: AudioStoryboard) => {
   try {
     await api.put(`/storyboards/${item.id}`, { no_voice: item.no_voice ? 1 : 0 })
     if (item.no_voice) {
@@ -463,8 +508,8 @@ const applyGlobalVoice = async () => {
 
 const autoFillSubtitles = async () => {
   try {
-    const res = await api.post(`/subtitle/auto-fill/${projectId}`)
-    const data = res.data?.data
+    const res = await api.post<ApiEnvelope<unknown>>(`/subtitle/auto-fill/${projectId}`)
+    const data = AutoFillResponseSchema.parse(unwrap(res))
     ElMessage.success(t('audio.autoFillSuccess', { n: (data?.updated_count || 0) }))
     // 同时把字幕样式写入每个分镜
     for (const item of storyboards.value) {
@@ -486,8 +531,8 @@ const previewVoice = async () => {
   try {
     const data = await voicePreview({ voice: voice.value, speed: speed.value, pitch: pitch.value, emotion: emotion.value, volume: volume.value })
     previewUrl.value = mediaUrl(data.file_url)
-  } catch (e) {
-    ElMessage.error(t('audio.previewFailed', { msg: (e.message || e) }))
+  } catch (cause) {
+    ElMessage.error(t('audio.previewFailed', { msg: errorMessage(cause) }))
   } finally {
     previewLoading.value = false
   }
@@ -495,14 +540,14 @@ const previewVoice = async () => {
 
 const loadVoicesAndEmotions = async () => {
   try {
-    const res = await api.get('/ai/voices')
-    const d = res.data?.data || res.data
+    const res = await api.get<ApiEnvelope<unknown>>('/ai/voices')
+    const d = VoicesResponseSchema.parse(unwrap(res))
     if (d && Array.isArray(d.emotions)) emotionOptions.value = d.emotions
     if (d && Array.isArray(d.voices) && d.voices.length > 0) {
       voiceOptions.value = d.voices.map(v => ({ value: v.key, label: v.label }))
       // 自动选第一个音色（火山/Edge 列表都用第一个作为默认）
       if (!voiceOptions.value.find(o => o.value === voice.value)) {
-        voice.value = voiceOptions.value[0].value
+        voice.value = voiceOptions.value[0]?.value ?? voice.value
       }
     }
   } catch (e) { /* 静默：保留默认情感选项 + Edge 默认音色列表 */ }
@@ -514,7 +559,7 @@ const downloadSrt = () => {
   document.body.appendChild(a); a.click(); a.remove()
 }
 
-onMounted(() => { fetchStoryboards(); loadVoicesAndEmotions() })
+onMounted(() => { void fetchStoryboards(); void loadVoicesAndEmotions() })
 </script>
 
 <style scoped>

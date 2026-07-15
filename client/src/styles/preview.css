@@ -1,0 +1,621 @@
+.preview-page {
+  min-height: 100%;
+  box-sizing: border-box;
+  background: var(--bg-base);
+  color: var(--text);
+  padding: 16px;
+  overflow: visible;
+}
+/* ③ 留白根因修复：原来「视频(矮) + 设置面板(高)」并排成一行，时间轴在整行下方，
+   于是视频下方空出 = 设置面板高度 − 视频高度 的一大片灰。改为 CSS Grid：
+   左列上=播放器、左列下=时间轴，右列=设置面板纵跨两行。时间轴直接贴在视频下面，
+   不再有空白；右侧高面板自然占满右列。 */
+.preview-grid {
+  display: grid;
+  min-height: 100%;
+  grid-template-columns: minmax(0, 1fr) 220px;
+  grid-template-rows: auto auto auto auto auto;
+  grid-template-areas:
+    "guide guide"
+    "export side"
+    "player side"
+    "timeline side"
+    "footer side";
+  align-items: start;
+  gap: 16px;
+}
+.preview-grid > .player-section { grid-area: player; }
+.preview-grid > .side-panel { grid-area: side; }
+.preview-grid > .timeline-section { grid-area: timeline; }
+.preview-grid > .preview-guide { grid-area: guide; margin-bottom: 0; }
+.preview-grid > .export-action-panel { grid-area: export; }
+.preview-grid > .preview-stage-footer { grid-area: footer; margin-top: 0; }
+.preview-grid > .export-progress { grid-column: 1 / -1; }
+.preview-main {
+  display: flex;
+  gap: 20px;
+  flex: 0 0 auto;
+  align-items: flex-start;
+}
+.player-section {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: flex-start;
+  gap: 12px;
+  min-width: 0;
+  min-height: 320px;
+  overflow: visible;
+}
+.canvas-wrapper {
+  position: relative;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 100%;
+  /* 真因修复（v1.5.0 实测）：flex:1 1 auto + min-height:0 让画面区弹性占据
+     播放器行扣掉控制条后的剩余高度，窗口变小时跟着收缩；画面用 object-fit
+     在内部等比缩放。不再用 max-height:60vh（视口单位会脱离父容器导致溢出）。 */
+  flex: 1 1 auto;
+  min-height: 0;
+  /* 真因修复（v1.6.0 浏览器实测）：min-width:0 是横向不溢出的关键。canvas 元素带
+     intrinsic 宽度属性(1280)，会把 grid 第一列的 auto 最小宽度撑到 1280px，导致播放器
+     和画面横向捅出白色容器右边（用户反复看到的"内容在容器外面"）。min-width:0 +
+     列改 minmax(0,1fr) 后，列可收缩到任意窄，画面在内部按 object-fit 等比缩放。 */
+  min-width: 0;
+  max-width: 100%;
+  margin: 0 auto;
+  background: #0a0a1a;
+  border-radius: var(--radius-md);
+  overflow: hidden;
+}
+.preview-canvas {
+  display: block;
+  width: auto;
+  height: auto;
+  max-width: 100%;
+  max-height: 100%;
+  object-fit: contain;
+}
+/* 真实成片播放器：与成片库一致的 video，等比缩放贴合画面区 */
+.preview-video {
+  display: block;
+  width: 100%;
+  height: 100%;
+  max-width: 100%;
+  max-height: 100%;
+  object-fit: contain;
+  background: #000;
+}
+
+.stale-export-alert {
+  width: 100%;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 10px 12px;
+  border: 1px solid rgba(230, 162, 60, 0.35);
+  border-radius: var(--radius-sm);
+  background: rgba(230, 162, 60, 0.1);
+}
+
+.stale-export-copy {
+  min-width: 0;
+}
+
+.stale-export-copy strong {
+  display: block;
+  margin-bottom: 3px;
+  color: var(--el-color-warning);
+  font-size: 13px;
+}
+
+.stale-export-copy p {
+  margin: 0;
+  color: var(--text-second);
+  font-size: 12px;
+  line-height: 1.5;
+}
+
+.stale-export-actions {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  flex-wrap: wrap;
+  gap: 6px;
+  flex: 0 0 auto;
+}
+
+.stale-export-actions .el-button {
+  margin: 0;
+}
+
+/* 播放模式切换条 */
+.play-mode-bar {
+  width: 100%;
+  flex: 0 0 auto;
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  margin-top: 10px;
+}
+.play-mode-hint {
+  font-size: 12px;
+  color: var(--text-muted, #888);
+}
+.player-controls {
+  width: 100%;
+  flex: 0 0 auto;
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 8px 12px;
+  background: var(--bg-surface);
+  border: 1px solid var(--separator);
+  border-radius: var(--radius-md);
+}
+.time-display {
+  font-size: 13px;
+  color: var(--text-second);
+  min-width: 90px;
+}
+.progress-bar {
+  flex: 1;
+  height: 6px;
+  background: var(--separator);
+  border-radius: 3px;
+  cursor: pointer;
+  position: relative;
+}
+.progress-fill {
+  height: 100%;
+  background: var(--primary);
+  border-radius: 3px;
+  transition: width 0.1s linear;
+}
+.side-panel {
+  width: 220px;
+  max-height: calc(100dvh - 80px);
+  background: var(--bg-surface);
+  border: 1px solid var(--separator);
+  border-radius: var(--radius-md);
+  padding: 20px;
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+  min-height: 0;
+  overflow-y: auto;
+}
+.side-panel h3 {
+  margin: 0;
+  font-size: 16px;
+  color: var(--text);
+}
+.info-item {
+  display: flex;
+  justify-content: space-between;
+  font-size: 13px;
+}
+.info-value {
+  color: var(--primary);
+  font-weight: 600;
+}
+
+.long-video-panel {
+  padding: 10px;
+  border: 1px solid rgba(0, 122, 255, 0.18);
+  border-radius: var(--radius-sm);
+  background: var(--primary-soft);
+  color: var(--text);
+}
+
+.long-video-panel strong {
+  display: block;
+  margin-bottom: 6px;
+  color: var(--primary);
+  font-size: 13px;
+}
+
+.long-video-panel p {
+  margin: 4px 0 0;
+  color: var(--text-second);
+  font-size: 11px;
+  line-height: 1.5;
+}
+
+.long-video-panel .duration-warning {
+  padding: 6px 8px;
+  margin-top: 8px;
+  border: 1px solid rgba(230, 162, 60, 0.35);
+  border-radius: var(--radius-sm);
+  background: rgba(230, 162, 60, 0.1);
+  color: var(--el-color-warning);
+}
+
+.export-action-panel {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 12px;
+  padding: 14px 16px;
+  border: 1px solid rgba(0, 122, 255, 0.18);
+  border-radius: var(--radius-md);
+  background: var(--bg-surface);
+  min-width: 0;
+}
+
+.export-action-copy {
+  display: grid;
+  gap: 5px;
+  min-width: 0;
+}
+
+.export-action-copy h3 {
+  margin: 0;
+  color: var(--text);
+  font-size: 15px;
+}
+
+.export-action-copy p {
+  margin: 0;
+  color: var(--text-second);
+  font-size: 12px;
+  line-height: 1.5;
+}
+
+.export-action-copy code {
+  padding: 1px 5px;
+  border-radius: 5px;
+  background: rgba(0, 122, 255, 0.08);
+  color: var(--primary);
+  font-size: 11px;
+}
+
+.export-action-controls {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.export-action-controls .el-button {
+  margin: 0;
+}
+
+.export-action-panel .export-status-card {
+  grid-column: 1 / -1;
+}
+
+.export-btn {
+  margin-top: auto;
+}
+
+.export-action-panel .export-btn {
+  margin-top: 0;
+}
+
+.export-status-card {
+  display: grid;
+  gap: 8px;
+  padding: 10px;
+  border: 1px solid var(--separator);
+  border-radius: var(--radius-sm);
+  background: var(--bg-base);
+}
+
+.export-status-card.is-running {
+  border-color: rgba(0, 122, 255, 0.24);
+  background: var(--primary-soft);
+}
+
+.export-status-card.is-success {
+  border-color: rgba(52, 199, 89, 0.28);
+  background: rgba(52, 199, 89, 0.08);
+}
+
+.export-status-card.is-error {
+  border-color: rgba(255, 59, 48, 0.28);
+  background: rgba(255, 59, 48, 0.08);
+}
+
+.export-status-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.export-status-head strong {
+  color: var(--text);
+  font-size: 13px;
+}
+
+.export-status-card p {
+  margin: 0;
+  color: var(--text-second);
+  font-size: 12px;
+  line-height: 1.5;
+}
+
+.export-location {
+  display: grid;
+  gap: 4px;
+}
+
+.export-location span {
+  color: var(--text-muted, #999);
+  font-size: 11px;
+}
+
+.export-location code {
+  display: block;
+  padding: 6px 7px;
+  border-radius: 6px;
+  background: rgba(0, 0, 0, 0.06);
+  color: var(--text);
+  font-size: 11px;
+  white-space: normal;
+  overflow-wrap: anywhere;
+}
+
+.export-status-actions {
+  display: flex;
+  gap: 6px;
+  flex-wrap: wrap;
+}
+
+.export-status-actions .el-button {
+  flex: 1 1 auto;
+  margin: 0;
+}
+
+.apply-voice-btn {
+  margin-top: 8px;
+  width: 100%;
+}
+.sp-divider { margin: 8px 0; }
+.setting-block { display: flex; flex-direction: column; gap: 6px; }
+.setting-block label { font-size: 13px; color: var(--text-second); }
+.switch-row { flex-direction: row; align-items: center; justify-content: space-between; }
+.switch-row span { font-size: 13px; color: var(--text-second); }
+.setting-hint { margin: 4px 0 0; font-size: 11px; color: var(--text-muted, #999); line-height: 1.4; }
+.snapshot-head { display: flex; align-items: center; justify-content: space-between; }
+.snapshot-head h3 { margin: 0; }
+.snap-empty { font-size: 12px; color: var(--text-muted, #999); }
+.snap-item { display: flex; align-items: center; justify-content: space-between; gap: 8px; padding: 6px 0; border-bottom: 1px solid var(--separator); }
+.snap-info { display: flex; flex-direction: column; min-width: 0; }
+.snap-label { font-size: 13px; color: var(--text); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.snap-meta { font-size: 11px; color: var(--text-muted, #999); }
+.snap-btns { flex-shrink: 0; }
+.export-progress {
+  margin: 0 16px 16px;
+  padding: 12px 16px;
+  background: var(--primary-soft);
+  border-radius: var(--radius-md);
+  border: 1px solid rgba(0, 122, 255, 0.15);
+}
+.export-message {
+  margin-top: 8px;
+  font-size: 13px;
+  color: var(--text-second);
+}
+.timeline-section {
+  background: var(--bg-surface);
+  border: 1px solid var(--separator);
+  border-radius: var(--radius-md);
+  padding: 16px;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+}
+.timeline-title {
+  margin: 0 0 12px 0;
+  font-size: 14px;
+  color: var(--text);
+}
+.timeline-toolbar {
+  display: flex; align-items: center; justify-content: space-between; margin-bottom: 8px;
+}
+.timeline-toolbar .timeline-title { margin: 0; }
+.batch-bar { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; justify-content: flex-end; }
+.sync-summary {
+  max-width: 240px;
+  padding: 3px 8px;
+  border-radius: 999px;
+  background: var(--primary-soft);
+  border: 1px solid rgba(0, 122, 255, 0.18);
+  color: var(--primary);
+  font-size: 12px;
+  line-height: 1.4;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.batch-pop { display: flex; flex-direction: column; gap: 10px; }
+.batch-field { display: flex; align-items: center; gap: 8px; }
+.batch-field span { width: 36px; font-size: 13px; color: var(--text-second); flex-shrink: 0; }
+.batch-field :deep(.el-select) { flex: 1; }
+.timeline-track {
+  display: flex;
+  gap: 12px;
+  overflow-x: auto;
+  padding: 8px 0;
+  align-items: stretch;
+}
+.timeline-item-wrapper {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.transition-selector {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 110px;
+  padding: 4px;
+  background: var(--primary-soft);
+  border: 1px dashed rgba(0, 122, 255, 0.3);
+  border-radius: 6px;
+}
+.transition-selector :deep(.el-input__wrapper) {
+  background: transparent;
+  font-size: 12px;
+}
+.timeline-card {
+  min-width: 140px;
+  background: var(--bg-base);
+  border-radius: 6px;
+  overflow: hidden;
+  cursor: grab;
+  border: 2px solid var(--separator);
+  transition: border-color 0.2s;
+}
+.timeline-card.active {
+  border-color: var(--primary);
+}
+.timeline-card:hover {
+  border-color: var(--primary);
+}
+.card-thumbnail {
+  position: relative;
+  width: 100%;
+  height: 80px;
+  overflow: hidden;
+  background: #0a0a1a;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+}
+.card-thumbnail img {
+  width: 100%;
+  height: 100%;
+  object-fit: contain;
+}
+.placeholder-thumb {
+  font-size: 28px;
+  color: var(--text-muted);
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 2px;
+}
+.placeholder-thumb .pick-hint {
+  font-size: 11px;
+}
+.pick-overlay {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 4px;
+  font-size: 12px;
+  color: #fff;
+  background: rgba(0, 0, 0, 0.55);
+  opacity: 0;
+  transition: opacity 0.15s;
+}
+.card-thumbnail:hover .pick-overlay {
+  opacity: 1;
+}
+.card-info {
+  padding: 6px 8px;
+  display: flex;
+  justify-content: space-between;
+  font-size: 11px;
+}
+.scene-num {
+  color: var(--text-second);
+}
+.duration-label {
+  color: var(--primary);
+}
+/* ① 选图弹窗 */
+.img-picker-grid {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 12px;
+  min-height: 120px;
+}
+.img-picker-empty {
+  grid-column: 1 / -1;
+  text-align: center;
+  color: var(--text-muted);
+  padding: 32px 0;
+}
+.img-picker-cell {
+  position: relative;
+  aspect-ratio: v-bind(aspectRatioCss);
+  border: 2px solid transparent;
+  border-radius: var(--radius-sm);
+  overflow: hidden;
+  cursor: pointer;
+  background: #0a0a1a;
+}
+.img-picker-cell img {
+  width: 100%;
+  height: 100%;
+  object-fit: contain;
+  display: block;
+}
+.img-picker-cell:hover {
+  border-color: var(--primary);
+}
+.img-picker-cell.chosen {
+  border-color: var(--primary);
+}
+.img-picker-badge {
+  position: absolute;
+  top: 4px;
+  right: 4px;
+  width: 22px;
+  height: 22px;
+  border-radius: 50%;
+  background: var(--primary);
+  color: #fff;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 13px;
+}
+/* 窗口变窄/浏览器放大时：右侧 220px 设置面板与视频并排会把视频挤没，
+   改为单列堆叠——播放器在上、设置面板、时间轴在下。三段竖向叠加通常高过窗口，
+   此时回退为「整页可滚动」（解除 height:100%/overflow:hidden 的锁定），不裁切。 */
+@media (max-width: 1100px) {
+  .preview-page {
+    min-height: 100%;
+    overflow-y: auto;
+    overflow-x: hidden;
+  }
+  .preview-grid {
+    height: auto;
+    grid-template-columns: 1fr;
+    grid-template-rows: auto auto auto auto auto auto;
+    grid-template-areas:
+      "guide"
+      "export"
+      "player"
+      "side"
+      "timeline"
+      "footer";
+  }
+  .preview-grid > .player-section { min-height: 240px; }
+  .export-action-panel {
+    grid-template-columns: 1fr;
+    align-items: stretch;
+  }
+  .export-action-controls {
+    justify-content: flex-start;
+  }
+  .preview-grid > .side-panel {
+    width: 100%;
+    max-width: none;
+    max-height: none;
+    margin: 0;
+    overflow-y: visible;
+  }
+}

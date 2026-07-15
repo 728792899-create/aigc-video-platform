@@ -100,7 +100,7 @@
             v-if="isFileDetail"
             type="selection"
             width="44"
-            :selectable="row => row.restorable !== false"
+            :selectable="isDetailSelectable"
           />
           <el-table-column :label="$t('trash.colType')" width="100">
             <template #default="{ row }">{{ detailTypeLabel(row.type, row.label) }}</template>
@@ -124,28 +124,32 @@
   </div>
 </template>
 
-<script setup>
+<script setup lang="ts">
 import { computed, ref, onMounted } from 'vue'
 import { useI18n } from 'vue-i18n'
-import { ElMessage, ElMessageBox } from 'element-plus'
-import { listTrash, getTrashDetail, restoreTrash, restoreTrashItems, purgeTrash, purgeTrashItems, emptyTrash, listLogs } from '../api/trash'
+import { ElMessage } from 'element-plus/es/components/message/index'
+import { ElMessageBox } from 'element-plus/es/components/message-box/index'
+import {
+  listTrash, getTrashDetail, restoreTrash, restoreTrashItems, purgeTrash, purgeTrashItems,
+  emptyTrash, listLogs, type OperationLog, type TrashDetail, type TrashDetailItem, type TrashRecord,
+} from '../api/trash'
 
 const { t } = useI18n()
 
 const tab = ref('trash')
 const now = ref(Date.now())
 const category = ref('all')
-const trashList = ref([])
-const logList = ref([])
+const trashList = ref<TrashRecord[]>([])
+const logList = ref<OperationLog[]>([])
 const loadingTrash = ref(false)
 const loadingLogs = ref(false)
 const detailVisible = ref(false)
-const detail = ref(null)
-const detailSelection = ref([])
+const detail = ref<TrashDetail | null>(null)
+const detailSelection = ref<TrashDetailItem[]>([])
 
 const CATEGORY_ORDER = ['all', 'image', 'audio', 'video', 'subtitle', 'script', 'mixed']
 const categoryTabs = computed(() => {
-  const counts = { all: trashList.value.length }
+  const counts: Record<string, number> = { all: trashList.value.length }
   for (const row of trashList.value) counts[row.category || 'file'] = (counts[row.category || 'file'] || 0) + 1
   return CATEGORY_ORDER
     .filter(key => key === 'all' || counts[key])
@@ -155,11 +159,11 @@ const filteredTrashList = computed(() => {
   if (category.value === 'all') return trashList.value
   return trashList.value.filter(row => row.category === category.value)
 })
-const isFileDetail = computed(() => detail.value && detail.value.entity_type === 'files')
+const isFileDetail = computed(() => detail.value?.entity_type === 'files')
 const selectedRestorableCount = computed(() => detailSelection.value.filter(row => row.restorable !== false).length)
 
-function categoryLabel(key) {
-  const map = {
+function categoryLabel(key: string): string {
+  const map: Record<string, string> = {
     all: t('trash.catAll'),
     image: t('trash.catImage'),
     audio: t('trash.catAudio'),
@@ -170,12 +174,12 @@ function categoryLabel(key) {
   }
   return map[key] || t('trash.catMixed')
 }
-function categoryTagType(key) {
-  const map = { image: 'success', audio: 'warning', video: 'primary', subtitle: 'info', script: '', mixed: 'warning' }
+function categoryTagType(key: string): '' | 'success' | 'warning' | 'primary' | 'info' {
+  const map: Record<string, '' | 'success' | 'warning' | 'primary' | 'info'> = { image: 'success', audio: 'warning', video: 'primary', subtitle: 'info', script: '', mixed: 'warning' }
   return map[key] || 'info'
 }
-function detailTypeLabel(type, fallback) {
-  const map = {
+function detailTypeLabel(type: string | undefined, fallback?: string): string {
+  const map: Record<string, string> = {
     project: t('trash.typeProject'),
     storyboard: t('trash.typeStoryboard'),
     image: t('trash.catImage'),
@@ -186,14 +190,14 @@ function detailTypeLabel(type, fallback) {
     script: t('trash.catScript'),
     file: t('trash.typeFile'),
   }
-  return map[type] || fallback || t('trash.typeFile')
+  return (type ? map[type] : '') || fallback || t('trash.typeFile')
 }
 
-function fmtTime(ts) {
+function fmtTime(ts: string | number | null | undefined): string {
   if (!ts) return '—'
   return new Date(Number(ts)).toLocaleString('zh-CN', { hour12: false })
 }
-function fmtDetail(d) {
+function fmtDetail(d: unknown): string {
   if (d == null) return '—'
   if (typeof d === 'string') return d
   try { return JSON.stringify(d) } catch { return String(d) }
@@ -206,16 +210,17 @@ async function loadTrash() {
   finally { loadingTrash.value = false }
 }
 
-async function openDetail(row) {
+async function openDetail(row: TrashRecord) {
   detailVisible.value = true
   detail.value = null
   detailSelection.value = []
   try { detail.value = await getTrashDetail(row.trash_id || row.id, row.group_key || null) }
   catch (e) { ElMessage.error(t('trash.loadDetailFailed')); detailVisible.value = false }
 }
-function onDetailSelectionChange(rows) {
+function onDetailSelectionChange(rows: TrashDetailItem[]) {
   detailSelection.value = rows || []
 }
+function isDetailSelectable(row: TrashDetailItem): boolean { return row.restorable !== false }
 async function loadLogs() {
   loadingLogs.value = true
   try { logList.value = await listLogs(200) }
@@ -223,7 +228,7 @@ async function loadLogs() {
   finally { loadingLogs.value = false }
 }
 
-async function doRestore(row) {
+async function doRestore(row: TrashRecord | TrashDetail) {
   try {
     if (row.entity_type === 'files' && row.group_key) {
       const groupDetail = detail.value && detail.value.group_key === row.group_key
@@ -237,7 +242,7 @@ async function doRestore(row) {
     }
     ElMessage.success(t('trash.restored'))
     detailVisible.value = false
-    loadTrash()
+    void loadTrash()
   } catch (e) { ElMessage.error(t('trash.restoreFailed')) }
 }
 async function doRestoreSelected() {
@@ -248,7 +253,7 @@ async function doRestoreSelected() {
     ElMessage.success(res.message || t('trash.restored'))
     detailSelection.value = []
     await loadTrash()
-    if (res.data && res.data.trashRemoved) {
+    if (res.data?.trashRemoved) {
       detailVisible.value = false
       detail.value = null
     } else {
@@ -260,11 +265,11 @@ async function doRestoreSelected() {
         detail.value = nextDetail
       }
     }
-  } catch (e) {
-    ElMessage.error(e?.response?.data?.message || t('trash.restoreFailed'))
+  } catch {
+    ElMessage.error(t('trash.restoreFailed'))
   }
 }
-async function doPurge(row) {
+async function doPurge(row: TrashRecord | TrashDetail) {
   try {
     await ElMessageBox.confirm(t('trash.purgeConfirm', { name: row.group_label || row.name }), t('trash.confirmTitle'), { type: 'warning' })
   } catch { return }
@@ -281,7 +286,7 @@ async function doPurge(row) {
     }
     ElMessage.success(t('trash.purged'))
     detailVisible.value = false
-    loadTrash()
+    void loadTrash()
   }
   catch (e) { ElMessage.error(t('trash.purgeFailed')) }
 }
@@ -289,11 +294,11 @@ async function doEmpty() {
   try {
     await ElMessageBox.confirm(t('trash.emptyConfirm'), t('trash.confirmTitle'), { type: 'warning' })
   } catch { return }
-  try { const r = await emptyTrash(); ElMessage.success(r.message || t('trash.emptied')); loadTrash() }
+  try { const r = await emptyTrash(); ElMessage.success(r.message || t('trash.emptied')); void loadTrash() }
   catch (e) { ElMessage.error(t('trash.emptyFailed')) }
 }
 
-onMounted(() => { loadTrash(); loadLogs() })
+onMounted(() => { void loadTrash(); void loadLogs() })
 </script>
 
 <style scoped>

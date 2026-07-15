@@ -2,27 +2,45 @@
   "name": "aigc-video-server",
   "version": "1.0.3",
   "description": "AIGC辅助短视频创意生成与制作平台 - 后端服务",
-  "main": "app.js",
+  "main": "dist/app.js",
   "scripts": {
-    "start": "node app.js",
-    "dev": "nodemon app.js",
-    "test": "node --test test/**/*.test.js",
-    "preflight": "node scripts/preflight.js"
+    "build": "tsc -p tsconfig.build.json",
+    "start": "npm run build && node dist/app.js",
+    "dev": "tsx watch app.ts",
+    "typecheck": "tsc -p tsconfig.json --noEmit",
+    "test": "npm run build && node scripts/run-tests.mjs",
+    "test:against-running": "tsx --test test/**/*.test.js && tsx --test test/**/*.test.ts",
+    "preflight": "npm run build && node scripts/preflight.js"
   },
   "dependencies": {
+    "@aigc-video/contracts": "file:../packages/contracts",
+    "better-sqlite3": "12.9.0",
     "bytenode": "1.5.7",
     "cors": "2.8.6",
     "dotenv": "16.6.1",
-    "express": "4.22.2",
+    "express": "5.2.1",
     "ffmpeg-static": "^5.3.0",
+    "knex": "3.2.5",
     "morgan": "1.11.0",
-    "multer": "1.4.5-lts.2",
+    "multer": "2.2.0",
     "node-edge-tts": "1.2.10",
+    "sharp": "0.34.5",
+    "socket.io": "4.8.3",
     "sql.js": "1.14.1",
     "uuid": "^11.1.1",
     "zod": "4.4.3"
   },
   "devDependencies": {
-    "nodemon": "3.1.14"
+    "@types/better-sqlite3": "7.6.13",
+    "@types/cors": "2.8.19",
+    "@types/express": "5.0.6",
+    "@types/morgan": "1.9.10",
+    "@types/multer": "2.2.0",
+    "@types/node": "22.20.1",
+    "@types/sql.js": "1.4.11",
+    "@types/ws": "^8.18.1",
+    "nodemon": "3.1.14",
+    "tsx": "4.23.1",
+    "typescript": "5.9.3"
   }
 }

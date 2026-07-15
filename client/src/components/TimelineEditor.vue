@@ -32,35 +32,61 @@
   </div>
 </template>
 
-<script setup>
+<script setup lang="ts">
 import { computed, ref } from 'vue'
 
-const props = defineProps({
-  storyboards: { type: Array, default: () => [] },
-  // ④ 有效时长（父级 effectiveDuration：有配音=真实音频+留白，无配音=设定 duration）。
-  //   缺省回退到 storyboards 自身 duration，保证独立使用时不报错。
-  durations: { type: Array, default: () => [] },
-  currentTime: { type: Number, default: 0 },
-  totalDuration: { type: Number, default: 0 },
-})
-const emit = defineEmits(['seek', 'update-duration'])
+interface TimelineStoryboard {
+  id: string | number
+  duration?: number
+  audio_url?: string | null
+  no_voice?: boolean
+  thumbnailUrl?: string | null
+}
 
-const rulerRef = ref(null)
-const trackRef = ref(null)
+interface TimelineSegment {
+  id: string | number
+  index: number
+  duration: number
+  locked: boolean
+  start: number
+  pct: number
+  thumb?: string | null
+}
+
+interface ResizeState {
+  seg: TimelineSegment
+  startX: number
+  startDur: number
+  trackWidth: number
+}
+
+const props = withDefaults(defineProps<{
+  storyboards?: TimelineStoryboard[]
+  durations?: number[]
+  currentTime?: number
+  totalDuration?: number
+}>(), { storyboards: () => [], durations: () => [], currentTime: 0, totalDuration: 0 })
+const emit = defineEmits<{
+  seek: [seconds: number]
+  'update-duration': [change: { id: string | number; duration?: number; preview?: boolean; commit?: boolean }]
+}>()
+
+const rulerRef = ref<HTMLElement | null>(null)
+const trackRef = ref<HTMLElement | null>(null)
 
 // 取第 i 个分镜的有效时长：优先父级传入的 durations，回退自身 duration
-function durAt(i) {
+function durAt(i: number): number {
   const d = props.durations[i]
   if (typeof d === 'number' && d > 0) return d
   return (props.storyboards[i] && props.storyboards[i].duration) || 3
 }
 // 该分镜是否锁定时长（有配音=时长由音频决定，禁止手动拖拽，所见即所得）
-function isLocked(i) {
+function isLocked(i: number): boolean {
   const sb = props.storyboards[i]
   return !!(sb && sb.audio_url && !sb.no_voice)
 }
 
-const total = computed(() => props.totalDuration || props.storyboards.reduce((s, _x, i) => s + durAt(i), 0) || 1)
+const total = computed(() => props.totalDuration || props.storyboards.reduce((sum, _storyboard, index) => sum + durAt(index), 0) || 1)
 
 const segments = computed(() => {
   let acc = 0
@@ -86,7 +112,7 @@ const playheadPct = computed(() => Math.min(100, (props.currentTime / total.valu
 
 // 刻度：每 ~1/6 总时长一个，至少 1s 取整
 const ticks = computed(() => {
-  const out = []
+  const out: Array<{ t: number; pct: number; label: string }> = []
   const step = Math.max(1, Math.round(total.value / 6))
   for (let t = 0; t <= total.value; t += step) {
     out.push({ t, pct: (t / total.value) * 100, label: `${t}s` })
@@ -94,27 +120,29 @@ const ticks = computed(() => {
   return out
 })
 
-function onRulerClick(e) {
+function onRulerClick(event: MouseEvent) {
+  if (!rulerRef.value) return
   const rect = rulerRef.value.getBoundingClientRect()
-  const pct = (e.clientX - rect.left) / rect.width
+  const pct = (event.clientX - rect.left) / rect.width
   emit('seek', Math.max(0, pct * total.value))
 }
 
-function seekToClip(seg) {
+function seekToClip(seg: TimelineSegment) {
   emit('seek', seg.start + 0.01)
 }
 
 // 拖拽右缘改时长（仅无配音分镜；有配音时长由音频决定，已隐藏手柄）
-let resizing = null
-function startResize(e, seg) {
+let resizing: ResizeState | null = null
+function startResize(event: MouseEvent, seg: TimelineSegment) {
   if (seg.locked) return
-  resizing = { seg, startX: e.clientX, startDur: seg.duration, trackWidth: trackRef.value.offsetWidth }
+  if (!trackRef.value) return
+  resizing = { seg, startX: event.clientX, startDur: seg.duration, trackWidth: trackRef.value.offsetWidth }
   window.addEventListener('mousemove', onResize)
   window.addEventListener('mouseup', endResize)
 }
-function onResize(e) {
+function onResize(event: MouseEvent) {
   if (!resizing) return
-  const dx = e.clientX - resizing.startX
+  const dx = event.clientX - resizing.startX
   const secPerPx = total.value / resizing.trackWidth
   let newDur = resizing.startDur + dx * secPerPx
   newDur = Math.round(Math.min(60, Math.max(1, newDur)) * 10) / 10
@@ -153,4 +181,3 @@ function endResize() {
 .tl-playhead::before { content: ''; position: absolute; top: -4px; left: -4px; border: 5px solid transparent; border-top-color: #ff3b30; }
 .tl-playhead-track::before { display: none; }
 </style>
-

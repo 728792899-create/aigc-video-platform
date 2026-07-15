@@ -34,8 +34,8 @@
         <p class="skill-prompt">{{ s.prompt }}</p>
         <div class="skill-card-foot">
           <div class="skill-switches">
-            <el-switch v-model="s.enabled" @change="(v) => toggleEnabled(s, v)" :active-text="$t('skills.enabled')" size="small" />
-            <el-switch v-model="s.auto_apply" @change="(v) => toggleAuto(s, v)" :active-text="$t('skills.autoApply')" size="small" />
+            <el-switch v-model="s.enabled" @change="toggleEnabled(s, $event)" :active-text="$t('skills.enabled')" size="small" />
+            <el-switch v-model="s.auto_apply" @change="toggleAuto(s, $event)" :active-text="$t('skills.autoApply')" size="small" />
           </div>
           <div>
             <el-button size="small" text @click="openEdit(s)">{{ $t('skills.edit') }}</el-button>
@@ -98,19 +98,45 @@
   </div>
 </template>
 
-<script setup>
+<script setup lang="ts">
 import { ref, computed, onMounted } from 'vue'
 import { useI18n } from 'vue-i18n'
-import { ElMessage, ElMessageBox } from 'element-plus'
-import { listSkills, createSkill, updateSkill, deleteSkill, importSkills, restoreBuiltinSkills, listSkillVersions, restoreSkillVersion } from '../api/skills'
+import { ElMessage } from 'element-plus/es/components/message/index'
+import { ElMessageBox } from 'element-plus/es/components/message-box/index'
+import {
+  listSkills, createSkill, updateSkill, deleteSkill, importSkills, restoreBuiltinSkills,
+  listSkillVersions, restoreSkillVersion, type CreativeSkill, type SkillVersion,
+} from '../api/skills'
+
+type EntityId = string | number
+type JsonObject = Record<string, unknown>
+interface SkillDialog {
+  visible: boolean
+  id: EntityId | null
+  name: string
+  stage: string
+  description: string
+  prompt: string
+  icon: string
+  auto_apply: boolean
+  is_builtin: boolean
+}
+
+function errorMessage(cause: unknown, fallback: string): string {
+  return cause instanceof Error && cause.message ? cause.message : fallback
+}
+
+function isJsonObject(value: unknown): value is JsonObject {
+  return Boolean(value) && typeof value === 'object' && !Array.isArray(value)
+}
 
 const { t } = useI18n()
-const skills = ref([])
+const skills = ref<CreativeSkill[]>([])
 const loading = ref(false)
 const filterStage = ref('')
-const fileInput = ref(null)
-const dialog = ref({ visible: false, id: null, name: '', stage: 'all', description: '', prompt: '', icon: '✨', auto_apply: false, is_builtin: false })
-const versions = ref([])
+const fileInput = ref<HTMLInputElement | null>(null)
+const dialog = ref<SkillDialog>({ visible: false, id: null, name: '', stage: 'all', description: '', prompt: '', icon: '✨', auto_apply: false, is_builtin: false })
+const versions = ref<SkillVersion[]>([])
 const versionsLoading = ref(false)
 
 const filtered = computed(() => {
@@ -118,11 +144,13 @@ const filtered = computed(() => {
   return skills.value.filter((s) => s.stage === filterStage.value || s.stage === 'all')
 })
 
-function stageLabel(stage) {
-  return { script: t('skills.stageScript'), image: t('skills.stageImage'), voice: t('skills.stageVoice'), all: t('skills.stageAllOpt') }[stage] || stage
+function stageLabel(stage: string): string {
+  const labels: Record<string, string> = { script: t('skills.stageScript'), image: t('skills.stageImage'), voice: t('skills.stageVoice'), all: t('skills.stageAllOpt') }
+  return labels[stage] || stage
 }
-function stageTagType(stage) {
-  return { script: 'success', image: 'warning', voice: 'primary', all: 'info' }[stage] || 'info'
+function stageTagType(stage: string): 'success' | 'warning' | 'primary' | 'info' {
+  const types: Record<string, 'success' | 'warning' | 'primary' | 'info'> = { script: 'success', image: 'warning', voice: 'primary', all: 'info' }
+  return types[stage] || 'info'
 }
 
 async function load() {
@@ -134,12 +162,12 @@ function openCreate() {
   versions.value = []
   dialog.value = { visible: true, id: null, name: '', stage: 'all', description: '', prompt: '', icon: '✨', auto_apply: false, is_builtin: false }
 }
-function openEdit(s) {
+function openEdit(s: CreativeSkill) {
   dialog.value = { visible: true, id: s.id, name: s.name, stage: s.stage, description: s.description, prompt: s.prompt, icon: s.icon || '✨', auto_apply: !!s.auto_apply, is_builtin: !!s.is_builtin }
   loadVersions(s.id)
 }
 
-async function loadVersions(id) {
+async function loadVersions(id: EntityId) {
   versionsLoading.value = true
   try { versions.value = await listSkillVersions(id) }
   catch { versions.value = [] }
@@ -157,18 +185,20 @@ async function saveSkill() {
     ElMessage.success(t('skills.saved'))
     dialog.value.visible = false
     await load()
-  } catch (e) { ElMessage.error(e.response?.data?.message || t('skills.saveFailed')) }
+  } catch (cause) { ElMessage.error(errorMessage(cause, t('skills.saveFailed'))) }
 }
 
-async function toggleEnabled(s, v) {
-  try { await updateSkill(s.id, { enabled: v }) } catch (e) { s.enabled = !v; ElMessage.error(t('skills.saveFailed')) }
+async function toggleEnabled(skill: CreativeSkill, value: string | number | boolean) {
+  const enabled = Boolean(value)
+  try { await updateSkill(skill.id, { enabled }) } catch { skill.enabled = !enabled; ElMessage.error(t('skills.saveFailed')) }
 }
 
-async function toggleAuto(s, v) {
-  try { await updateSkill(s.id, { auto_apply: v }) } catch (e) { s.auto_apply = !v; ElMessage.error(t('skills.saveFailed')) }
+async function toggleAuto(skill: CreativeSkill, value: string | number | boolean) {
+  const autoApply = Boolean(value)
+  try { await updateSkill(skill.id, { auto_apply: autoApply }) } catch { skill.auto_apply = !autoApply; ElMessage.error(t('skills.saveFailed')) }
 }
 
-async function doDelete(s) {
+async function doDelete(s: CreativeSkill) {
   try {
     await ElMessageBox.confirm(t('skills.delConfirm', { name: s.name }), t('skills.del'), { type: 'warning' })
     await deleteSkill(s.id)
@@ -182,15 +212,17 @@ async function restoreDefaults() {
     const r = await restoreBuiltinSkills()
     ElMessage.success(t('skills.restoredBuiltins', { n: r?.restored || 0 }))
     await load()
-  } catch (e) {
-    ElMessage.error(e.response?.data?.message || t('skills.saveFailed'))
+  } catch (cause) {
+    ElMessage.error(errorMessage(cause, t('skills.saveFailed')))
   }
 }
 
-async function restoreVersion(v) {
+async function restoreVersion(version: SkillVersion) {
+  const skillId = dialog.value.id
+  if (skillId == null) return
   try {
     await ElMessageBox.confirm(t('skills.restoreVersionConfirm'), t('skills.restoreVersion'), { type: 'warning' })
-    const updated = await restoreSkillVersion(dialog.value.id, v.id)
+    const updated = await restoreSkillVersion(skillId, version.id)
     ElMessage.success(t('skills.restoredVersion'))
     dialog.value = {
       ...dialog.value,
@@ -201,14 +233,14 @@ async function restoreVersion(v) {
       icon: updated.icon || '✨',
       auto_apply: !!updated.auto_apply,
     }
-    await loadVersions(dialog.value.id)
+    await loadVersions(skillId)
     await load()
-  } catch (e) {
-    if (e !== 'cancel') ElMessage.error(e.response?.data?.message || t('skills.saveFailed'))
+  } catch (cause) {
+    if (cause !== 'cancel') ElMessage.error(errorMessage(cause, t('skills.saveFailed')))
   }
 }
 
-function fmtTime(ts) {
+function fmtTime(ts: string | number | null | undefined): string {
   if (!ts) return '—'
   return new Date(Number(ts)).toLocaleString('zh-CN', { hour12: false })
 }
@@ -223,17 +255,20 @@ function exportAll() {
 }
 
 function triggerImport() { fileInput.value?.click() }
-async function onImportFile(e) {
-  const file = e.target.files?.[0]
+async function onImportFile(event: Event) {
+  const input = event.target instanceof HTMLInputElement ? event.target : null
+  const file = input?.files?.[0]
   if (!file) return
   try {
     const text = await file.text()
-    const list = JSON.parse(text)
-    const r = await importSkills(Array.isArray(list) ? list : [list])
+    const parsed: unknown = JSON.parse(text)
+    const values = Array.isArray(parsed) ? parsed : [parsed]
+    if (!values.every(isJsonObject)) throw new Error(t('skills.importFailed'))
+    const r = await importSkills(values)
     ElMessage.success(t('skills.imported', { n: r?.imported || 0 }))
     await load()
-  } catch (err) { ElMessage.error(t('skills.importFailed')) }
-  finally { e.target.value = '' }
+  } catch { ElMessage.error(t('skills.importFailed')) }
+  finally { if (input) input.value = '' }
 }
 
 onMounted(load)

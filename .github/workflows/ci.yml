@@ -1,0 +1,115 @@
+name: CI
+
+on:
+  push:
+    branches: [main, master]
+  pull_request:
+
+permissions:
+  contents: read
+
+env:
+  DEMO_MODE: '1'
+  DEMO_SILENT_TTS: '1'
+  LOG_HTTP: '0'
+  OPENAI_API_KEY: ''
+  DEEPSEEK_API_KEY: ''
+  DASHSCOPE_API_KEY: ''
+  GEMINI_API_KEY: ''
+  RUNWAY_API_KEY: ''
+  KLING_API_KEY: ''
+  ARK_API_KEY: ''
+  VOLCANO_API_KEY: ''
+
+jobs:
+  quality:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: |
+            package-lock.json
+            packages/contracts/package-lock.json
+            server/package-lock.json
+            client/package-lock.json
+      - run: npm ci
+      - run: npm --prefix packages/contracts ci
+      - run: npm --prefix server ci
+      - run: npm --prefix client ci
+      - run: npm run security:audit:all
+      - run: node scripts/security-check.mjs
+      - run: node scripts/ffmpeg-smoke.mjs
+      - run: npm run quality
+      - run: npm run prepare:desktop
+      - run: npm run electron:preflight
+
+  desktop-package-preflight:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [macos-15-intel, windows-2022]
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 35
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: |
+            package-lock.json
+            packages/contracts/package-lock.json
+            server/package-lock.json
+            client/package-lock.json
+      - run: npm ci
+      - run: npm --prefix packages/contracts ci
+      - run: npm --prefix server ci
+      - run: npm --prefix client ci
+      - run: npm run prepare:desktop
+      - run: npm run electron:preflight
+      - name: Build and install macOS Intel preflight
+        if: runner.os == 'macOS'
+        env:
+          SKIP_NOTARIZE: '1'
+        shell: bash
+        run: |
+          set -euo pipefail
+          output="$RUNNER_TEMP/aigc-video-pack"
+          npx electron-builder --mac --x64 --publish never -c.directories.output="$output" -c.mac.identity=- -c.mac.entitlements=resources/entitlements.adhoc.plist -c.mac.entitlementsInherit=resources/entitlements.adhoc.plist
+          dmg="$(find "$output" -maxdepth 1 -name '*.dmg' -print -quit)"
+          test -n "$dmg"
+          mount="$RUNNER_TEMP/aigc-video-mount"
+          install="$RUNNER_TEMP/aigc-video-installed"
+          mkdir -p "$mount" "$install"
+          hdiutil attach -nobrowse -mountpoint "$mount" "$dmg"
+          trap 'hdiutil detach "$mount" || true' EXIT
+          cp -R "$mount/AIGC 视频工作台.app" "$install/"
+          hdiutil detach "$mount"
+          trap - EXIT
+          codesign --force --deep --sign - --options runtime --entitlements resources/entitlements.adhoc.plist "$install/AIGC 视频工作台.app"
+          codesign --verify --deep --strict --verbose=2 "$install/AIGC 视频工作台.app"
+          AIGC_DESKTOP_EXECUTABLE="$install/AIGC 视频工作台.app/Contents/MacOS/AIGC 视频工作台" npm run desktop:install-smoke
+          rm -rf "$install/AIGC 视频工作台.app"
+      - name: Build, install and uninstall Windows x64 preflight
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          $output = Join-Path $env:RUNNER_TEMP 'aigc-video-pack'
+          npx electron-builder --win --x64 --publish never "--config.directories.output=$output" "--config.win.signAndEditExecutable=false"
+          if ($LASTEXITCODE -ne 0) { throw 'electron-builder failed' }
+          $installer = Get-ChildItem $output -Filter '*.exe' | Select-Object -First 1
+          if (-not $installer) { throw 'NSIS installer not found' }
+          $install = Join-Path $env:RUNNER_TEMP 'aigc-video-installed'
+          Start-Process -FilePath $installer.FullName -ArgumentList '/S', "/D=$install" -Wait
+          $executable = Join-Path $install 'AIGC 视频工作台.exe'
+          if (-not (Test-Path $executable)) { throw 'installed executable not found' }
+          $env:AIGC_DESKTOP_EXECUTABLE = $executable
+          npm run desktop:install-smoke
+          $uninstaller = Get-ChildItem $install -Filter 'Uninstall*.exe' | Select-Object -First 1
+          if (-not $uninstaller) { throw 'uninstaller not found' }
+          Start-Process -FilePath $uninstaller.FullName -ArgumentList '/S' -Wait
+          if (Test-Path $executable) { throw 'uninstall left the application executable behind' }

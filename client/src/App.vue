@@ -2,32 +2,22 @@
   <el-config-provider :locale="elLocale">
   <div class="app-container">
     <!-- 窄屏汉堡按钮（仅移动端显示） -->
-    <button class="mobile-menu-btn" @click="sidebarOpen = true" :title="$t('nav.menu')">
+    <button v-if="showSidebar" class="mobile-menu-btn" @click="sidebarOpen = true" :title="$t('nav.menu')">
       <el-icon :size="20"><Expand /></el-icon>
     </button>
     <!-- 窄屏遮罩：点击关闭抽屉 -->
-    <div v-if="sidebarOpen" class="sidebar-overlay" @click="sidebarOpen = false"></div>
+    <div v-if="showSidebar && sidebarOpen" class="sidebar-overlay" @click="sidebarOpen = false"></div>
     <el-container class="main-container">
       <!-- 左侧导航 -->
       <el-aside v-if="showSidebar" width="220px" class="sidebar" :class="{ 'is-open': sidebarOpen }">
         <div class="logo">
           <svg class="logo-mark" viewBox="0 0 64 64" xmlns="http://www.w3.org/2000/svg" aria-label="logo">
-            <!-- 左垂耳 -->
-            <path d="M22 22 C9 19 5 35 10 47 C15 48 21 39 24 29 Z" fill="currentColor"/>
-            <!-- 右垂耳 -->
-            <path d="M42 22 C55 19 59 35 54 47 C49 48 43 39 40 29 Z" fill="currentColor"/>
-            <!-- 头部 -->
-            <ellipse cx="32" cy="30" rx="15.5" ry="14" fill="var(--bg-surface)" stroke="currentColor" stroke-width="2.4"/>
-            <!-- 口鼻部 -->
-            <ellipse cx="32" cy="38" rx="8.5" ry="6.8" fill="var(--bg-surface)" stroke="currentColor" stroke-width="2"/>
-            <!-- 鼻子 -->
-            <ellipse cx="32" cy="34.5" rx="3.6" ry="2.9" fill="currentColor"/>
-            <!-- 眼睛 -->
-            <circle cx="26.5" cy="26" r="1.7" fill="currentColor"/>
-            <circle cx="37.5" cy="26" r="1.7" fill="currentColor"/>
-            <!-- 嘴 -->
-            <path d="M32 37.2 C32 41.5 28.5 43 26 41.8 M32 37.2 C32 41.5 35.5 43 38 41.8"
-                  fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/>
+            <rect x="7" y="12" width="50" height="40" rx="9" fill="none" stroke="currentColor" stroke-width="3"/>
+            <rect x="14" y="20" width="9" height="9" rx="2" fill="currentColor" opacity=".65"/>
+            <rect x="27.5" y="20" width="9" height="9" rx="2" fill="currentColor"/>
+            <rect x="41" y="20" width="9" height="9" rx="2" fill="currentColor" opacity=".65"/>
+            <rect x="14" y="35" width="9" height="9" rx="2" fill="currentColor"/>
+            <path d="M31 34 L42 40 L31 46 Z" fill="var(--bg-surface)" stroke="currentColor" stroke-width="2" stroke-linejoin="round"/>
           </svg>
           <span>{{ $t('nav.brand') }}</span>
           <button class="theme-toggle" :title="theme === 'dark' ? $t('nav.toLight') : $t('nav.toDark')" @click="toggle">
@@ -40,7 +30,11 @@
           router
           @select="sidebarOpen = false"
         >
-          <el-menu-item index="/">
+          <el-menu-item :index="currentProjectId ? `/studio/${currentProjectId}` : '/studio'">
+            <el-icon><MagicStick /></el-icon>
+            <span>{{ $t('nav.studio') }}</span>
+          </el-menu-item>
+          <el-menu-item index="/dashboard">
             <el-icon><HomeFilled /></el-icon>
             <span>{{ $t('nav.dashboard') }}</span>
           </el-menu-item>
@@ -57,6 +51,10 @@
             <el-menu-item class="project-menu-item" :index="`/projects/${currentProjectId}/images`">
               <el-icon><PictureFilled /></el-icon>
               <span>{{ $t('nav.images') }}</span>
+            </el-menu-item>
+            <el-menu-item class="project-menu-item" :index="`/projects/${currentProjectId}/assets`">
+              <el-icon><Collection /></el-icon>
+              <span>{{ $t('nav.assets') }}</span>
             </el-menu-item>
             <el-menu-item class="project-menu-item" :index="`/projects/${currentProjectId}/audio`">
               <el-icon><Microphone /></el-icon>
@@ -94,11 +92,11 @@
         </el-menu>
       </el-aside>
       <!-- 右侧内容 -->
-      <el-main class="content-area">
+      <el-main class="content-area" :class="{ 'studio-content': isStudioRoute }">
         <router-view v-slot="{ Component }">
-          <transition name="page-fade" mode="out-in">
-            <component :is="Component" />
-          </transition>
+          <!-- Electron 下异步 chunk 与 out-in 离场动画组合会偶发保留旧页面；
+               页面可靠切换优先于装饰性动画。 -->
+          <component :is="Component" :key="route.fullPath" />
         </router-view>
       </el-main>
     </el-container>
@@ -110,18 +108,18 @@
   </el-config-provider>
 </template>
 
-<script setup>
-import { computed, ref, onMounted } from 'vue'
+<script setup lang="ts">
+import { computed, ref } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { useI18n } from 'vue-i18n'
-import { ElConfigProvider } from 'element-plus'
+import { ElConfigProvider } from 'element-plus/es/components/config-provider/index'
 import zhCn from 'element-plus/es/locale/lang/zh-cn'
 import enLocale from 'element-plus/es/locale/lang/en'
-// 显式导入模板用到的图标（虽然 main.js 已全局注册，显式导入让组件自包含、可 tree-shaking）
+// 显式导入模板用到的图标（组件自包含并便于 tree-shaking）
 import {
   FolderOpened, EditPen,
   PictureFilled, VideoPlay, Microphone, Setting,
-  Clock, Files, DeleteFilled, Moon, Sunny, Expand, Film, MagicStick, HomeFilled
+  Clock, Files, DeleteFilled, Moon, Sunny, Expand, Film, MagicStick, HomeFilled, Collection
 } from '@element-plus/icons-vue'
 import TaskDock from './components/TaskDock.vue'
 import TopProgress from './components/TopProgress.vue'
@@ -134,7 +132,12 @@ const { locale } = useI18n()
 const elLocale = computed(() => (locale.value === 'en' ? enLocale : zhCn))
 const { theme, toggle } = useTheme()
 const sidebarOpen = ref(false)
-const topProgress = ref(null)
+interface TopProgressHandle {
+  start(): void
+  done(): void
+}
+
+const topProgress = ref<TopProgressHandle | null>(null)
 
 // 路由切换时驱动顶部进度条
 router.beforeEach((to, from, next) => {
@@ -145,8 +148,12 @@ router.afterEach(() => {
   topProgress.value?.done()
 })
 
-const currentProjectId = computed(() => route.params.id || '')
-const showSidebar = computed(() => true)
+const currentProjectId = computed(() => {
+  const id = route.params.id
+  return Array.isArray(id) ? id[0] || '' : id || ''
+})
+const isStudioRoute = computed(() => route.meta.fullscreen === true)
+const showSidebar = computed(() => !isStudioRoute.value)
 const activeMenu = computed(() => route.path)
 </script>
 
@@ -208,6 +215,10 @@ const activeMenu = computed(() => route.path)
   background: var(--bg-primary);
   padding: 24px;
   overflow-y: auto;
+}
+.content-area.studio-content {
+  padding: 0;
+  overflow: hidden;
 }
 
 /* —— Apple 风格侧边菜单 —— */

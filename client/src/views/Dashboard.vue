@@ -227,11 +227,12 @@
   </div>
 </template>
 
-<script setup>
+<script setup lang="ts">
+import { z } from 'zod'
 import { computed, onMounted, ref } from 'vue'
 import { useRouter } from 'vue-router'
 import { useI18n } from 'vue-i18n'
-import { ElMessage } from 'element-plus'
+import { ElMessage } from 'element-plus/es/components/message/index'
 import {
   ArrowRight,
   CircleCheck,
@@ -243,23 +244,65 @@ import {
   Warning,
 } from '@element-plus/icons-vue'
 import { listProjects, createProject } from '../api/projects'
-import { getHistory } from '../api/history'
+import { getHistory, type HistoryRecord } from '../api/history'
 import { listLibrary } from '../api/features'
-import { getStorageStats } from '../api/settings'
+import { getStorageStats, type StorageStats } from '../api/settings'
 import { mediaUrl } from '../api/config'
+import {
+  projectCoverInitial,
+  projectRelativeTime,
+  type ProjectView,
+} from '../domain/projects'
+
+interface DashboardTemplate {
+  id: string
+  name: string
+  category: string
+  description: string
+  duration: [number, number]
+  durationLabel: string
+  style: string
+  structure: string[]
+  sampleTheme: string
+}
+
+interface DailyTopic {
+  id: string
+  title: string
+  hook: string
+  platform: string
+  audience: string
+  templateId: string
+  durationLabel: string
+}
+
+const LibraryVideoSchema = z.object({
+  id: z.union([z.string(), z.number()]),
+  project_id: z.union([z.string(), z.number()]),
+  project_name: z.string().nullish(),
+  file_url: z.string(),
+  file_exists: z.boolean().optional(),
+  file_size: z.number().nullish(),
+  created_at: z.union([z.string(), z.number()]).nullish(),
+}).passthrough()
+type LibraryVideo = z.infer<typeof LibraryVideoSchema>
+
+function errorMessage(cause: unknown): string {
+  return cause instanceof Error ? cause.message : String(cause)
+}
 
 const router = useRouter()
 const { t } = useI18n()
 
 const loading = ref(false)
 const creatingId = ref('')
-const projects = ref([])
-const failedTasks = ref([])
-const videos = ref([])
-const storage = ref(null)
-const templateSection = ref(null)
+const projects = ref<ProjectView[]>([])
+const failedTasks = ref<HistoryRecord[]>([])
+const videos = ref<LibraryVideo[]>([])
+const storage = ref<StorageStats | null>(null)
+const templateSection = ref<HTMLElement | null>(null)
 
-const templates = [
+const templates: DashboardTemplate[] = [
   {
     id: 'knowledge_explainer',
     name: '知识科普短视频',
@@ -328,7 +371,7 @@ const templates = [
   },
 ]
 
-const dailyTopics = [
+const dailyTopics: DailyTopic[] = [
   {
     id: 'topic_ai_workday',
     title: '普通人如何用 AI 做一天的工作计划',
@@ -380,7 +423,7 @@ const recentProjects = computed(() => projects.value.slice(0, 4))
 const recentVideos = computed(() => videos.value.slice(0, 3))
 const repairItems = computed(() =>
   projects.value
-    .filter((p) => ['failed', 'partial'].includes(p.status) || ['warn', 'error'].includes(assetStatus(p)))
+    .filter((p) => ['failed', 'partial'].includes(p.status || '') || ['warn', 'error'].includes(assetStatus(p)))
     .slice(0, 5)
 )
 const storageLabel = computed(() => {
@@ -399,12 +442,12 @@ async function loadDashboard() {
     ])
     if (projectList.status === 'fulfilled') projects.value = projectList.value || []
     if (failed.status === 'fulfilled') failedTasks.value = failed.value?.list || []
-    if (library.status === 'fulfilled') videos.value = library.value || []
+    if (library.status === 'fulfilled') videos.value = LibraryVideoSchema.array().parse(library.value)
     if (stats.status === 'fulfilled') storage.value = stats.value
     const rejected = [projectList, failed, library, stats].find((r) => r.status === 'rejected')
     if (rejected) throw rejected.reason
-  } catch (e) {
-    ElMessage.warning(t('dashboard.loadFailed', { msg: e.message || e }))
+  } catch (cause) {
+    ElMessage.warning(t('dashboard.loadFailed', { msg: errorMessage(cause) }))
   } finally {
     loading.value = false
   }
@@ -414,7 +457,7 @@ function scrollToTemplates() {
   templateSection.value?.scrollIntoView({ behavior: 'smooth', block: 'start' })
 }
 
-async function createFromTemplate(template) {
+async function createFromTemplate(template: DashboardTemplate) {
   creatingId.value = template.id
   try {
     const theme = `${template.sampleTheme}。请按「${template.structure.join(' / ')}」结构生成，内容要有短视频开头钩子和明确结尾行动。`
@@ -426,16 +469,17 @@ async function createFromTemplate(template) {
       duration_max: template.duration[1],
     })
     ElMessage.success(t('dashboard.createSuccess'))
-    router.push(`/projects/${project.id}/script`)
-  } catch (e) {
-    ElMessage.error(t('dashboard.createFailed', { msg: e.message || e }))
+    router.push(`/studio/${project.id}`)
+  } catch (cause) {
+    ElMessage.error(t('dashboard.createFailed', { msg: errorMessage(cause) }))
   } finally {
     creatingId.value = ''
   }
 }
 
-async function createFromTopic(topic) {
-  const template = templates.find((tpl) => tpl.id === topic.templateId) || templates[0]
+async function createFromTopic(topic: DailyTopic) {
+  const template = templates.find((tpl) => tpl.id === topic.templateId) ?? templates[0]
+  if (!template) return
   creatingId.value = topic.id
   try {
     const project = await createProject({
@@ -446,21 +490,19 @@ async function createFromTopic(topic) {
       duration_max: template.duration[1],
     })
     ElMessage.success(t('dashboard.createSuccess'))
-    router.push(`/projects/${project.id}/script`)
-  } catch (e) {
-    ElMessage.error(t('dashboard.createFailed', { msg: e.message || e }))
+    router.push(`/studio/${project.id}`)
+  } catch (cause) {
+    ElMessage.error(t('dashboard.createFailed', { msg: errorMessage(cause) }))
   } finally {
     creatingId.value = ''
   }
 }
 
-function openProject(project) {
-  if (project.status === 'completed') router.push(`/projects/${project.id}/preview`)
-  else if (assetStatus(project) === 'error') router.push(`/projects/${project.id}/images`)
-  else router.push(`/projects/${project.id}/script`)
+function openProject(project: ProjectView) {
+  router.push(`/studio/${project.id}`)
 }
 
-function openRepair(project) {
+function openRepair(project: ProjectView) {
   const issues = project?.asset_health?.issues || []
   const primary = issues.find((i) => i.level === 'error') || issues[0]
   if (primary?.code === 'MISSING_IMAGES' || primary?.code === 'SELECTED_IMAGE_MISSING') {
@@ -470,24 +512,24 @@ function openRepair(project) {
   }
 }
 
-function statusLabel(status) {
-  const map = {
+function statusLabel(status: string | null | undefined): string {
+  const map: Record<string, string> = {
     draft: t('dashboard.statusDraft'),
     generating: t('dashboard.statusGenerating'),
     partial: t('dashboard.statusPartial'),
     failed: t('dashboard.statusFailed'),
     completed: t('dashboard.statusCompleted'),
   }
-  return map[status] || t('dashboard.statusDraft')
+  return status ? map[status] || t('dashboard.statusDraft') : t('dashboard.statusDraft')
 }
 
-function assetStatus(project) {
+function assetStatus(project: ProjectView): 'ok' | 'warn' | 'error' | 'unknown' {
   const status = project?.asset_health?.status
-  return ['ok', 'warn', 'error'].includes(status) ? status : 'unknown'
+  return status === 'ok' || status === 'warn' || status === 'error' ? status : 'unknown'
 }
 
-function assetLabel(project) {
-  const map = {
+function assetLabel(project: ProjectView): string {
+  const map: Record<'ok' | 'warn' | 'error' | 'unknown', string> = {
     ok: t('dashboard.assetOk'),
     warn: t('dashboard.assetWarn'),
     error: t('dashboard.assetError'),
@@ -496,54 +538,26 @@ function assetLabel(project) {
   return map[assetStatus(project)] || map.unknown
 }
 
-function repairSummary(project) {
+function repairSummary(project: ProjectView): string {
   const issue = project?.asset_health?.issues?.[0]
   return issue?.message || project?.asset_health?.summary || assetLabel(project)
 }
 
-function diagnosisText(task) {
-  return task?.diagnosis?.reason || task?.error || task?.message || '需要查看历史记录中的失败原因。'
+function diagnosisText(task: HistoryRecord): string {
+  const diagnosis = task.diagnosis
+  const reason = diagnosis && typeof diagnosis === 'object' && 'reason' in diagnosis && typeof diagnosis.reason === 'string'
+    ? diagnosis.reason
+    : ''
+  return reason || task.error || task.message || '需要查看历史记录中的失败原因。'
 }
 
-function parseDbTimeMs(value) {
-  if (value == null || value === '') return 0
-  if (typeof value === 'number') return value
-  if (/^\d+$/.test(String(value))) return Number(value)
-  const raw = String(value).trim()
-  const sqlite = raw.match(/^(\d{4})-(\d{2})-(\d{2})[ T](\d{2}):(\d{2}):(\d{2})$/)
-  if (sqlite) {
-    const [, y, mo, d, h, mi, s] = sqlite
-    return Date.UTC(Number(y), Number(mo) - 1, Number(d), Number(h), Number(mi), Number(s))
-  }
-  const parsed = Date.parse(raw)
-  return Number.isFinite(parsed) ? parsed : 0
-}
+const relativeTime = (project: ProjectView): string => projectRelativeTime(
+  project,
+  (key, values) => String(t(key.replace('projects.', 'dashboard.'), values ?? {})),
+)
+const coverInitial = projectCoverInitial
 
-function projectTimeMs(project) {
-  return Number(project?.updated_at_ms || 0) || parseDbTimeMs(project?.updated_at) || parseDbTimeMs(project?.created_at)
-}
-
-function relativeTime(project) {
-  const timeMs = projectTimeMs(project)
-  if (!timeMs) return ''
-  const diff = Math.max(0, Date.now() - timeMs)
-  const seconds = Math.floor(diff / 1000)
-  if (seconds < 60) return t('dashboard.justNow')
-  const minutes = Math.floor(seconds / 60)
-  if (minutes < 60) return t('dashboard.minutesAgo', { n: minutes })
-  const hours = Math.floor(minutes / 60)
-  if (hours < 24) return t('dashboard.hoursAgo', { n: hours })
-  const days = Math.floor(hours / 24)
-  if (days < 30) return t('dashboard.daysAgo', { n: days })
-  return t('dashboard.monthsAgo', { n: Math.floor(days / 30) })
-}
-
-function coverInitial(name) {
-  const s = String(name || '').trim()
-  return s ? s.slice(0, 1).toUpperCase() : '?'
-}
-
-function hashString(str) {
+function hashString(str: unknown): number {
   let h = 0
   const s = String(str || '未命名')
   for (let i = 0; i < s.length; i++) {
@@ -553,7 +567,7 @@ function hashString(str) {
   return Math.abs(h)
 }
 
-function coverStyle(project) {
+function coverStyle(project: ProjectView): { background: string } | null {
   if (project.cover_url) return null
   const h = hashString(project.name)
   const hue1 = 205 + (h % 32)
@@ -561,7 +575,7 @@ function coverStyle(project) {
   return { background: `linear-gradient(135deg, hsl(${hue1} 78% 54%), hsl(${hue2} 62% 46%))` }
 }
 
-function formatSize(n) {
+function formatSize(n: number | null | undefined): string {
   if (!n) return '0 B'
   const units = ['B', 'KB', 'MB', 'GB']
   let value = n
@@ -570,10 +584,10 @@ function formatSize(n) {
     value /= 1024
     idx++
   }
-  return `${value.toFixed(idx ? 1 : 0)} ${units[idx]}`
+  return `${value.toFixed(idx ? 1 : 0)} ${units[idx] ?? 'B'}`
 }
 
-function formatDate(value) {
+function formatDate(value: string | number | null | undefined): string {
   if (!value) return ''
   const d = new Date(value)
   if (Number.isNaN(d.getTime())) return ''
