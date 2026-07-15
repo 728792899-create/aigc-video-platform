@@ -98,7 +98,7 @@ jobs:
         shell: pwsh
         run: |
           $output = Join-Path $env:RUNNER_TEMP 'aigc-video-pack'
-          npx electron-builder --win --x64 --publish never "-c.directories.output=$output" -c.win.signAndEditExecutable=false
+          npx electron-builder --win --x64 --publish never "--config.directories.output=$output" "--config.win.signAndEditExecutable=false"
           if ($LASTEXITCODE -ne 0) { throw 'electron-builder failed' }
           $installer = Get-ChildItem $output -Filter '*.exe' | Select-Object -First 1
           if (-not $installer) { throw 'NSIS installer not found' }
