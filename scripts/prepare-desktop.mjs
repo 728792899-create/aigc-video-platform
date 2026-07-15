@@ -16,11 +16,19 @@ function run(command, args, env = process.env) {
   });
 }
 
-const npm = process.platform === 'win32' ? 'npm.cmd' : 'npm';
-await run(npm, ['run', 'build:contracts']);
-await run(npm, ['run', 'build:server']);
-await run(npm, ['run', 'build:client']);
-await run(npm, ['run', 'build:electron']);
+// Windows cannot reliably spawn npm.cmd with shell=false (Node reports EINVAL).
+// npm exposes the exact CLI entrypoint to lifecycle scripts, so execute that
+// JavaScript file with the current Node binary on every platform.
+const npmCli = process.env.npm_execpath;
+if (!npmCli) {
+  throw new Error('缺少 npm_execpath；请通过 npm run prepare:desktop 执行桌面准备');
+}
+const runNpm = (args) => run(process.execPath, [npmCli, ...args]);
+
+await runNpm(['run', 'build:contracts']);
+await runNpm(['run', 'build:server']);
+await runNpm(['run', 'build:client']);
+await runNpm(['run', 'build:electron']);
 const electron = require('electron');
 await run(electron, ['scripts/compile-backend.js'], {
   ...process.env,
