@@ -6,15 +6,15 @@
   </transition>
 </template>
 
-<script setup>
+<script setup lang="ts">
 import { ref } from 'vue'
 
 const visible = ref(false)
 const percent = ref(0)
-let timer = null
+let timer: ReturnType<typeof setInterval> | null = null
 
 function start() {
-  clearInterval(timer)
+  if (timer) clearInterval(timer)
   visible.value = true
   percent.value = 8
   // 缓动逼近 90%，但永不到顶，等 done() 收尾
@@ -25,7 +25,7 @@ function start() {
 }
 
 function done() {
-  clearInterval(timer)
+  if (timer) clearInterval(timer)
   percent.value = 100
   setTimeout(() => {
     visible.value = false

@@ -37,7 +37,7 @@ for (const key of [
 ]) delete cleanEnv[key];
 
 function launchServer() {
-  const child = spawn(process.execPath, ['app.js'], {
+  const child = spawn(process.execPath, ['dist/app.js'], {
     cwd: path.join(ROOT, 'server'),
     env: cleanEnv,
     stdio: ['ignore', 'pipe', 'pipe'],
@@ -71,10 +71,10 @@ async function waitForHealth(child, timeoutMs = 20_000) {
   throw new Error(`Demo 服务未就绪：${last}`);
 }
 
-async function request(method, urlPath, body) {
+async function request(method, urlPath, body, headers = {}) {
   const response = await fetch(`${baseUrl}${urlPath}`, {
     method,
-    headers: body ? { 'Content-Type': 'application/json' } : undefined,
+    headers: body ? { 'Content-Type': 'application/json', ...headers } : headers,
     body: body ? JSON.stringify(body) : undefined,
   });
   const payload = await response.json().catch(() => ({}));
@@ -109,18 +109,35 @@ async function assertPlayableExport(task, label) {
   }
 }
 
+async function assertStageArtifacts(projectId, label) {
+  const artifacts = await request('GET', `/api/projects/${projectId}/artifacts`);
+  const stages = new Set((artifacts.current || []).map((item) => item.stage));
+  for (const stage of ['script', 'storyboard', 'image', 'voice', 'subtitle', 'timeline', 'export']) {
+    if (!stages.has(stage)) throw new Error(`${label} 缺少 current ${stage} artifact`);
+  }
+  const project = await request('GET', `/api/projects/${projectId}`);
+  const script = JSON.parse(project.script_content || '{}');
+  if (script.schema_version !== '1.0.0' || !script.prompt_version || !script.input_hash) {
+    throw new Error(`${label} 未持久化结构化脚本契约元数据`);
+  }
+}
+
 let server = launchServer();
 try {
   await waitForHealth(server);
 
   // 1) 在 image 检查点暂停并强制停止进程，随后用同一 DB 重启。
-  const recoveryStart = await request('POST', '/api/ai/auto-produce', {
+  const recoveryKey = 'demo-restart-idempotency-00000001';
+  const recoveryBody = {
     theme: 'Demo 重启恢复验收',
     duration: '8-12',
     ratio: '16:9',
     motion: 'none',
     demoStageDelayMs: 6_000,
     demoDelayStage: 'image',
+  };
+  const recoveryStart = await request('POST', '/api/ai/auto-produce', recoveryBody, {
+    'Idempotency-Key': recoveryKey,
   });
   const interrupted = await waitForTask(
     recoveryStart.task_id,
@@ -132,8 +149,15 @@ try {
 
   server = launchServer();
   await waitForHealth(server);
+  const replayed = await request('POST', '/api/ai/auto-produce', recoveryBody, {
+    'Idempotency-Key': recoveryKey,
+  });
+  if (replayed.task_id !== recoveryStart.task_id || replayed.project_id !== recoveryStart.project_id) {
+    throw new Error('服务重启后幂等响应未回放原任务，可能造成重复提交');
+  }
   const recovered = await waitForTask(recoveryStart.task_id, terminal);
   await assertPlayableExport(recovered, '重启恢复任务');
+  await assertStageArtifacts(recoveryStart.project_id, '重启恢复任务');
   if ((recovered.meta?.recovery?.attempts || 0) < 1) throw new Error('任务未记录自动恢复次数');
   if (recovered.meta?.workflow?.stages?.export?.status !== 'succeeded') throw new Error('恢复后导出阶段未成功');
   console.log(`Demo restart recovery passed: task=${recoveryStart.task_id}`);
@@ -151,11 +175,22 @@ try {
   if (failedOnce.meta?.workflow?.stages?.export?.status !== 'failed') throw new Error('注入失败没有落到 export 检查点');
   const storyboardAttempts = failedOnce.meta.workflow.stages.storyboard.attempts;
 
-  await request('POST', `/api/tasks/${retryStart.task_id}/retry-stage`, { stage: 'export' });
-  const retried = await waitForTask(retryStart.task_id, terminal);
+  const retryAttempt = await request('POST', `/api/tasks/${retryStart.task_id}/retry-stage`, { stage: 'export' });
+  if (!retryAttempt.task_id || retryAttempt.task_id === retryStart.task_id) {
+    throw new Error('阶段重试必须创建新 attempt，不能覆盖原失败任务');
+  }
+  const preservedFailure = await request('GET', `/api/tasks/${retryStart.task_id}`);
+  if (!['partial', 'failed'].includes(preservedFailure.status) || !preservedFailure.error) {
+    throw new Error('阶段重试覆盖了原任务失败证据');
+  }
+  const retried = await waitForTask(retryAttempt.task_id, terminal);
   await assertPlayableExport(retried, '单阶段重试任务');
+  await assertStageArtifacts(retryStart.project_id, '单阶段重试任务');
+  if (retried.meta?.retry_of !== retryStart.task_id || retried.meta?.attempt !== 2) {
+    throw new Error('阶段重试没有保存 retry_of / attempt 血缘');
+  }
   if (retried.meta.workflow.stages.storyboard.attempts !== storyboardAttempts) throw new Error('阶段重试错误地重跑了分镜阶段');
-  console.log(`Demo stage retry passed: task=${retryStart.task_id}`);
+  console.log(`Demo stage retry passed: task=${retryAttempt.task_id}, retry_of=${retryStart.task_id}`);
 } finally {
   await stopServer(server).catch((error) => console.error(error.message));
   fs.rmSync(tempRoot, { recursive: true, force: true, maxRetries: 5, retryDelay: 200 });

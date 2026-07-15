@@ -63,13 +63,13 @@ Token 只用于本地 API 边界，不替代 Provider 凭证，也不应写进�
 
 ## 幂等请求
 
-`POST /api/ai/generate-image` 和 `POST /api/ai/auto-produce` 支持：
+以下可能触发模型或长任务的入口支持持久化幂等：`generate-script`、`expand-dialog`、`optimize-theme`、`generate-image`、`auto-produce` 及任务重试接口。
 
 ~~~http
 Idempotency-Key: <UUID>
 ~~~
 
-也接受 body 中的 `idempotencyKey`。缓存当前只存在于进程内，默认 TTL 为 5 分钟；进程重启后的幂等仍依赖数据库检查点和资产一致性，而不是这段内存缓存。
+也接受 body 中的 `idempotencyKey`。记录持久化在 SQLite schema v7，默认保留 24 小时：相同 key 和请求输入会跨进程回放首次成功响应；同 key 不同输入返回 409。首次请求的 `pending` 意图会在进入可能计费的 handler 前同步落盘；若进程退出导致远端结果不确定，系统不会自动重放，用户需先核对任务与资产记录。
 
 ## 核心创作调用链
 
@@ -108,6 +108,7 @@ sequenceDiagram
 | DELETE | `/:id` | 默认软删除；`permanent=true` 永久删除 |
 | GET | `/:id/assets/health` | 检查缺图、缺音频、悬空引用和导出阻塞 |
 | GET | `/:id/workbench-status` | 返回当前步骤、缺失项和建议动作 |
+| GET | `/:id/artifacts` | 阶段 revision、依赖和 stale 历史；默认不返回完整 payload |
 | POST | `/:id/workbench/repair` | 执行受支持的增量修复 |
 | POST | `/:id/images/generate-all` | 创建项目级批量生图任务 |
 | POST | `/:id/complete-check` | 刷新项目完成状态和资产健康 |
@@ -145,7 +146,7 @@ sequenceDiagram
 | GET | `/project/:projectId` | 项目分镜列表 |
 | GET | `/:id` | 单条分镜 |
 | POST | `/batch` | 批量保存分镜 |
-| POST | `/reconcile` | 增量对账并保留未变化镜头资产 |
+| POST | `/reconcile` | 增量对账；变化镜头旧资产保留并标记 stale |
 | PUT | `/:id` | 更新单条分镜 |
 | PUT | `/reorder/:projectId` | 调整顺序 |
 | POST | `/batch-update` | 批量更新可编辑属性 |
@@ -156,13 +157,33 @@ sequenceDiagram
 
 | 方法 | 路径 | 作用 |
 | --- | --- | --- |
-| GET | `/storyboard/:storyboardId` | 获取候选图片 |
+| GET | `/storyboard/:storyboardId` | 获取未归档候选；`include_archived=true` 含历史 |
 | POST | `/` | 创建图片记录 |
 | PUT | `/:id` | 更新图片记录 |
+| POST | `/:id/select` | 按稳定 ID 选用 Candidate，不覆盖其他候选 |
+| PUT | `/:id/review` | 收藏、归档或恢复；正在使用的候选返回 409 |
 | POST | `/upload` | 上传图片；同时校验 MIME 与魔数 |
-| DELETE | `/:id` | 删除文件和记录并清理 selected_image_id |
+| DELETE | `/:id` | 物理删除未被分镜/Variant 引用的文件和记录 |
 
-不要直接修改数据库中的 `selected_image_id`。删除或替换图片必须走服务层，避免留下悬空引用。
+不要直接修改数据库中的 `selected_image_id`。普通移除优先使用归档；物理删除被引用的 Candidate 会返回 409。
+
+## 资产 Variant 与镜头绑定
+
+基础路径：`/api/assets`。Character 继续使用兼容表与路由；Scene/Prop/Style 使用 schema v7 通用 AssetUnit/Variant，并按 Episode → Series → Global 解析。Voice/Music 已进入领域契约，当前项目资产列表只公开前四类，不应据此宣称已有完整音频资产工作台。
+
+| 方法 | 路径 | 作用 |
+| --- | --- | --- |
+| GET | `/projects/:projectId` | 返回 AssetUnit、Variant revision、默认选择、作用域和镜头 Binding |
+| POST | `/projects/:projectId/units` | 创建 Scene/Prop/Style 通用 AssetUnit |
+| POST | `/units/:unitId/variants` | 为通用 AssetUnit 创建不可变 Variant revision |
+| POST | `/units/:unitId/variants/:variantId/select` | 切换通用资产默认 Variant |
+| POST | `/characters/:characterId/variants` | 新增 Character Variant；首个自动成为默认 |
+| POST | `/characters/:characterId/variants/:variantId/select` | 切换角色默认 Variant |
+| GET | `/storyboards/:storyboardId/bindings` | 读取镜头的不可变资产快照 |
+| PUT | `/storyboards/:storyboardId/bindings` | 将指定 Variant revision 绑定到镜头 |
+| DELETE | `/variants/:variantId` | 归档未选中且未被绑定的 Variant；引用中返回 409 |
+
+Binding 的 `snapshot` 记录 asset/variant ID、revision、MediaReference、Provider/model 和 content hash。后续切换角色默认 Variant 不会静默修改已有镜头快照。
 
 ## AI 与自动生产
 
@@ -196,6 +217,22 @@ Demo 验收可使用仅在 `DEMO_MODE=1` 生效的测试字段：
 ~~~
 
 它只用于本地受控测试，不应出现在正式产品请求。
+
+`generate-script` 成功结果包含结构化契约元数据：
+
+~~~json
+{
+  "schema_version": "1.0.0",
+  "prompt_version": "script-2026-07-14.1",
+  "input_hash": "<sha256>",
+  "language": "zh-CN",
+  "style": "写实",
+  "generation": { "provider": "demo", "model": "local-template" },
+  "storyboards": []
+}
+~~~
+
+Provider 返回可解析但不符合契约的 JSON 时，HTTP 502；可编辑脚本保存校验失败时，HTTP 422。`data` 只包含 `SCRIPT_OUTPUT_INVALID`、`retryable`、`diagnostic_ref` 和字段 issue，不包含原始模型响应。
 
 ## 任务
 
@@ -252,6 +289,7 @@ Demo 验收可使用仅在 `DEMO_MODE=1` 生效的测试字段：
 | 方法 | 路径 | 作用 |
 | --- | --- | --- |
 | GET | `/` | 按能力分类返回 Provider 注册表 |
+| GET | `/catalog?modality=video` | 返回静态 ModelCatalog；不混入凭证或运行时健康状态 |
 | GET | `/health` | 启动自检和配置来源摘要 |
 | GET/POST | `/stage-models` | 读取或保存阶段模型路由 |
 | POST | `/credentials` | 保存或清除凭证；响应只返回掩码 |
@@ -260,6 +298,8 @@ Demo 验收可使用仅在 `DEMO_MODE=1` 生效的测试字段：
 | POST | `/usage/reset` | 重置统计 |
 
 Demo Mode 不会因为保存了凭证就自动访问收费 Provider。自动测试仍会清空运行环境中的常见 Key。
+
+保存 `/stage-models` 时会先验证 provider、model、阶段 modality 和已声明能力。未知模型返回 `MODEL_NOT_FOUND`，阶段错配返回 `MODEL_MODALITY_MISMATCH`，不支持能力返回 `MODEL_CAPABILITY_UNSUPPORTED`；校验失败不会改写当前路由。LLM 的 OpenAI-compatible 自定义 endpoint model ID 仍允许保存，并以保守的 adapter 能力元数据标记为 `catalog_source=custom`。
 
 ## 设置、备份与系统
 
@@ -304,6 +344,7 @@ Demo Mode 不会因为保存了凭证就自动访问收费 Provider。自动测�
 | 403 | CORS 来源被拒绝 |
 | 404 | 对象或路由不存在 |
 | 409 | 状态冲突，例如阶段当前不可重试 |
+| 422 | 可编辑脚本结构不符合运行时契约，未写库 |
 | 429 | 限流 |
 | 500 | 已脱敏的内部错误 |
 

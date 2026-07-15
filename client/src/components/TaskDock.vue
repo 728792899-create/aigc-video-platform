@@ -37,10 +37,10 @@
             <span class="msg-text">{{ t.message || statusText(t) }}</span>
             <span class="msg-pct" v-if="!isFinished(t)">{{ t.progress || 0 }}%</span>
           </div>
-          <WorkflowRail v-if="t.meta?.workflow" :workflow="t.meta.workflow" compact class="task-workflow" />
+          <WorkflowRail v-if="workflowOf(t)" :workflow="workflowOf(t) || undefined" compact class="task-workflow" />
           <div v-if="t.type === 'auto-produce'" class="provider-line">
             <span>{{ providerSummary(t) }}</span>
-            <span>{{ t.meta?.demo_mode ? 'Demo · ¥0' : '成本由 Provider 结算' }}</span>
+            <span>{{ isDemoTask(t) ? 'Demo · ¥0' : '成本由 Provider 结算' }}</span>
           </div>
           <div v-if="canRetry(t)" class="task-actions">
             <el-button v-if="hasDiagnosis(t)" size="small" plain @click="showDiagnosis(t)">
@@ -49,7 +49,7 @@
             <el-button size="small" type="primary" plain :loading="retrying[t.id]" @click="retry(t)">
               {{ $t('common.regenerate') }}
             </el-button>
-            <el-button v-if="t.meta?.workflow" size="small" type="warning" plain :loading="retrying[t.id]" @click="retryStage(t)">
+            <el-button v-if="workflowOf(t)" size="small" type="warning" plain :loading="retrying[t.id]" @click="retryStage(t)">
               重试当前阶段
             </el-button>
           </div>
@@ -69,7 +69,8 @@
   </transition>
 </template>
 
-<script setup>
+<script setup lang="ts">
+import type { ApiEnvelope, GenerationTask, TaskStatus } from '@aigc-video/contracts'
 import { ref, computed, onMounted, onUnmounted } from 'vue'
 import { useI18n } from 'vue-i18n'
 import {
@@ -80,54 +81,74 @@ import { useTaskStore } from '../stores/tasks'
 import api from '../api'
 import WorkflowRail from './WorkflowRail.vue'
 
+type JsonObject = Record<string, unknown>
+type ProgressStatus = '' | 'success' | 'exception' | 'warning'
+
+function record(value: unknown): JsonObject {
+  return value && typeof value === 'object' && !Array.isArray(value) ? value as JsonObject : {}
+}
+
+function workflowOf(task: GenerationTask): JsonObject | null {
+  const workflow = record(task.meta).workflow
+  return workflow && typeof workflow === 'object' && !Array.isArray(workflow) ? workflow as JsonObject : null
+}
+
+function isDemoTask(task: GenerationTask): boolean {
+  return record(task.meta).demo_mode === true
+}
+
 const { t } = useI18n()
 const store = useTaskStore()
 const collapsed = ref(false)
-const retrying = ref({})
-const canceling = ref({})
+const retrying = ref<Record<string, boolean>>({})
+const canceling = ref<Record<string, boolean>>({})
 
 const tasks = computed(() => store.visibleTasks)
 
 // 任务类型 → i18n 标签
-const TYPE_KEY = {
+const TYPE_KEY: Record<string, string> = {
   image: 'task.typeImage',
   video: 'task.typeVideo',
   'auto-produce': 'task.typeAutoProduce',
   tts: 'task.typeTts',
 }
-function label(type) {
+function label(type: string): string {
   return t(TYPE_KEY[type] || 'task.typeDefault')
 }
 
 // 仅一键成片失败 / 中断、且后端 meta 里存了可重跑参数时，才允许一键重试
-function canRetry(t) {
-  return t.type === 'auto-produce'
-    && (t.status === 'failed' || t.status === 'interrupted' || t.status === 'partial')
-    && t.meta && t.meta.params
+function canRetry(task: GenerationTask): boolean {
+  return task.type === 'auto-produce'
+    && (task.status === 'failed' || task.status === 'interrupted' || task.status === 'orphaned' || task.status === 'partial')
+    && Boolean(record(task.meta).params)
 }
 
-function canCancel(t) {
-  return t.type === 'auto-produce' && ['waiting', 'pending', 'running', 'composing'].includes(t.status)
+function canCancel(task: GenerationTask): boolean {
+  return task.type === 'auto-produce' && ['waiting', 'pending', 'running', 'composing'].includes(task.status)
 }
 
-function providerSummary(task) {
-  const providers = task.meta?.providers || {}
-  return [providers.script, providers.image, providers.video, providers.voice].filter(Boolean).join(' · ') || '本地工作流'
+function providerSummary(task: GenerationTask): string {
+  const providers = record(record(task.meta).providers)
+  return [providers.script, providers.image, providers.video, providers.voice]
+    .filter((value): value is string => typeof value === 'string' && Boolean(value))
+    .join(' · ') || '本地工作流'
 }
 
-function hasDiagnosis(t) {
-  return !!(t.diagnosis || t.meta?.diagnosis || t.result?.diagnosis)
+function diagnosisOf(task: GenerationTask): JsonObject | null {
+  const taskRecord = record(task)
+  const candidate = taskRecord.diagnosis || record(task.meta).diagnosis || record(task.result).diagnosis
+  return candidate && typeof candidate === 'object' && !Array.isArray(candidate) ? candidate as JsonObject : null
 }
 
-function diagnosisOf(t) {
-  return t.diagnosis || t.meta?.diagnosis || t.result?.diagnosis || null
+function hasDiagnosis(task: GenerationTask): boolean {
+  return Boolean(diagnosisOf(task))
 }
 
-function showDiagnosis(task) {
-  const d = diagnosisOf(task)
-  if (!d) return
-  const partial = d.partialResult
-  const partialText = partial
+function showDiagnosis(task: GenerationTask): void {
+  const diagnosis = diagnosisOf(task)
+  if (!diagnosis) return
+  const partial = record(diagnosis.partialResult)
+  const partialText = Object.keys(partial).length
     ? `<p><strong>${t('task.partialResult')}</strong>${t('task.partialStats', {
         sb: partial.storyboard_count || 0,
         img: partial.image_count || 0,
@@ -135,22 +156,24 @@ function showDiagnosis(task) {
         aud: partial.audio_count || 0,
       })}</p>`
     : ''
-  const advice = Array.isArray(d.advice) && d.advice.length
-    ? `<ol>${d.advice.map((x) => `<li>${escapeHtml(x)}</li>`).join('')}</ol>`
-    : `<p>${escapeHtml(d.reason || t('task.unknownError'))}</p>`
-  const assetIssues = Array.isArray(d.assetHealth?.issues) && d.assetHealth.issues.length
-    ? `<p><strong>${t('task.assetIssues')}</strong></p><ul>${d.assetHealth.issues.map((x) => `<li>${escapeHtml(x.message)}</li>`).join('')}</ul>`
+  const adviceList = Array.isArray(diagnosis.advice) ? diagnosis.advice : []
+  const advice = adviceList.length
+    ? `<ol>${adviceList.map((item) => `<li>${escapeHtml(item)}</li>`).join('')}</ol>`
+    : `<p>${escapeHtml(diagnosis.reason || t('task.unknownError'))}</p>`
+  const assetIssuesValue = record(diagnosis.assetHealth).issues
+  const assetIssues = Array.isArray(assetIssuesValue) && assetIssuesValue.length
+    ? `<p><strong>${t('task.assetIssues')}</strong></p><ul>${assetIssuesValue.map((item) => `<li>${escapeHtml(record(item).message)}</li>`).join('')}</ul>`
     : ''
-  const raw = d.rawError ? `<details><summary>${t('task.rawError')}</summary><pre>${escapeHtml(d.rawError)}</pre></details>` : ''
+  const raw = diagnosis.rawError ? `<details><summary>${t('task.rawError')}</summary><pre>${escapeHtml(diagnosis.rawError)}</pre></details>` : ''
   ElMessageBox.alert(
-    `<p><strong>${escapeHtml(d.reason || '')}</strong></p>${partialText}${assetIssues}<p>${t('task.advice')}</p>${advice}${raw}`,
-    d.title || t('task.failureDiagnosis'),
+    `<p><strong>${escapeHtml(diagnosis.reason || '')}</strong></p>${partialText}${assetIssues}<p>${t('task.advice')}</p>${advice}${raw}`,
+    String(diagnosis.title || t('task.failureDiagnosis')),
     { dangerouslyUseHTMLString: true, confirmButtonText: t('common.close') }
   )
 }
 
-function escapeHtml(s) {
-  return String(s || '')
+function escapeHtml(value: unknown): string {
+  return String(value || '')
     .replace(/&/g, '&amp;')
     .replace(/</g, '&lt;')
     .replace(/>/g, '&gt;')
@@ -158,10 +181,21 @@ function escapeHtml(s) {
     .replace(/'/g, '&#39;')
 }
 
-async function retry(task) {
+async function retry(task: GenerationTask): Promise<void> {
+  if (task.status === 'orphaned') {
+    try {
+      await ElMessageBox.confirm(
+        t('task.orphanedConfirm'),
+        t('task.orphaned'),
+        { type: 'warning', confirmButtonText: t('task.confirmRetry'), cancelButtonText: t('common.cancel') }
+      )
+    } catch { return }
+  }
   retrying.value = { ...retrying.value, [task.id]: true }
   try {
-    const res = await api.post(`/ai/auto-produce/${task.id}/retry`)
+    const res = await api.post<ApiEnvelope<JsonObject>>(`/ai/auto-produce/${task.id}/retry`, {
+      confirm_uncertain_outcome: task.status === 'orphaned',
+    })
     if (res.data.code === 200) {
       ElMessage.success(t('task.restarted'))
       store.dismiss(task.id)
@@ -169,61 +203,74 @@ async function retry(task) {
     } else {
       ElMessage.error(res.data.message || t('task.retryFailed'))
     }
-  } catch (e) {
-    ElMessage.error(t('task.retryReqFailed') + (e?.message || t('task.unknownError')))
+  } catch (cause) {
+    ElMessage.error(t('task.retryReqFailed') + (cause instanceof Error ? cause.message : t('task.unknownError')))
   } finally {
     retrying.value = { ...retrying.value, [task.id]: false }
   }
 }
 
-async function retryStage(task) {
-  const stage = task.meta?.workflow?.current_stage
+async function retryStage(task: GenerationTask): Promise<void> {
+  const stageValue = workflowOf(task)?.current_stage
+  const stage = typeof stageValue === 'string' ? stageValue : ''
   if (!stage) return retry(task)
+  if (task.status === 'orphaned') {
+    try {
+      await ElMessageBox.confirm(
+        t('task.orphanedStageConfirm', { stage }),
+        t('task.orphaned'),
+        { type: 'warning', confirmButtonText: t('task.confirmRetry'), cancelButtonText: t('common.cancel') }
+      )
+    } catch { return }
+  }
   retrying.value = { ...retrying.value, [task.id]: true }
   try {
-    const res = await api.post(`/tasks/${task.id}/retry-stage`, { stage })
+    const res = await api.post<ApiEnvelope<JsonObject>>(`/tasks/${task.id}/retry-stage`, {
+      stage,
+      confirm_uncertain_outcome: task.status === 'orphaned',
+    })
     if (res.data.code === 200) {
       ElMessage.success(`已重试阶段：${stage}`)
+      store.dismiss(task.id)
       store.fetchOnce()
     } else ElMessage.error(res.data.message || '阶段重试失败')
-  } catch (e) {
-    ElMessage.error(e?.response?.data?.message || e?.message || '阶段重试失败')
+  } catch (cause) {
+    ElMessage.error(cause instanceof Error ? cause.message : '阶段重试失败')
   } finally {
     retrying.value = { ...retrying.value, [task.id]: false }
   }
 }
 
-async function cancelTask(task) {
+async function cancelTask(task: GenerationTask): Promise<void> {
   canceling.value = { ...canceling.value, [task.id]: true }
   try {
-    const res = await api.post(`/tasks/${task.id}/cancel`)
+    const res = await api.post<ApiEnvelope<GenerationTask>>(`/tasks/${task.id}/cancel`)
     if (res.data.code === 200) {
       ElMessage.success(res.data.message || t('task.canceled'))
       store.fetchOnce()
     } else {
       ElMessage.error(res.data.message || t('task.cancelFailed'))
     }
-  } catch (e) {
-    ElMessage.error(t('task.cancelFailed') + (e?.message || ''))
+  } catch (cause) {
+    ElMessage.error(t('task.cancelFailed') + (cause instanceof Error ? cause.message : ''))
   } finally {
     canceling.value = { ...canceling.value, [task.id]: false }
   }
 }
 
-function isFinished(t) {
-  return t.status === 'success' || t.status === 'failed' || t.status === 'interrupted'
-    || t.status === 'partial' || t.status === 'canceled'
+function isFinished(task: GenerationTask): boolean {
+  return ['success', 'failed', 'timed_out', 'interrupted', 'orphaned', 'partial', 'canceled'].includes(task.status)
 }
 
-function progressStatus(t) {
-  if (t.status === 'success') return 'success'
-  if (t.status === 'failed' || t.status === 'interrupted') return 'exception'
-  if (t.status === 'partial') return 'warning'
+function progressStatus(task: GenerationTask): ProgressStatus {
+  if (task.status === 'success') return 'success'
+  if (task.status === 'failed' || task.status === 'timed_out' || task.status === 'interrupted' || task.status === 'orphaned') return 'exception'
+  if (task.status === 'partial') return 'warning'
   return ''
 }
 
-function statusText(task) {
-  const map = {
+function statusText(task: GenerationTask): string {
+  const map: Partial<Record<TaskStatus, string>> = {
     pending: t('task.queuing'),
     waiting: t('task.waiting'),
     running: t('task.processing'),
@@ -232,17 +279,18 @@ function statusText(task) {
     partial: t('task.partial'),
     failed: t('task.failed'),
     interrupted: t('task.interrupted'),
+    orphaned: t('task.orphaned'),
     canceled: t('task.canceled'),
   }
   return map[task.status] || ''
 }
 
 // 任务卡片右上角的简短上下文（项目/分镜）
-function metaText(task) {
-  const m = task.meta || {}
-  if (task.type === 'auto-produce' && m.theme) return m.theme.slice(0, 12)
-  if (task.type === 'video' && m.total_segments) return t('task.segments', { n: m.total_segments })
-  if (task.type === 'image' && m.storyboard_id) return t('task.storyboard', { id: m.storyboard_id })
+function metaText(task: GenerationTask): string {
+  const metadata = record(task.meta)
+  if (task.type === 'auto-produce' && typeof metadata.theme === 'string') return metadata.theme.slice(0, 12)
+  if (task.type === 'video' && metadata.total_segments) return t('task.segments', { n: Number(metadata.total_segments) })
+  if (task.type === 'image' && metadata.storyboard_id) return t('task.storyboard', { id: Number(metadata.storyboard_id) })
   return ''
 }
 

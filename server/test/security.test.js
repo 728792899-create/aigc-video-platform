@@ -104,6 +104,22 @@ test('请求ID：业务错误响应也带 X-Request-Id 头（日志可关联）'
   assert.ok(rid && rid.length > 0, '业务错误响应也应带 X-Request-Id 头');
 });
 
+test('统一错误模型：畸形 JSON 返回稳定错误码、关联 ID 且不泄露密钥', async () => {
+  const requestId = 'test-malformed-json-rid';
+  const response = await fetch(BASE + '/api/projects', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', 'X-Request-Id': requestId },
+    body: '{"api_key":"sk-super-secret-123456",',
+  });
+  const body = await response.json();
+  assert.strictEqual(response.status, 400);
+  assert.strictEqual(response.headers.get('x-request-id'), requestId);
+  assert.strictEqual(body.request_id, requestId);
+  assert.strictEqual(body.error.code, 'REQUEST_INVALID');
+  assert.strictEqual(body.error.retryable, false);
+  assert.strictEqual(JSON.stringify(body).includes('sk-super-secret'), false, '错误响应不得回显密钥');
+});
+
 // ── §10 不存在对象的写操作 → 404（不 500、不泄露堆栈）──────────────
 test('对象不存在：PUT 不存在的图片返回 404', async () => {
   const { status, body } = await req('PUT', '/api/images/999999999', { gen_status: 'done' });

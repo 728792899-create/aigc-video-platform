@@ -6,11 +6,11 @@
 
 > 这是内置 ImageGen 为本文生成的原创概念视觉，不是产品界面截图。八个模块表示工作流阶段，中心时间线/存储表示持久化检查点，回环表示失败或进程退出后从最近阶段继续。
 
-- `server/services/workflowStateMachine.js`
-- `server/services/taskManager.js`
-- `server/services/taskRecovery.js`
-- `server/services/pipeline.js`
-- `server/routes/tasks.js`
+- `server/services/workflowStateMachine.ts`
+- `server/services/taskManager.ts`
+- `server/services/taskRecovery.ts`
+- `server/services/pipeline.ts`
+- `server/routes/tasks.ts`
 
 ## 设计目标
 
@@ -19,7 +19,7 @@
 1. 每个阶段都能独立保存和诊断；
 2. 失败后不删除已经成功的上游资产；
 3. 重试只重跑必要阶段；
-4. 服务退出后任务仍可查询并自动恢复；
+4. 服务退出后任务仍可查询；只有明确安全的 Demo/local 任务自动恢复，云任务进入人工核对；
 5. 重复请求不能产生不受控的重复素材或导出记录。
 
 ## 八个固定阶段
@@ -89,6 +89,10 @@ stateDiagram-v2
 
 状态机拒绝非法越级。例如 `storyboard` 尚未完成时启动 `image` 会直接抛出前置条件错误，避免数据库出现“没有分镜却有图片任务”的矛盾状态。
 
+## 任务检查点与阶段产物的区别
+
+`tasks.meta.workflow` 回答“这次 attempt 执行到了哪里”；schema v5 的 `stage_artifacts` 回答“项目当前使用哪个内容 revision”。每个 artifact 保存上游 dependency snapshot。上游内容变化时，下游 artifact 进入 `stale`，旧 payload 和候选文件继续保留；用户可以局部重生成或明确保留旧版本。任务重试不能覆盖 artifact 历史，artifact 新发布也不能伪造任务已经执行成功。
+
 ## 阶段保存点
 
 阶段保存分为三层：
@@ -110,6 +114,8 @@ flowchart LR
 ```
 
 状态机负责重置目标与下游状态；具体执行器负责资产级幂等。例如图片阶段会检查每个 storyboard 的已选图片，批任务只处理缺失项。
+
+阶段重试会创建一个新任务 attempt，并记录 `retry_of` 与递增的 `attempt`。原失败任务及错误诊断保持不变；新任务复制上游 workflow 检查点，只把目标阶段和下游转回待执行。
 
 ## 部分成功
 
@@ -151,14 +157,26 @@ sequenceDiagram
   DB-->>TM: 任务和 meta.workflow
   Boot->>Recovery: recoverTasks()
   Recovery->>TM: 扫描可恢复状态
-  Recovery->>Recovery: 检查 attempts < maxAttempts
-  Recovery->>Runner: runners[recovery.kind](task)
-  Runner->>DB: 从当前阶段继续保存检查点
+  Recovery->>Recovery: 检查 recovery.mode
+  alt safe-auto
+    Recovery->>Runner: runners[recovery.kind](task)
+    Runner->>DB: 从当前阶段继续保存检查点
+  else manual-reconcile / unknown
+    Recovery->>TM: 标记 orphaned，保留诊断
+  end
 ```
 
-可恢复状态包括 `pending`、`waiting`、`running`、`composing` 和 `interrupted`。每个任务通过 `meta.recovery.kind` 选择 runner，并记录 `attempts`、`max_attempts` 和 `resumed_at`。
+扫描状态包括 `pending`、`waiting`、`running`、`composing` 和 `interrupted`。每个任务通过 `meta.recovery.kind` 选择 runner，并记录 `mode`、`attempts`、`max_attempts` 和 `resumed_at`。
+
+只有 `mode=safe-auto`（或兼容旧版的明确 Demo 标记）会自动运行。云端或未知任务使用 `manual-reconcile`：程序可能在 Provider 已受理、但本地尚未保存 provider task id 时退出，因此系统将其标为 `orphaned`，要求用户先核对任务历史和已有资产，再确认是否重试。
 
 如果找不到对应 runner，任务保持 `interrupted` 并记录 `RECOVERY_RUNNER_MISSING`；如果达到恢复上限，任务进入 `failed` 并给出次数诊断。
+
+## 请求幂等边界
+
+高成本入口把 `scope + Idempotency-Key + request_hash` 持久化在 SQLite。首次请求在进入 handler 前同步保存 `pending`；成功后保存状态码与响应并保留 24 小时。相同 key 和输入在服务重启后回放原响应，同 key 不同输入返回 409。
+
+如果进程在结果未确认时退出，pending 记录会保留，系统不会自动重放。这与任务 `orphaned` 使用相同原则：结果不确定时宁可要求人工核对，也不制造可能计费的第二次提交。
 
 ## 各阶段幂等策略
 
@@ -189,15 +207,17 @@ sql.js 在内存中运行，持久化时先写临时文件再原子 rename。sch
 2. 创建项目并运行自动生产；
 3. 到达图片检查点时终止服务；
 4. 使用同一数据库和素材目录重启；
-5. 验证任务自动续跑并导出有效 MP4。
+5. 用同一 Idempotency-Key 验证回放的是原 project/task；
+6. 验证 Demo 安全任务自动续跑并导出有效 MP4。
 
 ### 单阶段重试
 
 1. 用 `DEMO_FAIL_STAGE_ONCE=export` 注入一次导出失败；
 2. 记录上游阶段 attempts；
 3. 调用阶段重试；
-4. 验证导出成功；
-5. 验证脚本、分镜、图片等上游 attempts 未增加。
+4. 验证返回新的 task id，原失败任务证据仍存在；
+5. 验证新 attempt 导出成功；
+6. 验证脚本、分镜、图片等上游 attempts 未增加。
 
 ## 修改恢复逻辑时的检查清单
 

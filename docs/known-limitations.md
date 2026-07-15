@@ -9,10 +9,11 @@
 
 ## 工作流边界
 
-- 自动恢复只支持已注册 recovery runner 的任务类型，并有默认三次上限。
+- 自动恢复只用于明确标记为 `safe-auto` 的 Demo/local 任务，并有默认三次上限；云端或未知任务重启后进入 `orphaned`，需核对远端任务和已有素材后手动继续。
 - 取消在安全检查点生效，不保证立刻终止正在完成的单个网络请求或媒体文件写入。
 - 部分成功会保留成功资产；用户仍需对失败镜头执行重试或替换。
 - 数据库和媒体目录是共同备份边界，只恢复数据库可能产生缺失资产。
+- Character Variant/Revision/Binding 和 Candidate 评审已落地；Scene/Prop/Style AssetUnit 与 Episode > Series > Global 解析已具备领域/API 契约，完整工作台 UI、共享资产 fork 交互和字段级 stale 传播仍待实施。
 
 ## 媒体边界
 
@@ -27,6 +28,7 @@
 - Windows x64 和 macOS x64 已配置 CI/打包目标，但仍应在对应干净机器完成安装、升级、卸载和重装测试。
 - 自动更新配置已完成，仍需真实 draft release、blockmap 和更新清单做端到端发布验证。
 - Sentry 为 opt-in 方案，未配置真实 DSN 时只使用本地日志和 crash dump。
+- 2026-07-15 的本地验收中，Computer Use 已覆盖 Electron 启动、目录选择器打开与路径导航、Demo 生成、任务/素材重启恢复、预览和 32.03 秒 MP4 导出；原生面板“选择当前空目录”无法通过当前 Computer Use 确认，已验证弹窗内手工路径回退。Browser Control 已覆盖 Web 空状态、结构化脚本、候选选择/收藏/归档/恢复、Variant 绑定、重启恢复和窄屏入口。Windows/macOS x64 干净机安装与受信任签名发布仍未验证。
 
 ## Provider 测试边界
 

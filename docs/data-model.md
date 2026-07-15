@@ -1,6 +1,6 @@
 # 数据模型与持久化
 
-当前数据库 schema 版本为 **3**，使用 sql.js 运行 SQLite。Electron 将数据库放在用户数据目录；开发模式默认位于 `server/db/database.sqlite`，测试通过 `DB_PATH` 指向隔离临时目录。
+当前数据库 schema 版本为 **7**，使用 sql.js 运行 SQLite。Electron 将数据库放在用户数据目录；开发模式默认位于 `server/db/database.sqlite`，测试通过 `DB_PATH` 指向隔离临时目录。
 
 ## 核心关系
 
@@ -13,12 +13,66 @@ erDiagram
   PROJECTS ||--o{ SNAPSHOTS : saves
   PROJECTS ||--o{ WORKBENCH_CHECKS : diagnoses
   PROJECTS ||--o{ CONTINUITY_CHECKS : validates
+  PROJECTS ||--o{ STAGE_ARTIFACTS : versions
   PROJECTS }o--|| SERIES : belongs_to
   SERIES ||--o{ STORY_BIBLES : defines
   SERIES ||--o{ CHARACTERS : owns
   CHARACTERS ||--o{ CHARACTER_ASSETS : references
   STORYBOARDS ||--o{ STORYBOARD_CHARACTERS : binds
   CHARACTERS ||--o{ STORYBOARD_CHARACTERS : appears_in
+  STORYBOARDS ||--o{ STORYBOARD_ASSET_BINDINGS : snapshots
+  CHARACTER_ASSETS ||--o{ STORYBOARD_ASSET_BINDINGS : bound_variant
+  ASSET_UNITS ||--o{ ASSET_VARIANTS : owns
+  ASSET_UNITS ||--o{ STORYBOARD_ASSET_BINDINGS : binds
+  IDEMPOTENCY_RECORDS {
+    TEXT scope PK
+    TEXT key PK
+    TEXT request_hash
+    TEXT status
+    INTEGER expires_at
+  }
+  STAGE_ARTIFACTS {
+    TEXT id PK
+    INTEGER project_id FK
+    TEXT stage
+    INTEGER revision
+    TEXT status
+    TEXT input_hash
+    TEXT payload_hash
+  }
+  CHARACTER_ASSETS {
+    INTEGER id PK
+    INTEGER character_id
+    TEXT variant_key
+    INTEGER revision
+    INTEGER selected
+    TEXT media_reference
+  }
+  STORYBOARD_ASSET_BINDINGS {
+    INTEGER id PK
+    INTEGER storyboard_id FK
+    TEXT asset_type
+    INTEGER asset_id
+    INTEGER variant_id
+    INTEGER revision
+    TEXT snapshot
+  }
+  ASSET_UNITS {
+    TEXT id PK
+    TEXT asset_type
+    TEXT scope
+    INTEGER project_id
+    INTEGER series_id
+    TEXT selected_variant_id
+  }
+  ASSET_VARIANTS {
+    TEXT id PK
+    TEXT asset_unit_id FK
+    INTEGER revision
+    TEXT status
+    INTEGER selected
+    TEXT media_reference
+  }
 ~~~
 
 SQLite 中只有部分关系声明为物理外键。服务层仍必须维护 selected image、文件路径和软删除快照等逻辑关系。
@@ -41,11 +95,19 @@ SQLite 中只有部分关系声明为物理外键。服务层仍必须维护 sel
 
 每条镜头的稳定记录，保存顺序、描述、旁白、时长、提示词、音频、字幕、转场、运镜、章节和连续性状态。
 
-`selected_image_id` 是逻辑引用。删除图片时服务层必须显式清空它；增量 reconcile 会保留未变化镜头的 id 和资产。
+`selected_image_id` 是逻辑引用。删除图片时服务层必须显式清空它；增量 reconcile 会保留未变化镜头的 id 和资产。内容变化时，镜头进入 `sync_status=stale`、`assets_stale=1`，但原 `selected_image_id`、音频和视频仍保留，等待用户复查或局部重生成。
 
-### images
+### images / Candidate
 
-保存分镜候选图的提示词、相对文件位置、状态和尺寸。图片文件本身位于受管媒体目录，不存入 SQLite blob。
+每行是一个拥有稳定 ID 的分镜 Candidate，保存提示词、相对文件位置、状态和尺寸。schema v6 追加了：
+
+- `task_id / provider / model`：真实生成来源；
+- `input_snapshot`：已脱离 Provider payload 的 Prompt、参考图 ID 和一致性模式；
+- `media_reference`：不含签名 query 或凭据的受控媒体引用；
+- `parent_image_id`：基于某候选再生成的血缘；
+- `favorite / archived_at / selected_at`：用户评审状态。
+
+`storyboards.selected_image_id` 指向当前使用的 Candidate。切换只更改这个稳定引用，不覆盖其他候选。`stale/stale_reason` 标识候选所依据的脚本已变化；归档与 stale 都不删除媒体。物理删除会拒绝正在被分镜或资产 Variant 引用的 Candidate。
 
 ### exports
 
@@ -82,15 +144,39 @@ flowchart TD
 | --- | --- |
 | `id` | UUID |
 | `type` | auto-produce、image-batch、video 等任务类型 |
-| `status` | pending、waiting、running、success、partial、failed、canceled、interrupted |
+| `status` | pending、waiting、running、success、partial、failed、canceled、interrupted、orphaned |
 | `progress` | 0–100 |
 | `message` | 用户可读状态 |
+| `provider / model / provider_task_id` | 实际 Provider 路由和可查询的远端任务 ID |
+| `attempt / parent_task_id` | 重试 attempt 及父任务血缘 |
+| `idempotency_key / correlation_id` | 防重复提交与诊断关联 |
+| `started_at / finished_at / timeout_at` | 真实任务时间边界 |
+| `retryable / cancel_state` | 稳定重试语义和本地/Provider 取消状态 |
+| `input_snapshot / media_snapshot` | 已脱敏、不可变的实际输入与媒体引用快照 |
 | `meta` | workflow、恢复类型、参数和诊断 JSON |
 | `result` | 终态结果 JSON |
 | `error` | 已脱敏错误 |
 | `created_at / updated_at` | 毫秒时间戳 |
 
 任务更新同步进入 SQLite，进程启动时加载最近 200 条。终态任务可以从内存卸载，但数据库保留历史。
+
+重试任务同时在兼容 `meta` 和 schema v7 一等列中保存父任务与递增 `attempt`，原任务保持失败/部分成功/结果不确定终态，不被新尝试覆盖。拥有 `provider_task_id` 且 adapter 支持查询的任务在重启后执行只读对账；缺少可核对证据时进入 `orphaned`，不会重新提交可能收费的任务。
+
+### idempotency_records
+
+高成本入口的持久化请求意图。主键为 `scope + key`，`request_hash` 防止把同一 key 误用于不同输入。`pending` 在进入 Provider 调用前同步落盘；成功后保存可回放响应。进程退出后仍为 pending 的记录不会自动重提，避免远端结果不明时重复计费。
+
+### stage_artifacts
+
+项目阶段产物的版本历史。每个 `(project_id, stage)` revision 单调递增，状态为：
+
+- `current`：当前被下游引用的版本；
+- `stale`：上游 revision 已变化，但产物仍保留；
+- `superseded`：同阶段已有更新 revision。
+
+记录包含 `schema_version`、`prompt_version`、Provider/model、输入和 payload hash、dependency snapshot、产物 payload 与 stale 原因。自动生产会依次发布 `script → storyboard → image → voice → subtitle → timeline → export`；手工脚本保存至少发布 script/storyboard。发布相同输入和依赖会复用原 revision，不制造重复历史。
+
+结构化脚本 payload 本身带有 `schema_version / prompt_version / input_hash / language / style / generation`。服务端在保存前再次通过 Zod 运行时契约；不合格输出只返回诊断摘要 hash 和字段路径，不落库，也不回显原始响应。
 
 ### workflow JSON
 
@@ -128,12 +214,17 @@ topic → script → storyboard → image → voice → subtitle → timeline �
 | `series` | 连续项目容器 |
 | `story_bibles` | 世界观、主线、时间线、锁定事实和风格锚点 |
 | `characters` | 角色结构、提示词锚点和锁定状态 |
-| `character_assets` | 角色参考图 |
+| `character_assets` | 角色 Variant；含稳定 key、revision、默认选择、血缘、生成来源和 MediaReference |
+| `asset_units` | 通用 Character/Scene/Prop/Style/Voice/Music 资产；含稳定字符串 ID、作用域和 selected Variant |
+| `asset_variants` | 通用资产不可变 revision、生成来源、MediaReference、选择/收藏/归档状态 |
 | `storyboard_characters` | 镜头与角色的动作、情绪和服装关系 |
+| `storyboard_asset_bindings` | 镜头对指定 Variant revision 的不可变快照绑定 |
 | `continuity_checks` | 连续性问题、评分、建议和修复动作 |
 | `workbench_checks` | 最近一次项目健康检查 |
 
 这些表中的提示词和引用可能包含用户创作内容，诊断或遥测不得自动上传完整记录。
+
+Character 继续由原兼容表提供稳定 API，并在 v7 幂等投影到通用资产层。Scene/Prop/Style/Voice/Music 通过 `asset_units / asset_variants` 持久化；解析顺序为 Episode → Series → Global。镜头绑定同时记录稳定 AssetUnit ID、Variant key、revision、来源作用域和不可变快照。
 
 ## 运营与辅助表
 
@@ -168,7 +259,7 @@ flowchart LR
 - 实际写盘先输出 `.tmp`，再 rename 原子替换；
 - 每次 export 后重新开启 foreign keys；
 - 事务结束和进程退出执行同步 flush；
-- 启动时不会把运行中任务粗暴改成失败，而是交给任务恢复器；
+- 启动时不会把运行中任务粗暴改成失败；明确安全的 Demo/local 任务交给恢复器续跑，云/未知任务进入 `orphaned` 人工核对；
 - 恢复次数超过上限的任务进入可诊断终态。
 
 ## schema 迁移
@@ -181,8 +272,10 @@ flowchart TD
   Version -->|旧版本| Backup["创建 data/backups/database-vN-*.sqlite"]
   Backup --> DDL["创建表 / 增加列 / 创建索引"]
   Version -->|当前版本| DDL
-  Version -->|高于程序版本| Warn["警告并保留版本号"]
-  DDL --> Set["写入 schema v3"]
+  Version -->|高于程序版本| Reject["拒绝打开且不改写"]
+  DDL --> Backfill6["v6 幂等回填 Candidate / Character Variant"]
+  Backfill6 --> Backfill7["v7 投影 AssetUnit / Task canonical fields"]
+  Backfill7 --> Set["写入 schema v7"]
   Set --> Flush["同步写盘"]
 ~~~
 
@@ -194,12 +287,16 @@ flowchart TD
 4. 验证 foreign keys 与索引；
 5. 更新本页和备份恢复说明。
 
+v5 升级 v6 时，旧 `character_assets` 按创建顺序获得单调 revision，最新可用参考图成为默认 Variant；旧已选图获得 `selected_at`。MediaReference 回填会剔除 URL query/fragment。v7 再把旧 Character/Variant 幂等投影到通用 `asset_units / asset_variants`，并把 Provider 对账、attempt、幂等、时间边界、取消和快照提升为任务一等字段。迁移重复运行不会重排 revision、复制资产或改变既有快照。
+
 ## 不变量
 
 - 项目删除不得留下可见的孤儿分镜；
-- 图片删除不得留下无效 selected image；
+- Candidate 物理删除前必须确认没有 selected image 或 Asset Variant 引用；
+- Variant 归档前必须已切换默认版本并重新绑定所有镜头；
 - 阶段成功必须先保存资产，再提交检查点；
 - 失败和取消不能删除上游成功输出；
+- 上游内容变化只能把相关下游标为 stale，不能静默覆盖或删除旧候选；
 - 备份和配置导出不得包含系统凭证；
 - HTTP 错误、日志和遥测不得包含原始密钥；
 - 文件路径必须位于受管媒体目录或用户明确选择的导出目录。

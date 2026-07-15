@@ -29,23 +29,41 @@
   </section>
 </template>
 
-<script setup>
+<script setup lang="ts">
 import { computed } from 'vue'
 
-const props = defineProps({
-  guide: { type: Object, default: null },
-  repairing: { type: Boolean, default: false },
-  title: { type: String, default: '创作工作台' },
-})
+interface RepairItem { type: string }
+interface ProgressStep { key: string; label: string; done?: boolean }
+interface PrimaryAction { label: string; [key: string]: unknown }
+interface WorkbenchGuide {
+  status?: string
+  status_label?: string
+  summary?: string
+  next_action?: string
+  current_step?: string
+  progress_steps?: ProgressStep[]
+  repair_items?: RepairItem[]
+  primary_action?: PrimaryAction
+}
 
-defineEmits(['repair', 'primary', 'refresh'])
+const props = withDefaults(defineProps<{
+  guide?: WorkbenchGuide | null
+  repairing?: boolean
+  title?: string
+}>(), { guide: null, repairing: false, title: '创作工作台' })
+
+defineEmits<{
+  repair: [type: string]
+  primary: [action: PrimaryAction]
+  refresh: []
+}>()
 
 const statusClass = computed(() => {
   if (!props.guide) return 'is-loading'
   return `is-${props.guide.status || 'ready'}`
 })
 
-const tagType = computed(() => {
+const tagType = computed<'danger' | 'warning' | 'success'>(() => {
   if (props.guide?.status === 'must_fix') return 'danger'
   if (props.guide?.status === 'suggest_optimize') return 'warning'
   return 'success'

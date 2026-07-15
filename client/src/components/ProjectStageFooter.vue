@@ -17,19 +17,19 @@
   </div>
 </template>
 
-<script setup>
+<script setup lang="ts">
 import { computed } from 'vue'
 
-const props = defineProps({
-  currentStage: { type: String, required: true },
-  nextStage: { type: String, default: '' },
-  ready: { type: Boolean, default: false },
-  blockedReason: { type: String, default: '' },
-  actionLabel: { type: String, default: '' },
-  readyHint: { type: String, default: '' },
-})
+const props = withDefaults(defineProps<{
+  currentStage: string
+  nextStage?: string
+  ready?: boolean
+  blockedReason?: string
+  actionLabel?: string
+  readyHint?: string
+}>(), { nextStage: '', ready: false, blockedReason: '', actionLabel: '', readyHint: '' })
 
-defineEmits(['go-next'])
+defineEmits<{ 'go-next': [] }>()
 
 const title = computed(() => {
   if (props.nextStage) return `下一步：${props.nextStage}`

@@ -1,12 +1,26 @@
 import { spawn } from "node:child_process";
 import fs from "node:fs";
+import net from "node:net";
 import os from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 
 const ROOT = path.resolve(fileURLToPath(new URL("..", import.meta.url)));
 const tempRoot = fs.mkdtempSync(path.join(os.tmpdir(), "aigc-video-smoke-"));
-const port = process.env.SMOKE_PORT || "3199";
+const serverEntry = path.join(ROOT, "server", "dist", "app.js");
+
+async function reservePort() {
+  if (process.env.SMOKE_PORT) return Number(process.env.SMOKE_PORT);
+  const listener = net.createServer();
+  await new Promise((resolve, reject) => listener.once("error", reject).listen(0, "127.0.0.1", resolve));
+  const address = listener.address();
+  const port = typeof address === "object" && address ? address.port : 0;
+  await new Promise((resolve, reject) => listener.close((error) => error ? reject(error) : resolve()));
+  if (!port) throw new Error("Unable to reserve an isolated smoke-test port");
+  return port;
+}
+
+const port = await reservePort();
 const baseUrl = `http://127.0.0.1:${port}`;
 
 function spawnProcess(command, args, options = {}) {
@@ -18,10 +32,11 @@ function spawnProcess(command, args, options = {}) {
   });
 }
 
-async function waitForHealth(timeoutMs = 20000) {
+async function waitForHealth(server, timeoutMs = 20000) {
   const startedAt = Date.now();
   let lastError = "";
   while (Date.now() - startedAt < timeoutMs) {
+    if (server.exitCode !== null) throw new Error(`Backend exited before health check (code ${server.exitCode})`);
     try {
       const response = await fetch(`${baseUrl}/api/health`);
       if (response.ok) return;
@@ -33,6 +48,19 @@ async function waitForHealth(timeoutMs = 20000) {
   }
   throw new Error(`Backend did not become healthy at ${baseUrl}: ${lastError}`);
 }
+
+function waitForExit(child, label) {
+  return new Promise((resolve, reject) => {
+    child.once("exit", (code, signal) => {
+      if (code === 0) resolve();
+      else reject(new Error(`${label} failed with ${signal || `exit code ${code}`}`));
+    });
+  });
+}
+
+const build = spawnProcess("npm", ["--prefix", "server", "run", "build"]);
+await waitForExit(build, "Server build");
+if (!fs.existsSync(serverEntry)) throw new Error("Server build did not produce server/dist/app.js");
 
 function runTests() {
   return runAllSmoke();
@@ -105,7 +133,7 @@ async function runPublicSmoke() {
   console.log(`Public smoke passed: project #${projectId}, storyboards=${storyboards.length}`);
 }
 
-const server = spawnProcess("npm", ["--prefix", "server", "start"], {
+const server = spawnProcess(process.execPath, [serverEntry], {
   env: {
     DEMO_MODE: "1",
     HOST: "127.0.0.1",
@@ -118,10 +146,12 @@ const server = spawnProcess("npm", ["--prefix", "server", "start"], {
 });
 
 try {
-  await waitForHealth();
+  await waitForHealth(server);
   await runTests();
 } finally {
-  server.kill("SIGTERM");
-  await new Promise((resolve) => server.once("exit", resolve));
+  if (server.exitCode === null) {
+    server.kill("SIGTERM");
+    await new Promise((resolve) => server.once("exit", resolve));
+  }
   fs.rmSync(tempRoot, { recursive: true, force: true, maxRetries: 3, retryDelay: 200 });
 }

@@ -13,6 +13,10 @@ Provider 层的目标不是隐藏所有厂商差异，而是把业务最关心�
 
 Provider 注册表位于 `server/services/providers/index.js`。注册项描述能力和协议，不应包含任何真实 Key。
 
+`server/services/modelCatalog.js` 从这份注册表派生稳定模型 ID、modality、输入输出类型和 adapter 已实现的能力。静态目录通过 `GET /api/providers/catalog` 返回，运行时凭证/健康仍只由 `/api/providers/health` 表达。目录中的能力表示“当前代码适配器会正确处理什么”，不是对第三方模型价格、质量或长期 API 行为的承诺。
+
+阶段路由和 LLM/T2I/T2V 适配器在网络请求前执行 fail-fast：未知模型、阶段 modality 错配或请求未实现的参考图能力都不会默默改用另一模型。OpenAI-compatible LLM 仍允许自定义 endpoint model ID，以兼容中转站与豆包接入点。
+
 ## 调用链
 
 ```mermaid
@@ -21,6 +25,7 @@ sequenceDiagram
   participant Contract as Provider Contract
   participant P1 as Primary Provider
   participant P2 as Fallback Provider
+  participant Media as RemoteMediaFetcher
   participant Local as Placeholder/Local
 
   Stage->>Contract: providers + execute + validate
@@ -35,6 +40,8 @@ sequenceDiagram
   opt 全部失败且允许占位
     Contract->>Local: 生成明确标记的本地素材
   end
+  Contract->>Media: 校验并落盘远程输出
+  Media-->>Contract: 受管本地引用
   Contract-->>Stage: value + provider + downgraded + attempts
 ```
 
@@ -50,6 +57,9 @@ sequenceDiagram
 | `AUTH_FAILED` | HTTP 401/403 | 否 |
 | `PROVIDER_FAILED` | 其他已知失败 | 否 |
 | `ALL_PROVIDERS_FAILED` | 所有候选均失败 | 否 |
+| `MODEL_NOT_FOUND` | 未登记且不允许自定义的模型 | 否 |
+| `MODEL_MODALITY_MISMATCH` | 模型与阶段类型不匹配 | 否 |
+| `MODEL_CAPABILITY_UNSUPPORTED` | 请求了 adapter 未实现的能力 | 否 |
 
 对前端返回 `safeMessage`，原始响应不得包含 Key、Authorization、完整请求体或 Provider 的敏感调试信息。
 
@@ -136,6 +146,10 @@ flowchart LR
 8. 补齐测试；
 9. 更新本文档和设置页说明。
 
+远程输出 URL 不得直接返回前端。图片/视频 adapter 必须复用 `RemoteMediaFetcher`，并明确 kind、最大字节数、超时和允许格式；签名 URL 与原始 Provider 响应只能存在于 adapter 调用期间。
+
+T2V 首帧输入必须经过 `MediaAdapter`：只读取受管 `/uploads/` 文件，拒绝路径穿越、缺失文件、超过 9 MB 的输入和 magic bytes 不匹配；发往 Provider 的 data URL 只存在于请求期间，任务/日志只保存媒体 ID、受管相对 URL、MIME、字节数和 content hash。对象存储解析器尚未配置时明确返回 `MEDIA_DELIVERY_UNSUPPORTED`。
+
 最低测试矩阵：
 
 - [ ] 无密钥时不发网络请求；
@@ -147,6 +161,7 @@ flowchart LR
 - [ ] 全部失败时行为明确；
 - [ ] 批量调用产生正确 `partial`；
 - [ ] 错误和日志不泄露凭证。
+- [ ] 远程输出逐跳执行 SSRF、大小、MIME 与 magic bytes 校验，前端只得到本地媒体引用。
 
 ## 成本与授权提醒
 

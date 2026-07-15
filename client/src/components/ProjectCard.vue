@@ -1,5 +1,12 @@
 <template>
-  <article class="project-card" tabindex="0" @click="$emit('open')" @keydown.enter="$emit('open')">
+  <article
+    class="project-card"
+    tabindex="0"
+    :aria-label="`项目：${project.name}`"
+    @click="$emit('open')"
+    @keydown.enter.prevent="$emit('open')"
+    @keydown.space.prevent="$emit('open')"
+  >
     <div class="card-thumb" :class="`thumb-${project.status}`" :style="!project.cover_url ? coverStyle : null">
       <img v-if="project.cover_url" :src="mediaUrl(project.cover_url)" class="cover-img" loading="lazy" :alt="project.name" @error="$emit('cover-error')" />
       <span v-else class="cover-initial">{{ initial }}</span>
@@ -17,6 +24,7 @@
     <div class="card-footer">
       <span class="time-info">{{ relativeTime }}</span>
       <div class="card-actions" @click.stop>
+        <el-button size="small" text aria-label="打开项目" @click="$emit('open')">打开</el-button>
         <el-button size="small" text @click="$emit('edit')"><el-icon><Edit /></el-icon></el-button>
         <el-button size="small" text type="success" @click="$emit('complete-check')">检查</el-button>
         <el-button size="small" text type="primary" @click="$emit('continue')">续写</el-button>
@@ -27,11 +35,45 @@
   </article>
 </template>
 
-<script setup>
+<script setup lang="ts">
+import type { CSSProperties } from 'vue'
 import { Loading, MagicStick, Edit, Delete } from '@element-plus/icons-vue'
 import { mediaUrl } from '../api/config'
-defineProps({ project:{type:Object,required:true}, coverStyle:{type:Object,default:null}, initial:{type:String,default:''}, coverLoading:Boolean, statusText:String, durationText:String, relativeTime:String, healthStatus:String, healthText:String, healthTitle:String })
-defineEmits(['open','cover-error','generate-cover','edit','complete-check','continue','series','delete'])
+import type { ProjectView } from '../domain/projects'
+
+withDefaults(defineProps<{
+  project: ProjectView
+  coverStyle?: CSSProperties | null
+  initial?: string
+  coverLoading?: boolean
+  statusText?: string
+  durationText?: string
+  relativeTime?: string
+  healthStatus?: string
+  healthText?: string
+  healthTitle?: string
+}>(), {
+  coverStyle: null,
+  initial: '',
+  coverLoading: false,
+  statusText: '',
+  durationText: '',
+  relativeTime: '',
+  healthStatus: 'unknown',
+  healthText: '',
+  healthTitle: '',
+})
+
+defineEmits<{
+  open: []
+  'cover-error': []
+  'generate-cover': []
+  edit: []
+  'complete-check': []
+  continue: []
+  series: []
+  delete: []
+}>()
 </script>
 
 <style scoped>

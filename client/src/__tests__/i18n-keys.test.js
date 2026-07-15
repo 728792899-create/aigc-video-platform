@@ -28,10 +28,10 @@ function flattenKeys(obj, prefix = '') {
 
 // 动态加载所有 locale 模块
 async function loadModules() {
-  const files = readdirSync(MODULES_DIR).filter(f => f.endsWith('.js'))
+  const files = readdirSync(MODULES_DIR).filter(f => /\.(?:js|ts)$/.test(f))
   const mods = {}
   for (const f of files) {
-    const ns = f.replace(/\.js$/, '')
+    const ns = f.replace(/\.(?:js|ts)$/, '')
     const mod = await import(join(MODULES_DIR, f))
     mods[ns] = mod.default
   }

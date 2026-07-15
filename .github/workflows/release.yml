@@ -37,9 +37,11 @@ jobs:
           cache: npm
           cache-dependency-path: |
             package-lock.json
+            packages/contracts/package-lock.json
             server/package-lock.json
             client/package-lock.json
       - run: npm ci
+      - run: npm --prefix packages/contracts ci
       - run: npm --prefix server ci
       - run: npm --prefix client ci
       - run: npm run prepare:desktop

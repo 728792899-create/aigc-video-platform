@@ -11,11 +11,33 @@
   </section>
 </template>
 
-<script setup>
+<script setup lang="ts">
+import type { HTMLAttributes } from 'vue'
 import { displayLocalPath } from '../utils/localPath'
 
-defineProps({ libraryPath:String,copyPath:String,longProject:Boolean,exporting:Boolean,taskId:String,result:Object,error:[String,Object],statusClass:[String,Array,Object],title:String,statusText:String,progress:{type:Number,default:0} })
-defineEmits(['export','library','play','download'])
+interface ExportResult {
+  file_url?: string | null
+  file_path?: string | null
+  external_file_path?: string | null
+  external_copy_status?: string | null
+  external_copy_error?: string | null
+}
+
+withDefaults(defineProps<{
+  libraryPath?: string
+  copyPath?: string
+  longProject?: boolean
+  exporting?: boolean
+  taskId?: string
+  result?: ExportResult | null
+  error?: string | Record<string, unknown> | null
+  statusClass?: HTMLAttributes['class']
+  title?: string
+  statusText?: string
+  progress?: number
+}>(), { progress: 0 })
+
+defineEmits<{ export: []; library: []; play: []; download: [] }>()
 </script>
 
 <style scoped>

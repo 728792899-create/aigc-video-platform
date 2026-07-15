@@ -36,6 +36,33 @@
   margin-bottom: var(--sp-6);
 }
 
+.artifact-status {
+  display: grid;
+  gap: 6px;
+  margin-bottom: 16px;
+  padding: 10px 12px;
+  border: 1px solid var(--separator);
+  border-radius: var(--radius-md);
+  background: var(--bg-surface);
+}
+
+.artifact-status-main,
+.contract-badges {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.artifact-status small {
+  color: var(--text-second);
+  line-height: 1.5;
+}
+
+.contract-badges {
+  margin-top: 8px;
+}
+
 .chapter-summary {
   padding: 14px;
   margin-bottom: 18px;

@@ -5,7 +5,7 @@
  *
  * 产物：dist-server-jsc/  —— server 的字节码版本，供 electron-builder 打包
  * 策略：
- *   1. 复制 server/ -> dist-server-jsc/（排除备份/test/sqlite/uploads/logs）
+ *   1. 复制 server/dist/ -> dist-server-jsc/（只使用 TypeScript 生产编译产物）
  *   2. 业务 .js 全部编译成 .jsc 并删除源 .js（无扩展名 require 自动解析到 .jsc）
  *   3. 入口 app.js 特殊处理：编成 app.jsc + 生成明文 app.js bootstrap
  *      （顶部 require('bytenode') 注册加载器，再 require('./app.jsc')）
@@ -17,7 +17,7 @@ const path = require('path');
 const bytenode = require(path.join(__dirname, '..', 'server', 'node_modules', 'bytenode'));
 
 const ROOT = path.join(__dirname, '..');
-const SRC = path.join(ROOT, 'server');
+const SRC = path.join(ROOT, 'server', 'dist');
 const OUT = path.join(ROOT, 'dist-server-jsc');
 
 // 不编译/不复制的目录与文件（相对 server/）
@@ -56,7 +56,7 @@ function main() {
   copyDir(SRC, OUT);
   // 依赖必须带上（依赖不编译）。electron-builder 会默认过滤
   // extraResources 中名为 node_modules 的目录，因此改用 vendor/ 并由桌面主进程注入 NODE_PATH。
-  const nmSrc = path.join(SRC, 'node_modules');
+  const nmSrc = path.join(ROOT, 'server', 'node_modules');
   if (fs.existsSync(nmSrc)) {
     console.log('[compile] 复制后端运行时依赖到 vendor/...');
     copyDirRaw(nmSrc, path.join(OUT, 'vendor'));
@@ -99,7 +99,23 @@ function copyDirRaw(src, dst) {
     const d = path.join(dst, e.name);
     if (e.isDirectory()) copyDirRaw(s, d);
     else if (e.isSymbolicLink()) {
-      try { fs.symlinkSync(fs.readlinkSync(s), d); } catch (_) { fs.copyFileSync(s, d); }
+      const target = fs.realpathSync(s);
+      if (fs.statSync(target).isDirectory()) {
+        // npm 的 file: 依赖是指向仓库目录的符号链接。extraResources 复制到
+        // .app 后链接会悬空，因此只实体化发布所需的 package surface；不把
+        // 该包的源码、lockfile 或开发 node_modules 带进桌面产物。
+        fs.mkdirSync(d, { recursive: true });
+        for (const name of ['package.json', 'dist']) {
+          const source = path.join(target, name);
+          const destination = path.join(d, name);
+          if (!fs.existsSync(source)) continue;
+          if (fs.statSync(source).isDirectory()) copyDirRaw(source, destination);
+          else fs.copyFileSync(source, destination);
+        }
+      } else {
+        // node_modules/.bin 等包内相对链接在 vendor 内仍可解析，保留即可。
+        fs.symlinkSync(fs.readlinkSync(s), d);
+      }
     } else fs.copyFileSync(s, d);
   }
 }

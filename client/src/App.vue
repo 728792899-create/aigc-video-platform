@@ -86,9 +86,9 @@
       <!-- 右侧内容 -->
       <el-main class="content-area">
         <router-view v-slot="{ Component }">
-          <transition name="page-fade" mode="out-in">
-            <component :is="Component" />
-          </transition>
+          <!-- Electron 下异步 chunk 与 out-in 离场动画组合会偶发保留旧页面；
+               页面可靠切换优先于装饰性动画。 -->
+          <component :is="Component" :key="route.fullPath" />
         </router-view>
       </el-main>
     </el-container>
@@ -100,14 +100,14 @@
   </el-config-provider>
 </template>
 
-<script setup>
-import { computed, ref, onMounted } from 'vue'
+<script setup lang="ts">
+import { computed, ref } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { useI18n } from 'vue-i18n'
 import { ElConfigProvider } from 'element-plus'
 import zhCn from 'element-plus/es/locale/lang/zh-cn'
 import enLocale from 'element-plus/es/locale/lang/en'
-// 显式导入模板用到的图标（虽然 main.js 已全局注册，显式导入让组件自包含、可 tree-shaking）
+// 显式导入模板用到的图标（组件自包含并便于 tree-shaking）
 import {
   FolderOpened, EditPen,
   PictureFilled, VideoPlay, Microphone, Setting,
@@ -124,7 +124,12 @@ const { locale } = useI18n()
 const elLocale = computed(() => (locale.value === 'en' ? enLocale : zhCn))
 const { theme, toggle } = useTheme()
 const sidebarOpen = ref(false)
-const topProgress = ref(null)
+interface TopProgressHandle {
+  start(): void
+  done(): void
+}
+
+const topProgress = ref<TopProgressHandle | null>(null)
 
 // 路由切换时驱动顶部进度条
 router.beforeEach((to, from, next) => {
@@ -135,7 +140,10 @@ router.afterEach(() => {
   topProgress.value?.done()
 })
 
-const currentProjectId = computed(() => route.params.id || '')
+const currentProjectId = computed(() => {
+  const id = route.params.id
+  return Array.isArray(id) ? id[0] || '' : id || ''
+})
 const showSidebar = computed(() => true)
 const activeMenu = computed(() => route.path)
 </script>

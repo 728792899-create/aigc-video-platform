@@ -16,7 +16,11 @@ function run(command, args, env = process.env) {
   });
 }
 
-await run(process.platform === 'win32' ? 'npm.cmd' : 'npm', ['--prefix', 'client', 'run', 'build']);
+const npm = process.platform === 'win32' ? 'npm.cmd' : 'npm';
+await run(npm, ['run', 'build:contracts']);
+await run(npm, ['run', 'build:server']);
+await run(npm, ['run', 'build:client']);
+await run(npm, ['run', 'build:electron']);
 const electron = require('electron');
 await run(electron, ['scripts/compile-backend.js'], {
   ...process.env,

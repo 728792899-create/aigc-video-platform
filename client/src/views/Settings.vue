@@ -236,6 +236,7 @@
                 <el-option v-for="m in modelsOf('script')" :key="m" :label="m" :value="m" />
               </el-select>
               <el-button size="small" @click="doSaveStage">{{ $t('settings.saveRoute') }}</el-button>
+              <span class="capability-hint">{{ capabilitySummary('script') }}</span>
             </div>
           </el-form-item>
           <el-form-item :label="$t('settings.stageImage')">
@@ -247,6 +248,7 @@
                 <el-option v-for="m in imageModelsOf()" :key="m" :label="m" :value="m" />
               </el-select>
               <el-button size="small" @click="doSaveStage">{{ $t('settings.saveRoute') }}</el-button>
+              <span class="capability-hint">{{ capabilitySummary('image') }}</span>
             </div>
           </el-form-item>
           <el-form-item label="备用生图模型">
@@ -268,6 +270,7 @@
                 <el-option v-for="m in videoModelsOf()" :key="m" :label="m" :value="m" />
               </el-select>
               <el-button size="small" @click="doSaveStage">{{ $t('settings.saveRoute') }}</el-button>
+              <span class="capability-hint">{{ capabilitySummary('video') }}</span>
             </div>
           </el-form-item>
           <el-form-item :label="$t('settings.stageVoice')">
@@ -279,6 +282,7 @@
                 <el-option v-for="m in voiceModelsOf()" :key="m" :label="m" :value="m" />
               </el-select>
               <el-button size="small" @click="doSaveStage">{{ $t('settings.saveRoute') }}</el-button>
+              <span class="capability-hint">{{ capabilitySummary('voice') }}</span>
             </div>
           </el-form-item>
           <p class="hint" style="margin-left:110px">{{ $t('settings.routeFootHint') }}</p>
@@ -360,23 +364,45 @@
   </div>
 </template>
 
-<script setup>
+<script setup lang="ts">
+import type { ModelDescriptor } from '@aigc-video/contracts'
 import { ref, reactive, computed, onMounted } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { useI18n } from 'vue-i18n'
-import { persistLocale } from '../locales'
+import { persistLocale, type SupportedLocale } from '../locales'
 import { CircleCheck, Warning, CircleClose } from '@element-plus/icons-vue'
-import api from '../api'
 import ProviderCredentialRow from '../components/ProviderCredentialRow.vue'
 import {
   getSettings, getPresets, saveDefaults, saveSettings, clearProviderKey, testApi,
   checkDir, getStorageStats, cleanTemp,
   exportConfig, importConfig, getBackup, restoreBackup, getHealth,
   getVersion, getDiagnostics, checkUpdate,
+  BackupEnvelopeSchema, ProviderHealthItemSchema,
+  type ApiTestResult, type DeepseekPreset, type DirectoryCheckResult,
+  type HealthData, type JsonObject, type SettingsData, type StorageStats,
 } from '../api/settings'
 import {
-  getProviders, getStageModels, saveStageModels, saveCredentials, testProvider, resetUsage,
+  getProviders, getModelCatalog, getImageModels, getStageModels, saveStageModels, saveCredentials,
+  testProvider, resetUsage, type ImageModelOption, type ProviderGroups, type ProviderTestResult,
+  type ProviderView, type StageSelection,
 } from '../api/providers'
+
+type StageKey = 'script' | 'image' | 'video' | 'voice'
+type GuideKind = 'llm' | 't2i' | 't2v' | 'tts'
+type StageRoutes = Record<StageKey, StageSelection>
+type CredentialField = 'apiKey' | 'baseUrl' | 'accessKey' | 'secretKey' | 'appId' | 'cluster'
+type CredentialDraft = Partial<Record<CredentialField, string>>
+
+interface SelectOption { value: string; label: string }
+interface ImageModelSelectOption { key: string; label: string }
+
+function errorMessage(cause: unknown, fallback = ''): string {
+  return cause instanceof Error ? cause.message : fallback || String(cause)
+}
+
+function isJsonObject(value: unknown): value is JsonObject {
+  return value !== null && typeof value === 'object' && !Array.isArray(value)
+}
 
 const STYLES = computed(() => [
   { label: t('settings.styleRealistic'), value: '写实' },
@@ -404,7 +430,7 @@ const updateChecking = ref(false)
 
 // —— 界面语言切换 ——
 const { t, locale } = useI18n()
-function changeLocale(val) {
+function changeLocale(val: SupportedLocale): void {
   locale.value = val
   persistLocale(val)
   ElMessage.success(t('settings.langSwitched'))
@@ -414,23 +440,23 @@ function changeLocale(val) {
 const checkingDir = ref(false)
 const cleaning = ref(false)
 const presetIdx = ref(0)
-const presets = ref([])
-const storage = ref(null)
+const presets = ref<DeepseekPreset[]>([])
+const storage = ref<StorageStats | null>(null)
 const runtimeSettingsFile = ref('')
 
 // —— 健康检查 ——
-const health = ref({ overall: 'ok', checks: [], checked_at: 0 })
+const health = ref<HealthData>({ overall: 'ok', checks: [], checked_at: 0 })
 const healthLoading = ref(false)
 const overall = computed(() => health.value.overall || 'ok')
-const overallText = computed(() => ({ ok: t('settings.statusOk'), warn: t('settings.statusWarn'), error: t('settings.statusError') }[overall.value] || t('settings.statusUnknown')))
-const overallTagType = computed(() => ({ ok: 'success', warn: 'warning', error: 'danger' }[overall.value] || 'info'))
+const overallText = computed(() => ({ ok: t('settings.statusOk'), warn: t('settings.statusWarn'), error: t('settings.statusError') })[overall.value])
+const overallTagType = computed(() => ({ ok: 'success', warn: 'warning', error: 'danger' } as const)[overall.value])
 
 async function loadHealth() {
   healthLoading.value = true
   try {
     health.value = await getHealth()
-  } catch (e) {
-    ElMessage.error(t('settings.healthFailed', { msg: (e?.message || t('settings.backendUnreachable')) }))
+  } catch (cause: unknown) {
+    ElMessage.error(t('settings.healthFailed', { msg: errorMessage(cause, t('settings.backendUnreachable')) }))
   } finally {
     healthLoading.value = false
   }
@@ -439,38 +465,41 @@ async function loadHealth() {
 // AI 服务接入明细（第四期）：从 health 的 providers 检查项取 items
 const providerItems = computed(() => {
   const p = (health.value.checks || []).find((c) => c.key === 'providers')
-  return (p && p.metrics && p.metrics.items) || []
+  const rawItems = isJsonObject(p?.metrics) ? p.metrics.items : undefined
+  const parsed = ProviderHealthItemSchema.array().safeParse(rawItems)
+  return parsed.success ? parsed.data : []
 })
 async function doResetUsage() {
   try {
     await resetUsage()
     ElMessage.success(t('settings.usageReset'))
     await loadHealth()
-  } catch (e) { ElMessage.error(t('settings.resetFailed', { msg: (e?.message || '') })) }
+  } catch (cause: unknown) { ElMessage.error(t('settings.resetFailed', { msg: errorMessage(cause) })) }
 }
 
 // —— 模型路由（升级方案 v3 第一期 LLM + 第二期 配图）——
-const llmProviders = ref([])
-const imageProviders = ref([]) // 配图阶段可选 provider（本地 + 云端 t2i）
-const imageModelOptions = ref([]) // 常规设置「默认图片模型」下拉：与一键成片同源（/ai/image-models）
-const videoProviders = ref([]) // 视频阶段可选 provider（静图运镜 + 云端 t2v）
-const voiceProviders = ref([]) // 配音阶段可选 provider（Edge 本地 + 云端 tts）
-const volcanoTtsProviders = ref([]) // 火山豆包语音（需 AppID+Token+Cluster 独立凭证）
-const klingProviders = ref([]) // 可灵视频（需 Access Key + Secret Key 独立 JWT 鉴权）
+const llmProviders = ref<ProviderView[]>([])
+const imageProviders = ref<ProviderView[]>([]) // 配图阶段可选 provider（本地 + 云端 t2i）
+const imageModelOptions = ref<ImageModelSelectOption[]>([]) // 常规设置「默认图片模型」下拉：与一键成片同源（/ai/image-models）
+const videoProviders = ref<ProviderView[]>([]) // 视频阶段可选 provider（静图运镜 + 云端 t2v）
+const voiceProviders = ref<ProviderView[]>([]) // 配音阶段可选 provider（Edge 本地 + 云端 tts）
+const volcanoTtsProviders = ref<ProviderView[]>([]) // 火山豆包语音（需 AppID+Token+Cluster 独立凭证）
+const klingProviders = ref<ProviderView[]>([]) // 可灵视频（需 Access Key + Secret Key 独立 JWT 鉴权）
 const credentialProviders = computed(() => {
-  const seen = new Set()
+  const seen = new Set<string>()
   return [...llmProviders.value, ...volcanoTtsProviders.value, ...klingProviders.value]
     .filter((provider) => provider?.key && !seen.has(provider.key) && seen.add(provider.key))
 })
-const guideGroups = ref({}) // 选型指南原始分组数据（含 free/note），供分级展示
-const stage = reactive({ script: { provider: 'deepseek', model: '' }, image: { provider: 'pollinations', model: 'flux' }, video: { provider: 'static', model: '' }, voice: { provider: 'edge', model: '' } })
+const guideGroups = ref<ProviderGroups>({ llm: [], t2i: [], t2v: [], tts: [] }) // 选型指南原始分组数据（含 free/note），供分级展示
+const modelCatalog = ref<ModelDescriptor[]>([]) // 静态能力；运行时可用性继续由 Provider health 单独表达
+const stage = reactive<StageRoutes>({ script: { provider: 'deepseek', model: '' }, image: { provider: 'pollinations', model: 'flux' }, video: { provider: 'static', model: '' }, voice: { provider: 'edge', model: '' } })
 // 备用生图模型链（v1.6.4）：本地 key（flux/turbo…）或 'provider__model' 云端规格
-const imageChain = ref([])
+const imageChain = ref<string[]>([])
 // 所有可选生图模型（本地 + 云端 t2i），供备用链多选
 const allImageModelOptions = computed(() => {
-  const opts = []
+  const opts: SelectOption[] = []
   // 档位标签：帮助用户一眼区分推荐主力与最后保底（v1.6.5）
-  const tierOf = (key, m) => {
+  const tierOf = (key: string, m: string): string => {
     if (key === 'cogview' && m === 'cogview-3-flash') return '⭐推荐'
     if (key === 'cogview') return '次选'
     if (key === 'pollinations' && (m === 'flux' || m === 'turbo' || m === 'flux-realism')) return '保底'
@@ -488,13 +517,13 @@ const allImageModelOptions = computed(() => {
 
 // 模型选型指南：把 4 类 provider 整理成分级清单（免费档优先排前，便于用户按需选型）
 const guideKinds = computed(() => {
-  const kindLabels = {
+  const kindLabels: Record<GuideKind, string> = {
     llm: t('settings.guideKindLlm'),
     t2i: t('settings.guideKindT2i'),
     t2v: t('settings.guideKindT2v'),
     tts: t('settings.guideKindTts'),
   }
-  const order = ['llm', 't2i', 't2v', 'tts']
+  const order: GuideKind[] = ['llm', 't2i', 't2v', 'tts']
   return order.map((kind) => {
     const list = (guideGroups.value[kind] || []).slice()
     // 免费档排前，已配置次之
@@ -502,99 +531,129 @@ const guideKinds = computed(() => {
     return { kind, label: kindLabels[kind] || kind, items: list }
   }).filter((g) => g.items.length)
 })
-const cred = reactive({})
-const provTesting = reactive({})
-const provTestResult = reactive({})
+const cred = reactive<Record<string, CredentialDraft>>({})
+const provTesting = reactive<Record<string, boolean>>({})
+const provTestResult = reactive<Record<string, ProviderTestResult | undefined>>({})
 
-function updateCredentialField(key, { field, value }) {
-  if (!cred[key]) cred[key] = {}
-  cred[key][field] = value
+function updateCredentialField(key: string, { field, value }: { field: CredentialField; value: string }): void {
+  credentialOf(key)[field] = value
 }
 
-function modelsOf(stageKey) {
+function modelsOf(stageKey: StageKey): string[] {
   const sel = stage[stageKey]
   if (!sel) return []
   const p = llmProviders.value.find((x) => x.key === sel.provider)
   return p ? p.models : []
 }
-function onStageProviderChange(stageKey) {
+function onStageProviderChange(stageKey: StageKey): void {
   const list = modelsOf(stageKey)
-  if (list.length && !list.includes(stage[stageKey].model)) stage[stageKey].model = list[0]
+  const first = list[0]
+  if (first && !list.includes(stage[stageKey].model)) stage[stageKey].model = first
 }
 // 配图阶段：provider → 模型列表
-function imageModelsOf() {
+function imageModelsOf(): string[] {
   const p = imageProviders.value.find((x) => x.key === stage.image.provider)
   return p ? p.models : []
 }
-function onImageProviderChange() {
+function onImageProviderChange(): void {
   const list = imageModelsOf()
-  if (list.length && !list.includes(stage.image.model)) stage.image.model = list[0]
+  const first = list[0]
+  if (first && !list.includes(stage.image.model)) stage.image.model = first
 }
 // 视频阶段：provider → 模型列表（static 无模型）
-function videoModelsOf() {
+function videoModelsOf(): string[] {
   const p = videoProviders.value.find((x) => x.key === stage.video.provider)
   return p ? (p.models || []) : []
 }
-function onVideoProviderChange() {
+function onVideoProviderChange(): void {
   const list = videoModelsOf()
   if (stage.video.provider === 'static') { stage.video.model = ''; return }
-  if (list.length && !list.includes(stage.video.model)) stage.video.model = list[0]
+  const first = list[0]
+  if (first && !list.includes(stage.video.model)) stage.video.model = first
 }
 // 配音阶段：provider → 模型列表（edge 无模型）
-function voiceModelsOf() {
+function voiceModelsOf(): string[] {
   const p = voiceProviders.value.find((x) => x.key === stage.voice.provider)
   return p ? (p.models || []) : []
 }
-function onVoiceProviderChange() {
+function onVoiceProviderChange(): void {
   const list = voiceModelsOf()
   if (stage.voice.provider === 'edge') { stage.voice.model = ''; return }
-  if (list.length && !list.includes(stage.voice.model)) stage.voice.model = list[0]
+  const first = list[0]
+  if (first && !list.includes(stage.voice.model)) stage.voice.model = first
 }
+
+function selectedCatalogModel(stageKey: StageKey): ModelDescriptor | null {
+  const selected = stage[stageKey]
+  if (!selected?.provider) return null
+  return modelCatalog.value.find((item) => item.provider === selected.provider && (
+    item.model === selected.model
+    || (!selected.model && ((selected.provider === 'static' && item.model === 'static') || (selected.provider === 'edge' && item.model === 'edge')))
+  )) || null
+}
+
+function capabilitySummary(stageKey: StageKey): string {
+  const selected = selectedCatalogModel(stageKey)
+  if (!selected) return t('settings.capUnknown')
+  const caps = selected.capabilities || {}
+  const labels = []
+  if (caps.structured_output) labels.push(t('settings.capStructured'))
+  if (caps.image_to_video) labels.push(t('settings.capI2v'))
+  if (caps.negative_prompt) labels.push(t('settings.capNegative'))
+  if (caps.seed) labels.push(t('settings.capSeed'))
+  if (caps.async) labels.push(t('settings.capAsync'))
+  if (stageKey === 'image' && caps.reference_image !== true) labels.push(t('settings.capReferenceText'))
+  return labels.length ? labels.join(' · ') : t('settings.capBasic')
+}
+
 async function loadModels() {
   try {
-    const [groups, sm, imgModels] = await Promise.all([getProviders(), getStageModels(), api.get('/ai/image-models')])
+    const [groups, catalog, sm, imgModels] = await Promise.all([
+      getProviders(), getModelCatalog(), getStageModels(), getImageModels(),
+    ])
+    modelCatalog.value = catalog
     // 选型指南：保留原始分组（含 free/note），供「模型选型指南」面板分级展示
-    guideGroups.value = groups || {}
-    llmProviders.value = groups.llm || []
+    guideGroups.value = groups
+    llmProviders.value = groups.llm
     // 常规设置「默认图片模型」下拉：加载实际后端可用模型（与一键成片同源）
-    imageModelOptions.value = (imgModels.data.data || [])
-      .filter(m => m.cloud !== true || m.configured) // 过滤掉未配置的云端模型
-      .map(m => ({ key: m.key, label: m.label }))
+    imageModelOptions.value = imgModels
+      .filter((model: ImageModelOption) => model.cloud !== true || model.configured) // 过滤掉未配置的云端模型
+      .map((model) => ({ key: model.key, label: model.label }))
     for (const p of llmProviders.value) {
-      if (!cred[p.key]) cred[p.key] = { apiKey: '', baseUrl: '' }
-      if (!cred[p.key].baseUrl && p.runtimeBaseUrl) cred[p.key].baseUrl = p.runtimeBaseUrl
+      const draft = credentialOf(p.key, { apiKey: '', baseUrl: '' })
+      if (!draft.baseUrl && p.runtimeBaseUrl) draft.baseUrl = p.runtimeBaseUrl
       if (!(p.key in provTesting)) provTesting[p.key] = false
     }
     // 配图 provider：Pollinations（本地免费）+ 全部云端 t2i（含未配置，未配置加标记提示去填 Key）
     const t2i = groups.t2i || []
     imageProviders.value = [
-      { key: 'pollinations', label: t('settings.pollinationsLabel'), models: ['flux', 'flux-realism', 'turbo'] },
+      { key: 'pollinations', label: t('settings.pollinationsLabel'), models: ['flux', 'flux-realism', 'turbo'], configured: true },
       ...t2i.map((p) => ({ key: p.key, label: p.label + (p.free ? t('settings.freeTierParen') : t('settings.paidTierParen')) + (p.configured ? '' : t('settings.notConfiguredParen')), models: p.models, configured: p.configured })),
     ]
     // 视频 provider：静图运镜（本地默认）+ 全部云端 t2v（含未配置）
     const t2v = groups.t2v || []
     videoProviders.value = [
-      { key: 'static', label: t('settings.staticLabel'), models: [] },
+      { key: 'static', label: t('settings.staticLabel'), models: [], configured: true },
       ...t2v.map((p) => ({ key: p.key, label: t('settings.aiVideoPrefix') + p.label + (p.free ? t('settings.freeTierParen') : t('settings.paidTierParen')) + (p.configured ? '' : t('settings.notConfiguredParen')), models: p.models, configured: p.configured })),
     ]
     // 可灵 Kling 需独立凭证（Access Key + Secret Key，JWT 签名鉴权），单独列出供「视频凭证」区配置
     klingProviders.value = t2v.filter((p) => p.auth === 'access_secret')
     for (const p of klingProviders.value) {
-      if (!cred[p.key]) cred[p.key] = { accessKey: '', secretKey: '', baseUrl: '' }
-      if (!cred[p.key].baseUrl && p.runtimeBaseUrl) cred[p.key].baseUrl = p.runtimeBaseUrl
+      const draft = credentialOf(p.key, { accessKey: '', secretKey: '', baseUrl: '' })
+      if (!draft.baseUrl && p.runtimeBaseUrl) draft.baseUrl = p.runtimeBaseUrl
       if (!(p.key in provTesting)) provTesting[p.key] = false
     }
     // 配音 provider：Edge（本地默认免费）+ 全部云端 tts（含未配置）
     const tts = groups.tts || []
     voiceProviders.value = [
-      { key: 'edge', label: t('settings.edgeLabel'), models: [] },
+      { key: 'edge', label: t('settings.edgeLabel'), models: [], configured: true },
       ...tts.map((p) => ({ key: p.key, label: p.label + (p.free ? t('settings.freeTierParen') : t('settings.paidTierParen')) + (p.configured ? '' : t('settings.notConfiguredParen')), models: p.models, configured: p.configured })),
     ]
     // 火山豆包语音需独立凭证（AppID+Token+Cluster），单独列出供「配音凭证」区配置
     volcanoTtsProviders.value = tts.filter((p) => p.key === 'volcano_tts')
     for (const p of volcanoTtsProviders.value) {
-      if (!cred[p.key]) cred[p.key] = { apiKey: '', baseUrl: '', appId: '', cluster: '' }
-      if (!cred[p.key].baseUrl && p.runtimeBaseUrl) cred[p.key].baseUrl = p.runtimeBaseUrl
+      const draft = credentialOf(p.key, { apiKey: '', baseUrl: '', appId: '', cluster: '' })
+      if (!draft.baseUrl && p.runtimeBaseUrl) draft.baseUrl = p.runtimeBaseUrl
       if (!(p.key in provTesting)) provTesting[p.key] = false
     }
     if (sm.script) Object.assign(stage.script, sm.script)
@@ -605,10 +664,10 @@ async function loadModels() {
     if (Array.isArray(sm.imageChain)) {
       imageChain.value = sm.imageChain.map((it) =>
         typeof it === 'string' ? it : (it && it.provider ? (it.provider === 'pollinations' ? it.model : `${it.provider}__${it.model}`) : '')
-      ).filter(Boolean)
+      ).filter((item): item is string => typeof item === 'string' && item.length > 0)
     }
-  } catch (e) {
-    ElMessage.error(t('settings.loadModelsFailed', { msg: (e?.message || '') }))
+  } catch (cause: unknown) {
+    ElMessage.error(t('settings.loadModelsFailed', { msg: errorMessage(cause) }))
   }
 }
 async function doSaveStage() {
@@ -621,60 +680,79 @@ async function doSaveStage() {
       imageChain: imageChain.value.slice(),
     })
     ElMessage.success(t('settings.routeSaved'))
-  } catch (e) { ElMessage.error(t('settings.saveFailed', { msg: (e?.message || '') })) }
+  } catch (cause: unknown) { ElMessage.error(t('settings.saveFailed', { msg: errorMessage(cause) })) }
 }
-async function doSaveCred(key) {
+async function doSaveCred(key: string): Promise<void> {
   try {
-    const payload = { provider: key }
-    if (cred[key].apiKey !== undefined) payload.apiKey = cred[key].apiKey
-    if (cred[key].baseUrl !== undefined) payload.baseUrl = cred[key].baseUrl
+    const draft = credentialOf(key)
+    const payload: JsonObject = { provider: key }
+    if (draft.apiKey !== undefined) payload.apiKey = draft.apiKey
+    if (draft.baseUrl !== undefined) payload.baseUrl = draft.baseUrl
     // 火山 TTS：额外提交 AppID + Cluster
-    if (cred[key].appId !== undefined) payload.appId = cred[key].appId
-    if (cred[key].cluster !== undefined) payload.cluster = cred[key].cluster
+    if (draft.appId !== undefined) payload.appId = draft.appId
+    if (draft.cluster !== undefined) payload.cluster = draft.cluster
     // 可灵 Kling：JWT 鉴权，提交 Access Key + Secret Key（无 apiKey 字段）
-    if (cred[key].accessKey !== undefined) payload.accessKey = cred[key].accessKey
-    if (cred[key].secretKey !== undefined) payload.secretKey = cred[key].secretKey
+    if (draft.accessKey !== undefined) payload.accessKey = draft.accessKey
+    if (draft.secretKey !== undefined) payload.secretKey = draft.secretKey
     await saveCredentials(payload)
     ElMessage.success(t('settings.credSaved'))
-    cred[key].apiKey = ''
-    if (cred[key].secretKey !== undefined) cred[key].secretKey = ''
-    if (cred[key].accessKey !== undefined) cred[key].accessKey = ''
+    draft.apiKey = ''
+    if (draft.secretKey !== undefined) draft.secretKey = ''
+    if (draft.accessKey !== undefined) draft.accessKey = ''
     await loadModels()
     await loadHealth()
-  } catch (e) { ElMessage.error(t('settings.saveFailed', { msg: (e?.message || '') })) }
+  } catch (cause: unknown) { ElMessage.error(t('settings.saveFailed', { msg: errorMessage(cause) })) }
 }
-async function doClearCred(key) {
+async function doClearCred(key: string): Promise<void> {
   try {
     await ElMessageBox.confirm(t('settings.clearSecretConfirm'), t('settings.dangerOp'), { type: 'warning' })
     await clearProviderKey(key)
-    if (cred[key].apiKey !== undefined) cred[key].apiKey = ''
-    if (cred[key].accessKey !== undefined) cred[key].accessKey = ''
-    if (cred[key].secretKey !== undefined) cred[key].secretKey = ''
+    const draft = credentialOf(key)
+    if (draft.apiKey !== undefined) draft.apiKey = ''
+    if (draft.accessKey !== undefined) draft.accessKey = ''
+    if (draft.secretKey !== undefined) draft.secretKey = ''
     ElMessage.success(t('settings.secretCleared'))
     await loadModels()
     await loadHealth()
-  } catch (e) {
-    if (e !== 'cancel') ElMessage.error(t('settings.saveFailed', { msg: (e?.message || '') }))
+  } catch (cause: unknown) {
+    if (cause !== 'cancel') ElMessage.error(t('settings.saveFailed', { msg: errorMessage(cause) }))
   }
 }
-async function doTest(key) {
+async function doTest(key: string): Promise<void> {
   provTesting[key] = true
   try {
     const r = await testProvider({ provider: key, model: stage.script.provider === key ? stage.script.model : undefined })
     provTestResult[key] = r
     ElMessage[r.ok ? 'success' : 'error'](r.ok ? t('settings.connOk', { ms: r.latency_ms }) : t('settings.connFail', { msg: r.error }))
-  } catch (e) {
-    provTestResult[key] = { ok: false, error: e?.message || t('settings.reqFailed') }
+  } catch (cause: unknown) {
+    provTestResult[key] = { ok: false, error: errorMessage(cause, t('settings.reqFailed')) }
   } finally {
     provTesting[key] = false
   }
 }
-const dirCheckResult = ref(null)
-const testing = reactive({ deepseek: false, pollinations: false })
-const testResult = reactive({ deepseek: null, pollinations: null })
+const dirCheckResult = ref<DirectoryCheckResult | null>(null)
+const testing = reactive<Record<'deepseek' | 'pollinations', boolean>>({ deepseek: false, pollinations: false })
+const testResult = reactive<Record<'deepseek' | 'pollinations', ApiTestResult | null>>({ deepseek: null, pollinations: null })
+
+function credentialOf(key: string, defaults: CredentialDraft = {}): CredentialDraft {
+  if (!cred[key]) cred[key] = { ...defaults }
+  return cred[key]
+}
+
+interface SettingsForm {
+  uploadDir: string
+  ffmpegPath: string
+  defaultImageModel: string
+  defaultStyle: string
+  defaultVoice: string
+  defaultDuration: string
+  deepseek: { apiKey: string; baseUrl: string; model: string }
+  pollinations: { timeout: number; retries: number }
+  pacing: { tightPace: boolean; tightTail: number; standardTail: number; noVoiceTail: number }
+}
 
 // 表单：与后端配置结构一致，含嵌套对象
-const form = reactive({
+const form = reactive<SettingsForm>({
   uploadDir: './uploads',
   ffmpegPath: 'ffmpeg',
   defaultImageModel: 'flux',
@@ -688,7 +766,7 @@ const form = reactive({
 })
 
 // 存储统计表格行
-const STORAGE_LABELS = computed(() => ({ images: t('settings.catImages'), audio: t('settings.catAudio'), videos: t('settings.catVideos'), subtitles: t('settings.catSubtitles'), temp: t('settings.catTemp') }))
+const STORAGE_LABELS = computed<Record<string, string>>(() => ({ images: t('settings.catImages'), audio: t('settings.catAudio'), videos: t('settings.catVideos'), subtitles: t('settings.catSubtitles'), temp: t('settings.catTemp') }))
 const storageRows = computed(() => {
   if (!storage.value) return []
   return Object.entries(storage.value.breakdown).map(([k, v]) => ({
@@ -698,7 +776,7 @@ const storageRows = computed(() => {
   }))
 })
 
-function fmtSize(bytes) {
+function fmtSize(bytes: number): string {
   if (!bytes) return '0 B'
   const u = ['B', 'KB', 'MB', 'GB']
   let i = 0, n = bytes
@@ -707,7 +785,7 @@ function fmtSize(bytes) {
 }
 
 // 把后端配置填入表单（深合并，保留嵌套结构）
-function fillForm(data) {
+function fillForm(data: SettingsData): void {
   runtimeSettingsFile.value = data?._runtime?.settingsFile || runtimeSettingsFile.value
   form.uploadDir = data.uploadDir ?? form.uploadDir
   form.ffmpegPath = data.ffmpegPath ?? form.ffmpegPath
@@ -720,7 +798,7 @@ function fillForm(data) {
   if (data.pacing) Object.assign(form.pacing, data.pacing)
 }
 
-function applyPreset(i) {
+function applyPreset(i: number): void {
   const p = presets.value[i]
   if (!p) return
   if (p.baseUrl) form.deepseek.baseUrl = p.baseUrl
@@ -731,16 +809,22 @@ async function save() {
   saving.value = true
   try {
     // 脱敏占位密钥（**** 开头）不回传，避免覆盖真实值
-    const payload = JSON.parse(JSON.stringify(form))
-    if (payload.deepseek.apiKey && payload.deepseek.apiKey.startsWith('****')) {
-      delete payload.deepseek.apiKey
+    const deepseek: CredentialDraft & { model: string } = { ...form.deepseek }
+    if (deepseek.apiKey?.startsWith('****')) {
+      delete deepseek.apiKey
+    }
+    const payload: JsonObject = {
+      ...form,
+      deepseek,
+      pollinations: { ...form.pollinations },
+      pacing: { ...form.pacing },
     }
     const res = activeTab.value === 'general'
       ? await saveDefaults({
-        defaultImageModel: payload.defaultImageModel,
-        defaultStyle: payload.defaultStyle,
-        defaultVoice: payload.defaultVoice,
-        defaultDuration: payload.defaultDuration,
+        defaultImageModel: form.defaultImageModel,
+        defaultStyle: form.defaultStyle,
+        defaultVoice: form.defaultVoice,
+        defaultDuration: form.defaultDuration,
       })
       : await saveSettings(payload)
     if (res.needRestart) {
@@ -750,14 +834,14 @@ async function save() {
     }
     // 重新拉取脱敏后的最新值
     fillForm(await getSettings())
-  } catch (e) {
-    ElMessage.error(t('settings.saveFailed', { msg: (e.response?.data?.message || e.message) }))
+  } catch (cause: unknown) {
+    ElMessage.error(t('settings.saveFailed', { msg: errorMessage(cause) }))
   } finally {
     saving.value = false
   }
 }
 
-async function test(type) {
+async function test(type: 'deepseek' | 'pollinations'): Promise<void> {
   testing[type] = true
   testResult[type] = null
   try {
@@ -766,8 +850,8 @@ async function test(type) {
       // 统一入口后，API 页只测试已保存 DeepSeek 凭证，避免临时输入与落盘配置混淆。
     }
     testResult[type] = await testApi(payload)
-  } catch (e) {
-    testResult[type] = { ok: false, message: e.message }
+  } catch (cause: unknown) {
+    testResult[type] = { ok: false, message: errorMessage(cause) }
   } finally {
     testing[type] = false
   }
@@ -787,8 +871,8 @@ async function checkDirNow() {
       } catch { /* 用户取消 */ }
     }
     dirCheckResult.value = r
-  } catch (e) {
-    dirCheckResult.value = { ok: false, message: e.message }
+  } catch (cause: unknown) {
+    dirCheckResult.value = { ok: false, message: errorMessage(cause) }
   } finally {
     checkingDir.value = false
   }
@@ -804,8 +888,8 @@ async function doCleanTemp() {
     const res = await cleanTemp()
     ElMessage.success(res.message || t('settings.cleaned'))
     await loadStorage()
-  } catch (e) {
-    ElMessage.error(t('settings.cleanFailed', { msg: e.message }))
+  } catch (cause: unknown) {
+    ElMessage.error(t('settings.cleanFailed', { msg: errorMessage(cause) }))
   } finally {
     cleaning.value = false
   }
@@ -820,8 +904,8 @@ onMounted(async () => {
     loadHealth()
     loadModels()
     getVersion().then(v => { if (v && v.version) appVersion.value = v.version }).catch(() => {})
-  } catch (e) {
-    ElMessage.error(t('settings.loadSettingsFailed', { msg: e.message }))
+  } catch (cause: unknown) {
+    ElMessage.error(t('settings.loadSettingsFailed', { msg: errorMessage(cause) }))
   }
 })
 
@@ -839,7 +923,7 @@ async function doCheckUpdate() {
     } else {
       ElMessage.success(t('settings.upToDate', { v: (r && r.current) || appVersion.value }))
     }
-  } catch (e) {
+  } catch {
     ElMessage.error(t('settings.checkUpdateFailed'))
   } finally {
     updateChecking.value = false
@@ -867,19 +951,19 @@ async function showDiagnostics() {
       t('settings.diagnostics'),
       { dangerouslyUseHTMLString: true, confirmButtonText: t('settings.copyLog'), callback: () => copyText(text) }
     )
-  } catch (e) {
+  } catch {
     ElMessage.error(t('settings.diagnosticsFailed'))
   }
 }
 
-function escapeHtml(s) {
+function escapeHtml(s: unknown): string {
   return String(s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
 }
-function copyText(text) {
+function copyText(text: string): void {
   try {
     navigator.clipboard.writeText(text)
     ElMessage.success(t('settings.copied'))
-  } catch (e) { /* 剪贴板不可用时静默 */ }
+  } catch { /* 剪贴板不可用时静默 */ }
 }
 
 function showFeedback() {
@@ -912,10 +996,10 @@ function showPrivacy() {
 // ===== F8 备份与迁移 =====
 const backupLoading = ref(false)
 const restoreLoading = ref(false)
-const fileInput = ref(null)
-let pickMode = '' // 'restore' | 'import'
+const fileInput = ref<HTMLInputElement | null>(null)
+let pickMode: 'restore' | 'import' | '' = ''
 
-function downloadJson(obj, filename) {
+function downloadJson(obj: unknown, filename: string): void {
   const blob = new Blob([JSON.stringify(obj, null, 2)], { type: 'application/json' })
   const url = URL.createObjectURL(blob)
   const a = document.createElement('a')
@@ -932,8 +1016,8 @@ async function doBackup() {
     const stamp = new Date().toISOString().slice(0, 19).replace(/[:T]/g, '-')
     downloadJson(env, `aigc-backup-${stamp}.aigcbak`)
     ElMessage.success(t('settings.backupExported'))
-  } catch (e) {
-    ElMessage.error(t('settings.backupFailed', { msg: e.message }))
+  } catch (cause: unknown) {
+    ElMessage.error(t('settings.backupFailed', { msg: errorMessage(cause) }))
   } finally {
     backupLoading.value = false
   }
@@ -945,23 +1029,25 @@ async function doExportConfig() {
     const stamp = new Date().toISOString().slice(0, 10)
     downloadJson(data, `aigc-config-${stamp}.json`)
     ElMessage.success(t('settings.configExported'))
-  } catch (e) {
-    ElMessage.error(t('settings.exportFailed', { msg: e.message }))
+  } catch (cause: unknown) {
+    ElMessage.error(t('settings.exportFailed', { msg: errorMessage(cause) }))
   }
 }
 
-function pickRestore() { pickMode = 'restore'; fileInput.value && fileInput.value.click() }
-function pickImportConfig() { pickMode = 'import'; fileInput.value && fileInput.value.click() }
+function pickRestore(): void { pickMode = 'restore'; fileInput.value?.click() }
+function pickImportConfig(): void { pickMode = 'import'; fileInput.value?.click() }
 
-async function onFilePicked(e) {
-  const file = e.target.files && e.target.files[0]
-  e.target.value = '' // 允许重复选同一文件
+async function onFilePicked(event: Event): Promise<void> {
+  const input = event.target instanceof HTMLInputElement ? event.target : null
+  const file = input?.files?.[0]
+  if (input) input.value = '' // 允许重复选同一文件
   if (!file) return
-  let obj
+  let obj: unknown
   try {
     obj = JSON.parse(await file.text())
   } catch {
-    return ElMessage.error(t('settings.invalidJson'))
+    ElMessage.error(t('settings.invalidJson'))
+    return
   }
   if (pickMode === 'restore') {
     try {
@@ -969,25 +1055,34 @@ async function onFilePicked(e) {
     } catch { return }
     restoreLoading.value = true
     try {
-      const r = await restoreBackup(obj)
+      const parsed = BackupEnvelopeSchema.safeParse(obj)
+      if (!parsed.success) {
+        ElMessage.error(t('settings.invalidJson'))
+        return
+      }
+      const r = await restoreBackup(parsed.data)
       ElMessage.success(r.message || t('settings.restored'))
       const [cfg] = await Promise.all([getSettings()])
       fillForm(cfg)
       await loadStorage()
-    } catch (err) {
-      ElMessage.error(t('settings.restoreFailed', { msg: (err.response?.data?.message || err.message) }))
+    } catch (cause: unknown) {
+      ElMessage.error(t('settings.restoreFailed', { msg: errorMessage(cause) }))
     } finally {
       restoreLoading.value = false
     }
   } else {
-    const cfg = obj.config || obj
+    const cfg = isJsonObject(obj) && isJsonObject(obj.config) ? obj.config : obj
+    if (!isJsonObject(cfg)) {
+      ElMessage.error(t('settings.invalidJson'))
+      return
+    }
     try {
       await importConfig(cfg)
       ElMessage.success(t('settings.configImported'))
       const [fresh] = await Promise.all([getSettings()])
       fillForm(fresh)
-    } catch (err) {
-      ElMessage.error(t('settings.importFailed', { msg: (err.response?.data?.message || err.message) }))
+    } catch (cause: unknown) {
+      ElMessage.error(t('settings.importFailed', { msg: errorMessage(cause) }))
     }
   }
 }

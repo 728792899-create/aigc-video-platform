@@ -289,7 +289,8 @@
   </div>
 </template>
 
-<script setup>
+<script setup lang="ts">
+import type { Project } from '@aigc-video/contracts'
 import { ref, computed, onMounted, onUnmounted, nextTick } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { ElMessage, ElMessageBox } from 'element-plus'
@@ -302,40 +303,115 @@ import WorkbenchGuide from '../components/WorkbenchGuide.vue'
 import CreativeVideoPlayer from '../components/CreativeVideoPlayer.vue'
 import ProjectStageFooter from '../components/ProjectStageFooter.vue'
 import ExportStatusPanel from '../components/ExportStatusPanel.vue'
-import api from '../api'
 import { trackTask } from '../api/tasks'
 import { mediaUrl } from '../api/config'
-import { listPresets, listSnapshots, createSnapshot, restoreSnapshot, deleteSnapshot, batchUpdateStoryboards, suggestDuration, projectExports, getProjectTimeline, getExportLocation } from '../api/features'
+import {
+  listPresets, listSnapshots, createSnapshot, restoreSnapshot, deleteSnapshot, batchUpdateStoryboards,
+  suggestDuration, projectExports, getProjectTimeline, getExportLocation,
+  type ExportLocation, type ExportRecord, type Preset, type ProjectTimeline, type Snapshot,
+} from '../api/features'
 import { displayLocalPath } from '../utils/localPath'
 import { getProviders } from '../api/providers'
-import { getWorkbenchStatus, repairWorkbench } from '../api/projects'
+import { getProject, repairWorkbench, updateProject } from '../api/projects'
+import { getScriptWorkbenchStatus, type WorkbenchAction, type WorkbenchStatus } from '../api/script'
+import { listStoryboardImages, type ImageCandidate } from '../api/images'
+import { selectCandidate } from '../api/assets'
+import {
+  composeQuickPreview,
+  generateStoryboardVoice,
+  listPreviewStoryboards,
+  parseExportResult,
+  reorderPreviewStoryboards,
+  requestStoryboardImage,
+  submitVideoCompose,
+  updatePreviewStoryboard,
+  type ExportResult,
+  type PreviewStoryboard,
+} from '../api/preview'
+
+type PlayMode = 'canvas' | 'video'
+type ActiveVideoSource = 'none' | 'fresh' | 'stale' | 'preview'
+interface ImagePickerState {
+  visible: boolean
+  sbId: string | number | null
+  sceneNo: number
+  images: ImageCandidate[]
+  loading: boolean
+  selectedId: string | number | null
+}
+interface PresetConfig extends Record<string, unknown> {
+  fps?: number
+  transition?: string
+  transitionDuration?: number
+  motion?: string
+  bgmVolume?: number
+  subtitleStyle?: Record<string, unknown>
+  burnSubtitle?: boolean
+}
+interface ExportSettings {
+  ratio?: string
+  resolution?: string
+  format?: string
+  fps?: number
+  quality?: string
+  skipExternalExportCopy?: boolean
+  exportDirectory?: string
+  setAsDefaultExportDirectory?: boolean
+}
+interface SubtitleWord { part?: string; word?: string; start?: number; end?: number }
+interface SubtitleCue { text: string; start: number; end: number }
+interface SubtitleEffectState {
+  effect: string
+  p: number
+  durMs: number
+  elapsedMs: number
+}
+interface TimelineDurationChange {
+  id: string | number
+  duration?: number
+  preview?: boolean
+  commit?: boolean
+}
+interface VideoExportActivationOptions {
+  source?: ActiveVideoSource
+  autoPlay?: boolean
+  bakedSpeed?: number | null
+}
+
+function errorMessage(cause: unknown, fallback = ''): string {
+  return cause instanceof Error ? cause.message : fallback || String(cause)
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return value !== null && typeof value === 'object' && !Array.isArray(value)
+}
 
 const { t } = useI18n()
 const route = useRoute()
 const router = useRouter()
-const projectId = route.params.id
+const projectId = String(route.params.id || '')
 
 // 任务进度跟踪的停止函数（路由切走/组件卸载时调用，关闭 SSE 连接，防泄漏）
-let stopTracking = null
+let stopTracking: (() => void) | null = null
 
-const canvasRef = ref(null)
-const videoRef = ref(null)
-const progressRef = ref(null)
+const canvasRef = ref<HTMLCanvasElement | null>(null)
+const videoRef = ref<HTMLVideoElement | null>(null)
+const progressRef = ref<HTMLElement | null>(null)
 // 预览播放模式：'video' = 播真实合成成片（mp4，与成片库一致，动态）；'canvas' = 草稿模拟（还没成片时）
-const playMode = ref('canvas')
+const playMode = ref<PlayMode>('canvas')
 const projectVideoUrl = ref('')   // 当前项目最新成片的可播放 URL（绝对）
-const projectVideoBakedSpeed = ref(null) // 已知该成片文件自身烘焙的倍速；未知时用播放器模拟当前倍速
-const freshExport = ref(null)
-const staleExport = ref(null)
-const activeVideoSource = ref('none') // none | fresh | stale | preview
+const projectVideoBakedSpeed = ref<number | null>(null) // 已知该成片文件自身烘焙的倍速；未知时用播放器模拟当前倍速
+const freshExport = ref<ExportResult | ExportRecord | null>(null)
+const staleExport = ref<ExportResult | ExportRecord | null>(null)
+const activeVideoSource = ref<ActiveVideoSource>('none') // none | fresh | stale | preview
 const exportFreshnessReason = ref('')
 const realVideoDuration = ref(0)
 const realVideoCurrentTime = ref(0)
 const isRealVideoPlaying = ref(false)
 const playerMuted = ref(false)
 const playerVolume = ref(1)
-const project = ref(null)
-const storyboards = ref([])
+const project = ref<Project | null>(null)
+const storyboards = ref<PreviewStoryboard[]>([])
 const isPlaying = ref(false)
 const currentTime = ref(0)
 const currentSceneIndex = ref(0)
@@ -344,9 +420,9 @@ const exportProgress = ref(0)
 const exportMessage = ref('')
 const exportDialogVisible = ref(false) // v1.7 导出设置弹窗
 const exportTaskId = ref('')
-const exportResult = ref(null)
+const exportResult = ref<ExportResult | null>(null)
 const exportError = ref('')
-const exportLocation = ref({
+const exportLocation = ref<ExportLocation>({
   library_directory: '',
   library_url_rule: '/uploads/videos/...',
   default_directory: '',
@@ -356,21 +432,18 @@ const exportLocation = ref({
 const presetFps = computed(() => {
   const p = presets.value.find((x) => x.id === selectedPreset.value)
   if (!p) return 30
-  try {
-    const cfg = typeof p.config === 'string' ? JSON.parse(p.config) : p.config
-    return cfg?.fps || 30
-  } catch { return 30 }
+  return typeof p.config.fps === 'number' ? p.config.fps : 30
 })
 // ② 应用当前配音：一键检测并重生成「音色变了/有台词没配音」的分镜，让预览/导出音频立即生效
 const applyingVoice = ref(false)
 // ⑤ 预设 / ② 字幕开关 / ⑥ 快照
-const presets = ref([])
+const presets = ref<Preset[]>([])
 const selectedPreset = ref('')
 const burnSubtitle = ref(true)
 const karaoke = ref(false)
 const subtitleEffect = ref('none')
 const videoSpeed = ref(1)
-const timeline = ref(null)
+const timeline = ref<ProjectTimeline | null>(null)
 const videoSpeedOptions = [
   { value: 0.5, label: '0.5x' },
   { value: 0.75, label: '0.75x' },
@@ -387,16 +460,16 @@ const subtitleEffectOptions = [
   { value: 'popzoom', label: '放大弹出' },
   { value: 'typewriter', label: '轻快淡现' },
 ]
-const snapshots = ref([])
+const snapshots = ref<Snapshot[]>([])
 const previewing = ref(false) // 快速真合成预览进行中
 const syncingAssets = ref(false)
-const workbenchStatus = ref(null)
+const workbenchStatus = ref<WorkbenchStatus | null>(null)
 const repairingWorkbench = ref(false)
 // ⑨ 真实文生视频画面来源（static = 静图运镜；其余为 t2v provider key，可含 __model）
 const videoMode = ref('static')
-const t2vOptions = ref([])
+const t2vOptions = ref<Array<{ key: string; label: string }>>([])
 // ③ 画幅比例：从项目读取，预览 canvas 与导出共用同一比例
-const RATIO_MAP = {
+const RATIO_MAP: Record<string, { w: number; h: number }> = {
   '16:9': { w: 1280, h: 720 },
   '9:16': { w: 720, h: 1280 },
   '1:1': { w: 1000, h: 1000 },
@@ -414,19 +487,19 @@ const ratioOptions = [
 // ② 即时应用语音修改：记录哪些分镜的配音设置已改但音频还没跟上
 // （仅在 Audio 页实现，此处不需要）
 // ① 时间轴卡片选图弹窗
-const imgPicker = ref({ visible: false, sbId: null, sceneNo: 0, images: [], loading: false, selectedId: null })
+const imgPicker = ref<ImagePickerState>({ visible: false, sbId: null, sceneNo: 0, images: [], loading: false, selectedId: null })
 const aspectRatioCss = computed(() => {
-  const m = RATIO_MAP[ratio.value] || RATIO_MAP['16:9']
+  const m = RATIO_MAP[ratio.value] || { w: 1280, h: 720 }
   return `${m.w} / ${m.h}`
 })
-let animationFrame = null
-let lastTimestamp = null
-const imageCache = {}
+let animationFrame: number | null = null
+let lastTimestamp: number | null = null
+const imageCache: Record<string, HTMLImageElement> = {}
 // v1.6.8：分镜 AI 视频缓存（videoUrl → HTMLVideoElement）。预览时优先用真实视频帧绘制，
 // 取代静态缩略图，让预览画面与导出成片的动效一致。
-const videoCache = {}
+const videoCache: Record<string, HTMLVideoElement> = {}
 // ④ 预览音频同步：单个 Audio 元素，按当前分镜切换 src 并对齐播放进度
-let previewAudio = null
+let previewAudio: HTMLAudioElement | null = null
 let audioSceneIdx = -1
 
 // ④ 音画同步基准（与后端 video.js:imageAudioToSegment 严格对齐）：
@@ -436,7 +509,7 @@ let audioSceneIdx = -1
 const PREVIEW_TAIL = 0.12 // 对齐后端 pacing.tightTail 默认值
 const DEFAULT_DUR = 5     // 对齐后端无配音回退（Number(duration) || 5）
 
-function effectiveDuration(scene) {
+function effectiveDuration(scene: PreviewStoryboard | undefined): number {
   if (!scene) return DEFAULT_DUR
   const fromTimeline = timelineScene(scene)
   if (fromTimeline) return fromTimeline.duration_ms / 1000
@@ -446,7 +519,7 @@ function effectiveDuration(scene) {
   return (scene.duration || DEFAULT_DUR) / videoSpeed.value
 }
 
-function originalEffectiveDuration(scene) {
+function originalEffectiveDuration(scene: PreviewStoryboard | undefined): number {
   if (!scene) return DEFAULT_DUR
   const fromTimeline = timelineScene(scene)
   if (fromTimeline) return fromTimeline.original_duration_ms / 1000
@@ -454,14 +527,14 @@ function originalEffectiveDuration(scene) {
   return scene.duration || DEFAULT_DUR
 }
 
-function timelineScene(scene) {
+function timelineScene(scene: PreviewStoryboard | undefined) {
   if (!scene || !timeline.value?.scenes) return null
   return timeline.value.scenes.find((s) => Number(s.storyboard_id) === Number(scene.id)) || null
 }
 
 // 前端无 ffprobe，用浏览器解码配音 metadata 取真实时长，写回 scene._audioDur 触发时长重算。
 // 失败（CORS/404）静默回退到设定 duration，不阻塞预览。
-function measureAudioDuration(scene) {
+function measureAudioDuration(scene: PreviewStoryboard): void {
   if (!scene || !scene.audioUrl) return
   const a = new Audio()
   a.preload = 'metadata'
@@ -475,14 +548,14 @@ function measureAudioDuration(scene) {
   a.src = scene.audioUrl
 }
 
-function sceneStartTime(idx) {
+function sceneStartTime(idx: number): number {
   let t = 0
   for (let i = 0; i < idx; i++) t += effectiveDuration(storyboards.value[i])
   return t
 }
 
 // 根据当前播放时间，让配音音频跟随当前分镜
-function syncAudio() {
+function syncAudio(): void {
   if (!isPlaying.value) return
   const idx = getSceneAtTime(currentTime.value)
   const scene = storyboards.value[idx]
@@ -508,7 +581,7 @@ function syncAudio() {
   }
 }
 
-function stopAudio() {
+function stopAudio(): void {
   if (previewAudio) { previewAudio.pause(); }
   audioSceneIdx = -1
 }
@@ -542,9 +615,10 @@ const voiceOptions = computed(() => [
 ])
 const batchForm = ref({ motion: '', transition: '', voice: '' })
 
-async function updateTransition(element) {
+async function updateTransition(element: PreviewStoryboard): Promise<void> {
+  if (element.id === undefined) return
   try {
-    await api.put(`/storyboards/${element.id}`, {
+    await updatePreviewStoryboard(element.id, {
       ...element,
       transition: element.transition,
     })
@@ -600,12 +674,13 @@ const targetDurationWarning = computed(() => {
   return `当前真实时间轴约 ${formatTime(originalTotalDuration.value)}，低于项目目标下限 ${formatTime(min)}。建议回到脚本页扩写对白或重新生成后再导出。`
 })
 const chapterSummary = computed(() => {
-  const map = new Map()
+  const map = new Map<number, { index: number; title: string; count: number; duration: number }>()
   storyboards.value.forEach((sb) => {
     const idx = Number(sb.chapter_index || 0)
     if (!idx) return
     if (!map.has(idx)) map.set(idx, { index: idx, title: sb.chapter_title || `第 ${idx} 章`, count: 0, duration: 0 })
     const item = map.get(idx)
+    if (!item) return
     item.count += 1
     item.duration += originalEffectiveDuration(sb)
   })
@@ -642,11 +717,11 @@ const exportStatusText = computed(() => {
 const exportLibraryDisplayPath = computed(() => displayLocalPath(exportLocation.value?.library_directory) || 'uploads/videos')
 const exportDefaultCopyPath = computed(() => displayLocalPath(exportLocation.value?.default_directory))
 
-function goLibrary() {
+function goLibrary(): void {
   router.push('/library')
 }
 
-function playExportedVideo() {
+function playExportedVideo(): void {
   if (!exportResult.value?.file_url) return
   freshExport.value = exportResult.value
   staleExport.value = null
@@ -658,7 +733,7 @@ function playExportedVideo() {
   })
 }
 
-function downloadExportedVideo() {
+function downloadExportedVideo(): void {
   if (!exportResult.value?.file_url) return
   const a = document.createElement('a')
   a.href = mediaUrl(exportResult.value.file_url)
@@ -668,13 +743,13 @@ function downloadExportedVideo() {
   a.remove()
 }
 
-function formatTime(seconds) {
+function formatTime(seconds: number): string {
   const m = Math.floor(seconds / 60)
   const s = Math.floor(seconds % 60)
   return `${m}:${s.toString().padStart(2, '0')}`
 }
 
-function getSceneAtTime(time) {
+function getSceneAtTime(time: number): number {
   let elapsed = 0
   for (let i = 0; i < storyboards.value.length; i++) {
     const dur = effectiveDuration(storyboards.value[i])
@@ -684,9 +759,9 @@ function getSceneAtTime(time) {
   return storyboards.value.length - 1
 }
 
-function loadImage(url) {
+function loadImage(url: string): Promise<HTMLImageElement | null> {
   if (imageCache[url]) return Promise.resolve(imageCache[url])
-  return new Promise((resolve) => {
+  return new Promise<HTMLImageElement | null>((resolve) => {
     const img = new Image()
     img.crossOrigin = 'anonymous'
     img.onload = () => { imageCache[url] = img; resolve(img) }
@@ -697,9 +772,9 @@ function loadImage(url) {
 
 // v1.6.8：加载分镜 AI 视频为隐藏 <video> 元素，作为 canvas 绘制帧源。
 // muted + playsInline 保证可被 drawImage 取帧；不自动播放，由 drawFrame/seek 控制 currentTime。
-function loadVideo(url) {
+function loadVideo(url: string): Promise<HTMLVideoElement | null> {
   if (videoCache[url]) return Promise.resolve(videoCache[url])
-  return new Promise((resolve) => {
+  return new Promise<HTMLVideoElement | null>((resolve) => {
     const v = document.createElement('video')
     v.crossOrigin = 'anonymous'
     v.muted = true
@@ -713,7 +788,7 @@ function loadVideo(url) {
 
 // 剥离字幕中的说话人标记（与后端 tts.stripSpeakerTags 对齐）：
 // （旁白）/(小精灵)/【画外音】/[OS]/「说话人：」/行首独立词
-function stripSpeakerTags(text) {
+function stripSpeakerTags(text: unknown): string {
   let t = String(text || '')
   t = t.replace(/(^|[\n。！？；.!?;])\s*[（(【[][^）)】\]\n]{1,12}[）)】\]][:：]?\s*/g, '$1')
   t = t.replace(/^[^：:\n]{1,8}\s*[：:]\s*/gm, '')
@@ -723,18 +798,18 @@ function stripSpeakerTags(text) {
 
 const SUBTITLE_MAX_CHARS = 15
 
-function subtitleCharLength(text) {
+function subtitleCharLength(text: unknown): number {
   return [...String(text || '').replace(/[^\u4e00-\u9fa5a-zA-Z0-9]/g, '')].length || [...String(text || '')].length
 }
 
-function cleanSubtitleSegment(text) {
+function cleanSubtitleSegment(text: unknown): string {
   return String(text || '').trim().replace(/[，。；、,;]\s*$/, '').trim()
 }
 
-function splitSubtitleSegments(text, maxLen = SUBTITLE_MAX_CHARS) {
+function splitSubtitleSegments(text: unknown, maxLen = SUBTITLE_MAX_CHARS): string[] {
   const normalized = stripSpeakerTags(text).replace(/\s+/g, ' ').trim()
   if (!normalized) return []
-  const segments = []
+  const segments: string[] = []
   let buffer = ''
   for (const ch of [...normalized]) {
     buffer += ch
@@ -750,17 +825,18 @@ function splitSubtitleSegments(text, maxLen = SUBTITLE_MAX_CHARS) {
   return segments
 }
 
-function parseAudioWords(scene) {
+function parseAudioWords(scene: PreviewStoryboard): SubtitleWord[] | null {
   if (!scene?.audio_words) return null
   try {
-    const words = typeof scene.audio_words === 'string' ? JSON.parse(scene.audio_words) : scene.audio_words
-    return Array.isArray(words) && words.length ? words : null
+    const words: unknown = typeof scene.audio_words === 'string' ? JSON.parse(scene.audio_words) : scene.audio_words
+    if (!Array.isArray(words) || !words.length) return null
+    return words.filter((word): word is SubtitleWord => isRecord(word))
   } catch {
     return null
   }
 }
 
-function subtitleSegmentsWithTiming(scene, sceneDuration) {
+function subtitleSegmentsWithTiming(scene: PreviewStoryboard, sceneDuration: number): SubtitleCue[] {
   const text = scene?.subtitle_text || scene?.dialog || ''
   const segments = splitSubtitleSegments(text)
   if (!segments.length) return []
@@ -770,20 +846,23 @@ function subtitleSegmentsWithTiming(scene, sceneDuration) {
     : 1
   const words = parseAudioWords(scene)
   if (words?.length) {
-    const result = []
+    const result: SubtitleCue[] = []
     let wi = 0
     for (const segment of segments) {
       const targetChars = subtitleCharLength(segment)
       let consumed = 0
       const startWi = wi
       while (wi < words.length && consumed < targetChars) {
-        consumed += subtitleCharLength(words[wi].part || words[wi].word || '')
+        const word = words[wi]
+        if (!word) break
+        consumed += subtitleCharLength(word.part || word.word || '')
         wi++
       }
       const slice = words.slice(startWi, Math.max(wi, startWi + 1))
       if (slice.length) {
         const first = slice[0]
         const last = slice[slice.length - 1]
+        if (!first || !last) continue
         const start = Math.max(0, ((Number(first.start) || 0) / 1000) * timingScale)
         const end = ((Number(last.end) || Number(first.end) || 0) / 1000) * timingScale
         result.push({
@@ -806,16 +885,17 @@ function subtitleSegmentsWithTiming(scene, sceneDuration) {
   })
 }
 
-function currentSubtitleCue(scene, localOffset, sceneDuration) {
+function currentSubtitleCue(scene: PreviewStoryboard, localOffset: number, sceneDuration: number): SubtitleCue | null {
   const cues = subtitleSegmentsWithTiming(scene, sceneDuration)
   if (!cues.length) return null
   return cues.find((cue) => localOffset >= cue.start && localOffset < cue.end) || null
 }
 
-function drawFrame() {
+function drawFrame(): void {
   const canvas = canvasRef.value
   if (!canvas) return
   const ctx = canvas.getContext('2d')
+  if (!ctx) return
   ctx.fillStyle = '#0a0a1a'
   ctx.fillRect(0, 0, canvas.width, canvas.height)
   const idx = getSceneAtTime(currentTime.value)
@@ -825,6 +905,7 @@ function drawFrame() {
   let drawnVideo = false
   if (scene && scene.videoUrl && videoCache[scene.videoUrl]) {
     const vid = videoCache[scene.videoUrl]
+    if (!vid) return
     // 把全局播放进度映射到分镜内偏移，并对齐到视频时长（视频可能比分镜设定时长短/长）
     const localOffset = currentTime.value - sceneStartTime(idx)
     const sourceOffset = localOffset * videoSpeed.value
@@ -895,7 +976,7 @@ function drawFrame() {
     const cue = currentSubtitleCue(scene, elapsed, dur)
     if (cue?.text) {
       // 计算字幕特效进度（预览模拟 fade/floatup/slidein/popzoom 的出入场）
-      let fx = null
+      let fx: SubtitleEffectState | null = null
       if (!karaoke.value && subtitleEffect.value && subtitleEffect.value !== 'none') {
         const cueDuration = Math.max(0.1, cue.end - cue.start)
         const cueElapsed = Math.max(0, Math.min(cueDuration, elapsed - cue.start))
@@ -908,7 +989,12 @@ function drawFrame() {
 
 // ④ 在 canvas 上绘制字幕文字（自动换行 + 描边 + 半透明底）
 // fx: { effect, p(0-1场景进度), durMs, elapsedMs } 为 null 时静态显示
-function drawSubtitle(ctx, canvas, text, fx) {
+function drawSubtitle(
+  ctx: CanvasRenderingContext2D,
+  canvas: HTMLCanvasElement,
+  text: string,
+  fx: SubtitleEffectState | null,
+): void {
   const fontSize = Math.round(Math.max(22, Math.min(34, canvas.width / 46)))
   ctx.font = `bold ${fontSize}px "Microsoft YaHei", sans-serif`
   ctx.textAlign = 'center'
@@ -916,7 +1002,7 @@ function drawSubtitle(ctx, canvas, text, fx) {
   // 按画布宽度换行
   const maxWidth = canvas.width * 0.76
   const chars = [...text]
-  const lines = []
+  const lines: string[] = []
   let line = ''
   for (const ch of chars) {
     if (ctx.measureText(line + ch).width > maxWidth && line) { lines.push(line); line = ch }
@@ -960,16 +1046,18 @@ function drawSubtitle(ctx, canvas, text, fx) {
     const ly = y - (displayLines.length - 1 - i) * lineH
     ctx.lineWidth = Math.max(2, fontSize / 13)
     ctx.strokeStyle = 'rgba(0,0,0,0.78)'
-    ctx.strokeText(displayLines[i], cx, ly)
+    const displayLine = displayLines[i]
+    if (!displayLine) continue
+    ctx.strokeText(displayLine, cx, ly)
     ctx.fillStyle = '#FFFFFF'
-    ctx.fillText(displayLines[i], cx, ly)
+    ctx.fillText(displayLine, cx, ly)
   }
   ctx.restore()
 }
 
-function animate(timestamp) {
-  if (!lastTimestamp) lastTimestamp = timestamp
-  const delta = (timestamp - lastTimestamp) / 1000
+function animate(timestamp: number): void {
+  const previousTimestamp = lastTimestamp ?? timestamp
+  const delta = (timestamp - previousTimestamp) / 1000
   lastTimestamp = timestamp
   currentTime.value += delta
   if (currentTime.value >= totalDuration.value) {
@@ -995,13 +1083,16 @@ function togglePlay() {
     if (previewAudio) previewAudio.playbackRate = videoSpeed.value
     animationFrame = requestAnimationFrame(animate)
   } else {
-    cancelAnimationFrame(animationFrame)
+    if (animationFrame !== null) cancelAnimationFrame(animationFrame)
+    animationFrame = null
     stopAudio()
   }
 }
 
-function seekTo(e) {
-  const rect = progressRef.value.getBoundingClientRect()
+function seekTo(e: MouseEvent): void {
+  const progress = progressRef.value
+  if (!progress) return
+  const rect = progress.getBoundingClientRect()
   const pct = (e.clientX - rect.left) / rect.width
   currentTime.value = pct * totalDuration.value
   audioSceneIdx = -1  // 跳转后重新对齐音频
@@ -1009,14 +1100,14 @@ function seekTo(e) {
   syncAudio()
 }
 
-function handlePlayerModeChange(mode) {
+function handlePlayerModeChange(mode: string): void {
   const next = mode === 'real-video' ? 'video' : 'canvas'
   if (next === 'video' && !projectVideoUrl.value) return
   playMode.value = next
   onPlayModeChange(next)
 }
 
-function handlePlayerToggle() {
+function handlePlayerToggle(): void {
   if (playMode.value === 'video') {
     const v = videoRef.value
     if (!v || !projectVideoUrl.value) return
@@ -1030,7 +1121,7 @@ function handlePlayerToggle() {
   togglePlay()
 }
 
-function handlePlayerSeek(time) {
+function handlePlayerSeek(time: number): void {
   if (playMode.value === 'video') {
     seekRealVideo(time)
     return
@@ -1038,7 +1129,7 @@ function handlePlayerSeek(time) {
   onTimelineSeek(time)
 }
 
-function handlePlayerSceneSeek(time) {
+function handlePlayerSceneSeek(time: number): void {
   if (playMode.value === 'video') {
     if (!canMapRealVideoToTimeline.value) {
       handlePlayerModeChange('draft-canvas')
@@ -1055,13 +1146,13 @@ function handlePlayerSceneSeek(time) {
   onTimelineSeek(time)
 }
 
-function seekRealVideo(time) {
+function seekRealVideo(time: number): void {
   const v = videoRef.value
   const duration = realVideoDuration.value || v?.duration || Number(freshExport.value?.duration || staleExport.value?.duration || 0) || 0
   const safe = duration > 0 ? Math.max(0, Math.min(duration, Number(time) || 0)) : Math.max(0, Number(time) || 0)
   realVideoCurrentTime.value = safe
   if (v) {
-    try { v.currentTime = safe } catch (e) { /* 忽略 */ }
+    try { v.currentTime = safe } catch { /* 忽略 */ }
   }
   if (canMapRealVideoToTimeline.value && duration > 0 && totalDuration.value > 0) {
     currentTime.value = (safe / duration) * totalDuration.value
@@ -1069,40 +1160,40 @@ function seekRealVideo(time) {
   }
 }
 
-async function handlePlayerSpeedChange(value) {
+async function handlePlayerSpeedChange(value: number): Promise<void> {
   videoSpeed.value = Number(value) || 1
   await onVideoSpeedChange()
 }
 
-function handlePlayerSubtitleToggle() {
+function handlePlayerSubtitleToggle(): void {
   burnSubtitle.value = !burnSubtitle.value
   drawFrame()
 }
 
-function handlePlayerMuteChange(value) {
+function handlePlayerMuteChange(value: boolean): void {
   playerMuted.value = !!value
   if (videoRef.value) videoRef.value.muted = playerMuted.value
   if (previewAudio) previewAudio.muted = playerMuted.value
 }
 
-function handlePlayerVolumeChange(value) {
+function handlePlayerVolumeChange(value: number): void {
   playerVolume.value = Math.max(0, Math.min(1, Number(value)))
   if (videoRef.value) videoRef.value.volume = playerVolume.value
   if (previewAudio) previewAudio.volume = playerVolume.value
 }
 
-function handlePlayerSnapshot() {
+function handlePlayerSnapshot(): void {
   saveSnapshot()
 }
 
 // ⑧ 时间轴编辑器：点击跳转
-function onTimelineSeek(time) {
+function onTimelineSeek(time: number): void {
   currentTime.value = Math.min(time, totalDuration.value)
   audioSceneIdx = -1  // 跳转后重新对齐音频
   // 真实视频模式下：点时间轴跳转要同步驱动 video 元素
   if (playMode.value === 'video' && videoRef.value && totalDuration.value > 0) {
     const vd = videoRef.value.duration || totalDuration.value
-    try { videoRef.value.currentTime = (currentTime.value / totalDuration.value) * vd } catch (e) { /* 忽略 */ }
+    try { videoRef.value.currentTime = (currentTime.value / totalDuration.value) * vd } catch { /* 忽略 */ }
   }
   drawFrame()
   syncAudio()
@@ -1147,8 +1238,9 @@ function onVideoTimeUpdate() {
 }
 
 // ⑧ 时间轴编辑器：拖拽改时长（preview 实时更新本地，commit 时写回后端）
-let durationDirty = null
-async function onTimelineDuration({ id, duration, preview, commit }) {
+let durationDirty: PreviewStoryboard | null = null
+async function onTimelineDuration(change: TimelineDurationChange): Promise<void> {
+  const { id, duration, preview, commit } = change
   if (preview && typeof duration === 'number') {
     const sb = storyboards.value.find((s) => s.id === id)
     if (sb) { sb.duration = duration; durationDirty = sb }
@@ -1158,27 +1250,27 @@ async function onTimelineDuration({ id, duration, preview, commit }) {
     const sb = durationDirty
     durationDirty = null
     try {
-      await api.put(`/storyboards/${sb.id}`, { ...sb, duration: sb.duration })
+      await updatePreviewStoryboard(sb.id, { duration: sb.duration })
       await loadTimeline()
       ElMessage.success(t('preview.durationUpdated', { n: sb.duration }))
-    } catch (e) { ElMessage.error(t('preview.durationSaveFailed')) }
+    } catch { ElMessage.error(t('preview.durationSaveFailed')) }
   }
 }
 
-async function fetchStoryboards() {
+async function fetchStoryboards(): Promise<void> {
   try {
-    const res = await api.get(`/storyboards/project/${projectId}`)
-    const boards = res.data.data || res.data || []
-    for (const board of boards) {
-      board.transition = board.transition || 'none'
+    const persisted = await listPreviewStoryboards(projectId)
+    const boards: PreviewStoryboard[] = persisted.map((board) => ({
+      ...board,
+      transition: board.transition || 'none',
       // selected_image_url 已由后端 JOIN 返回，无需逐个分镜再请求
-      board.thumbnailUrl = board.selected_image_url ? mediaUrl(board.selected_image_url) : null
-      // v1.6.8：拼接 videoUrl（图生视频 i2v 结果），预览页优先播放真实视频帧
-      board.videoUrl = board.videoUrl ? mediaUrl(board.videoUrl) : null
+      thumbnailUrl: board.selected_image_url ? mediaUrl(board.selected_image_url) : null,
+      // v1.6.8：预览页优先播放图生视频真实帧
+      videoUrl: board.videoUrl ? mediaUrl(board.videoUrl) : null,
       // ④ 预览音字同步：携带配音地址与字幕文本
-      board.audioUrl = (board.audio_url && !board.no_voice) ? mediaUrl(board.audio_url) : null
-      board._audioDur = 0 // 真实配音时长，由 measureAudioDuration 异步填充
-    }
+      audioUrl: board.audio_url && !board.no_voice ? mediaUrl(board.audio_url) : null,
+      _audioDur: 0,
+    }))
     storyboards.value = boards
     await loadTimeline()
     await nextTick()
@@ -1188,59 +1280,58 @@ async function fetchStoryboards() {
     drawFrame()
     loadWorkbenchStatus()
     await loadProjectVideo()
-  } catch (e) {
+  } catch {
     ElMessage.error(t('preview.loadFailed'))
   }
 }
 
-async function loadWorkbenchStatus() {
+async function loadWorkbenchStatus(): Promise<void> {
   try {
-    workbenchStatus.value = await getWorkbenchStatus(projectId)
+    workbenchStatus.value = await getScriptWorkbenchStatus(projectId)
   } catch {
     workbenchStatus.value = null
   }
 }
 
-async function handleWorkbenchRepair(type = 'auto') {
+async function handleWorkbenchRepair(type = 'auto'): Promise<void> {
   repairingWorkbench.value = true
   try {
     await repairWorkbench(projectId, { type, videoSpeed: videoSpeed.value, ratio: ratio.value })
     await fetchStoryboards()
     await loadWorkbenchStatus()
     ElMessage.success('工作台已完成修复')
-  } catch (e) {
-    ElMessage.error(e.message || '修复失败')
+  } catch (e: unknown) {
+    ElMessage.error(errorMessage(e, '修复失败'))
   } finally {
     repairingWorkbench.value = false
   }
 }
 
-async function handleGuidePrimary(action) {
+async function handleGuidePrimary(action: WorkbenchAction | undefined): Promise<void> {
   if (!action) return
   if (action.type === 'repair_assets') return handleWorkbenchRepair('assets')
   if (action.type === 'repair_missing_images') return handleWorkbenchRepair('missing_images')
   if (action.type === 'export_video') return handleExport()
 }
 
-function preloadImages() {
+function preloadImages(): void {
   storyboards.value.forEach(s => { if (s.thumbnailUrl) loadImage(s.thumbnailUrl) })
 }
 
 // v1.6.8：预加载分镜 AI 视频。加载完成后重绘当前帧，让静止画面立即被视频首帧替换。
-function preloadVideos() {
+function preloadVideos(): void {
   storyboards.value.forEach(s => {
     if (s.videoUrl) loadVideo(s.videoUrl).then(v => { if (v) drawFrame() })
   })
 }
 
 // ① 打开时间轴卡片的「选图」弹窗：拉取该分镜已生成的所有图片
-async function openImagePicker(element, index) {
+async function openImagePicker(element: PreviewStoryboard, index: number): Promise<void> {
   imgPicker.value = { visible: true, sbId: element.id, sceneNo: index + 1, images: [], loading: true, selectedId: element.selected_image_id || null }
   try {
-    const res = await api.get(`/images/storyboard/${element.id}`)
-    const list = res.data.data || res.data || []
-    imgPicker.value.images = list.map(img => ({ ...img, url: mediaUrl(img.file_url) }))
-  } catch (e) {
+    const list = await listStoryboardImages(element.id)
+    imgPicker.value.images = list.map((img) => ({ ...img, url: mediaUrl(img.file_url) }))
+  } catch {
     ElMessage.error(t('preview.loadImagesFailed'))
   } finally {
     imgPicker.value.loading = false
@@ -1248,10 +1339,11 @@ async function openImagePicker(element, index) {
 }
 
 // ① 在弹窗里点选某张图 → 写回该分镜 selected_image_id，并刷新缩略图与预览
-async function pickImage(img) {
+async function pickImage(img: ImageCandidate): Promise<void> {
   const sbId = imgPicker.value.sbId
+  if (sbId === null) return
   try {
-    await api.put(`/storyboards/${sbId}`, { selected_image_id: img.id })
+    await selectCandidate(img.id, sbId)
     const board = storyboards.value.find(s => s.id === sbId)
     if (board) {
       board.selected_image_id = img.id
@@ -1262,24 +1354,24 @@ async function pickImage(img) {
     imgPicker.value.visible = false
     drawFrame()
     ElMessage.success(t('preview.imagePicked'))
-  } catch (e) {
+  } catch {
     ElMessage.error(t('preview.pickImageFailed'))
   }
 }
 
-async function onDragEnd() {
+async function onDragEnd(): Promise<void> {
   const orders = storyboards.value.map((s, i) => ({ id: s.id, sort_order: i }))
   try {
-    await api.put(`/storyboards/reorder/${projectId}`, { orders })
+    await reorderPreviewStoryboards(projectId, orders)
     await loadTimeline()
-  } catch (e) {
+  } catch {
     ElMessage.error(t('preview.saveOrderFailed'))
   }
 }
 
 // ② 应用当前配音：扫描所有分镜，对「有台词、未标记不读、但还没有配音音频」的分镜调用 TTS 重新生成，
 //    生成后立即刷新预览音频，无需跳到配音页。让用户在预览页就能一键让配音生效。
-async function applyVoice() {
+async function applyVoice(): Promise<void> {
   // 修复：原来过滤 !s.audio_url 导致「已有配音的分镜被跳过」，用户改了音色点应用没反应。
   // 改为对所有有台词的分镜重新生成配音（这正是「应用当前配音」的预期）。
   const targets = storyboards.value.filter(
@@ -1293,17 +1385,18 @@ async function applyVoice() {
   let ok = 0
   for (let i = 0; i < targets.length; i++) {
     const s = targets[i]
+    if (!s) continue
     exportMessage.value = t('preview.applyingVoiceFor', { n: s.scene_number })
     try {
       // 修复：原来传了 dialog: s.dialog（台词文本，非空字符串）会被后端当 true，
       // 强制走 Edge 多音色对话合成，把用户选的（火山）音色覆盖掉。单镜配音不该传 dialog。
-      await api.post('/ai/generate-tts', {
+      await generateStoryboardVoice({
         storyboard_id: s.id,
         text: s.dialog,
         voice: s.voice || undefined,
       })
       ok++
-    } catch (e) { /* 单镜失败继续 */ }
+    } catch { /* 单镜失败继续 */ }
   }
   exportMessage.value = ''
   applyingVoice.value = false
@@ -1313,7 +1406,7 @@ async function applyVoice() {
 }
 
 // 一键同步：用当前台词刷新字幕文本、重新生成配音，并重建统一时间轴。
-async function syncTimelineAssets() {
+async function syncTimelineAssets(): Promise<void> {
   if (syncingAssets.value || exporting.value || previewing.value) return
   const targets = storyboards.value.filter((s) => s.dialog && s.dialog.trim())
   if (targets.length === 0) {
@@ -1327,29 +1420,30 @@ async function syncTimelineAssets() {
   try {
     for (let i = 0; i < targets.length; i++) {
       const s = targets[i]
+      if (!s) continue
       exportProgress.value = Math.round((i / targets.length) * 100)
       exportMessage.value = t('preview.syncingScene', { n: s.scene_number || i + 1 })
       try {
-        await api.put(`/storyboards/${s.id}`, { subtitle_text: s.dialog })
+        await updatePreviewStoryboard(s.id, { subtitle_text: s.dialog })
         subtitleOk++
-      } catch (e) { /* 单镜字幕失败继续同步后续分镜 */ }
+      } catch { /* 单镜字幕失败继续同步后续分镜 */ }
       if (!s.no_voice) {
         try {
-          await api.post('/ai/generate-tts', {
+          await generateStoryboardVoice({
             storyboard_id: s.id,
             text: s.dialog,
             voice: s.voice || undefined,
           })
           voiceOk++
-        } catch (e) { /* 单镜配音失败继续，最终数量会提示 */ }
+        } catch { /* 单镜配音失败继续，最终数量会提示 */ }
       }
     }
     exportProgress.value = 100
     await fetchStoryboards()
     await loadWorkbenchStatus()
     ElMessage.success(t('preview.syncComplete', { voice: voiceOk, subtitle: subtitleOk }))
-  } catch (e) {
-    ElMessage.error(t('preview.syncFailed', { msg: e.message || '' }))
+  } catch (e: unknown) {
+    ElMessage.error(t('preview.syncFailed', { msg: errorMessage(e) }))
   } finally {
     syncingAssets.value = false
     exportProgress.value = 0
@@ -1358,33 +1452,32 @@ async function syncTimelineAssets() {
 }
 
 // v1.7：点「导出视频」先弹导出设置弹窗，用户确认设置后再走缺图检查 + 合成
-function handleExport() {
+function handleExport(): void {
   if (exporting.value) return
   exportDialogVisible.value = true
 }
 
 // 导出弹窗确认回调：带着用户选择的导出设置（分辨率/格式/帧率/画质/比例）进入合成流程
-async function onExportConfirm(exportSettings) {
+async function onExportConfirm(exportSettings: ExportSettings): Promise<void> {
   // 用户在弹窗里选的比例同步回主界面（保持预览 canvas 与导出一致）
   if (exportSettings.ratio) ratio.value = exportSettings.ratio
   await runExportFlow(exportSettings)
 }
 
-async function runExportFlow(exportSettings) {
+async function runExportFlow(exportSettings: ExportSettings): Promise<void> {
   // ② 防连点：导出进行中直接忽略后续点击，避免重复提交导致连弹多条失败提示
   if (exporting.value) return
   // ① 真实检测「完全没有图片」的分镜：后端导出会对「生成过图但没选」的分镜自动兜底选最新一张，
   //    所以这里只拦截那些一张图都没生成过的分镜，避免误把「有图没选」当成无法导出。
   exporting.value = true
   exportMessage.value = t('preview.checkingImages')
-  let scenesNoImage = []
+  let scenesNoImage: PreviewStoryboard[] = []
   try {
     const checks = await Promise.all(
       storyboards.value.map(async (s) => {
         if (s.thumbnailUrl) return { s, count: 1 } // 已选图，必有图
         try {
-          const r = await api.get(`/images/storyboard/${s.id}`)
-          const list = r.data.data || r.data || []
+          const list = await listStoryboardImages(s.id)
           return { s, count: list.length }
         } catch { return { s, count: 0 } }
       })
@@ -1401,7 +1494,7 @@ async function runExportFlow(exportSettings) {
         { confirmButtonText: t('preview.oneClickGenAll'), cancelButtonText: t('preview.gotoImages'), type: 'warning' }
       )
       await batchGenMissing(scenesNoImage)
-    } catch (act) {
+    } catch (act: unknown) {
       if (act === 'cancel') router.push(`/projects/${projectId}/images`)
       exporting.value = false
       return
@@ -1411,7 +1504,7 @@ async function runExportFlow(exportSettings) {
   }
   // 部分分镜缺图 → 询问：一键补图 / 跳过缺图继续导出 / 取消
   if (scenesNoImage.length > 0) {
-    let action
+    let action: unknown
     try {
       action = await ElMessageBox({
         title: t('preview.confirmExport'),
@@ -1421,7 +1514,7 @@ async function runExportFlow(exportSettings) {
         cancelButtonText: t('preview.exportAnyway'),
         type: 'warning',
       })
-    } catch (act) {
+    } catch (act: unknown) {
       if (act === 'cancel') { /* 跳过缺图继续导出 */ }
       else { exporting.value = false; return } // 关闭/取消
     }
@@ -1432,16 +1525,18 @@ async function runExportFlow(exportSettings) {
 }
 
 // 一键为缺图分镜批量生成图片（用项目当前比例），完成后提示用户再导出
-async function batchGenMissing(scenes) {
+async function batchGenMissing(scenes: PreviewStoryboard[]): Promise<void> {
   exporting.value = true
   let ok = 0
   for (let i = 0; i < scenes.length; i++) {
+    const scene = scenes[i]
+    if (!scene) continue
     exportProgress.value = Math.round((i / scenes.length) * 100)
-    exportMessage.value = t('preview.genImageFor', { n: scenes[i].scene_number })
+    exportMessage.value = t('preview.genImageFor', { n: scene.scene_number })
     try {
-      await api.post('/ai/generate-image', { storyboard_id: scenes[i].id, ratio: ratio.value, batch_size: 1 })
+      await requestStoryboardImage({ storyboard_id: scene.id, ratio: ratio.value, batch_size: 1 })
       ok++
-    } catch (e) { /* 单镜失败继续 */ }
+    } catch { /* 单镜失败继续 */ }
   }
   exporting.value = false
   exportProgress.value = 0
@@ -1451,7 +1546,7 @@ async function batchGenMissing(scenes) {
   ElMessage.success(t('preview.genMissingDone', { ok, total: scenes.length }))
 }
 
-async function doCompose(exportSettings = {}) {
+async function doCompose(exportSettings: ExportSettings = {}): Promise<void> {
   exporting.value = true
   exportProgress.value = 0
   exportMessage.value = t('preview.submittingCompose')
@@ -1461,7 +1556,11 @@ async function doCompose(exportSettings = {}) {
   try {
     // 比例优先用导出弹窗里选的，回退到主界面 ratio
     const useRatio = exportSettings.ratio || ratio.value
-    const opts = { burnSubtitle: burnSubtitle.value, ratio: useRatio, videoSpeed: videoSpeed.value }
+    const opts: Record<string, unknown> = {
+      burnSubtitle: burnSubtitle.value,
+      ratio: useRatio,
+      videoSpeed: videoSpeed.value,
+    }
     if (isLongProject.value) {
       opts.longMode = true
       opts.chapterDurationSec = 300
@@ -1487,45 +1586,49 @@ async function doCompose(exportSettings = {}) {
       if (typeof cfg.bgmVolume === 'number') opts.bgmVolume = cfg.bgmVolume
       if (cfg.subtitleStyle) opts.subtitleStyle = cfg.subtitleStyle
     }
-    const res = await api.post('/video/compose', { project_id: projectId, async: true, options: opts })
-    const taskId = res.data?.data?.task_id
-    if (!taskId) throw new Error(res.data?.message || t('preview.submitFailed'))
+    const taskId = await submitVideoCompose(projectId, opts)
     exportTaskId.value = taskId
     exportMessage.value = isLongProject.value
       ? '长视频任务已提交：将按章节分段合成，完成后自动进入成片库。'
       : '导出任务已提交，完成后会保存到成片库。'
 
-    await new Promise((resolve, reject) => {
+    await new Promise<void>((resolve, reject) => {
       stopTracking = trackTask(taskId, {
         onProgress: (task) => {
           exportProgress.value = task.progress
           exportMessage.value = task.message
         },
         onSuccess: (task) => {
-          const data = task.result
-          exportResult.value = data || null
-          exportError.value = ''
-          exportProgress.value = 100
-          exportMessage.value = data?.file_url
-            ? `导出完成：${data.file_url}`
-            : '导出完成，已保存到成片库。'
-          ElMessage.success(t('preview.composeSuccess'))
-          // 导出成功后刷新预览区成片列表，自动切换到播放真实视频
-          loadProjectVideo(data.video_speed || videoSpeed.value)
-          loadExportLocation()
-          loadWorkbenchStatus()
-          resolve()
+          try {
+            const data = parseExportResult(task.result)
+            exportResult.value = data
+            exportError.value = ''
+            exportProgress.value = 100
+            exportMessage.value = data.file_url
+              ? `导出完成：${data.file_url}`
+              : '导出完成，已保存到成片库。'
+            ElMessage.success(t('preview.composeSuccess'))
+            // 导出成功后刷新预览区成片列表，自动切换到播放真实视频
+            void loadProjectVideo(data.video_speed || videoSpeed.value)
+            void loadExportLocation()
+            void loadWorkbenchStatus()
+            resolve()
+          } catch (cause: unknown) {
+            reject(cause)
+          }
         },
         onError: (err) => {
-          exportError.value = err.message || t('preview.composeFailed', { msg: '' })
-          ElMessage.error(t('preview.composeFailed', { msg: err.message || '' }))
+          const message = errorMessage(err)
+          exportError.value = message || t('preview.composeFailed', { msg: '' })
+          ElMessage.error(t('preview.composeFailed', { msg: message }))
           reject(err)
         },
       })
     })
-  } catch (e) {
-    exportError.value = e.message || String(e || '')
-    ElMessage.error(t('preview.exportFailed', { msg: e.message || '' }))
+  } catch (e: unknown) {
+    const message = errorMessage(e)
+    exportError.value = message
+    ElMessage.error(t('preview.exportFailed', { msg: message }))
   } finally {
     exporting.value = false
     if (!exportResult.value) exportProgress.value = 0
@@ -1535,13 +1638,17 @@ async function doCompose(exportSettings = {}) {
 
 // ⚡ 快速预览：调后端 /preview-compose，取前 3 镜用 ultrafast 真合成（真实转场/字幕/运镜/配音），
 //    所见即所得。同步返回（前 3 镜通常十几秒），不落成片库。
-async function doQuickPreview() {
+async function doQuickPreview(): Promise<void> {
   if (previewing.value || exporting.value) return
   previewing.value = true
   exportProgress.value = 30
   exportMessage.value = t('preview.quickPreviewRunning')
   try {
-    const opts = { burnSubtitle: burnSubtitle.value, ratio: ratio.value, videoSpeed: videoSpeed.value }
+    const opts: Record<string, unknown> = {
+      burnSubtitle: burnSubtitle.value,
+      ratio: ratio.value,
+      videoSpeed: videoSpeed.value,
+    }
     if (burnSubtitle.value && karaoke.value) opts.karaoke = true
     else if (burnSubtitle.value && subtitleEffect.value && subtitleEffect.value !== 'none') opts.subtitleEffect = subtitleEffect.value
     const cfg = presetConfig()
@@ -1551,9 +1658,7 @@ async function doQuickPreview() {
       if (cfg.motion) opts.motion = cfg.motion
       if (cfg.subtitleStyle) opts.subtitleStyle = cfg.subtitleStyle
     }
-    const res = await api.post('/video/preview-compose', { project_id: projectId, options: opts, limit: 3 })
-    const data = res.data?.data
-    if (!data || !data.file_url) throw new Error(res.data?.message || t('preview.submitFailed'))
+    const data = await composeQuickPreview(projectId, opts)
     exportProgress.value = 100
     ElMessage.success(t('preview.quickPreviewDone', { n: data.preview_scenes, total: data.total_scenes }))
     projectVideoUrl.value = mediaUrl(data.file_url)
@@ -1570,8 +1675,8 @@ async function doQuickPreview() {
         videoRef.value.play().catch(() => {})
       }
     })
-  } catch (e) {
-    const msg = e.response?.data?.message || e.message || ''
+  } catch (e: unknown) {
+    const msg = errorMessage(e)
     ElMessage.error(t('preview.quickPreviewFailed', { msg }))
   } finally {
     previewing.value = false
@@ -1580,11 +1685,11 @@ async function doQuickPreview() {
   }
 }
 
-async function loadPresets() {
-  try { presets.value = await listPresets() } catch (e) { /* 静默 */ }
+async function loadPresets(): Promise<void> {
+  try { presets.value = await listPresets() } catch { /* 静默 */ }
 }
 
-async function loadT2v() {
+async function loadT2v(): Promise<void> {
   try {
     const groups = await getProviders()
     const t2vList = (groups && groups.t2v) || []
@@ -1594,32 +1699,42 @@ async function loadT2v() {
         key: `${p.key}__${m}`,
         label: `${t('preview.t2vPrefix')} · ${p.label} · ${m}${p.free ? t('preview.t2vFree') : t('preview.t2vPaid')}`,
       })))
-  } catch (e) { /* 静默，保持仅静图运镜 */ }
+  } catch { /* 静默，保持仅静图运镜 */ }
 }
 
-async function loadSnapshots() {
-  try { snapshots.value = await listSnapshots(projectId) } catch (e) { /* 静默 */ }
+async function loadSnapshots(): Promise<void> {
+  try { snapshots.value = await listSnapshots(projectId) } catch { /* 静默 */ }
 }
 
-function presetConfig() {
+function presetConfig(): PresetConfig | null {
   const p = presets.value.find((x) => x.id === selectedPreset.value)
   if (!p) return null
-  try { return typeof p.config === 'string' ? JSON.parse(p.config) : p.config } catch { return null }
+  const source = p.config
+  if (!isRecord(source)) return null
+  const config: PresetConfig = {}
+  if (typeof source.fps === 'number') config.fps = source.fps
+  if (typeof source.transition === 'string') config.transition = source.transition
+  if (typeof source.transitionDuration === 'number') config.transitionDuration = source.transitionDuration
+  if (typeof source.motion === 'string') config.motion = source.motion
+  if (typeof source.bgmVolume === 'number') config.bgmVolume = source.bgmVolume
+  if (isRecord(source.subtitleStyle)) config.subtitleStyle = source.subtitleStyle
+  if (typeof source.burnSubtitle === 'boolean') config.burnSubtitle = source.burnSubtitle
+  return config
 }
 
-function applyPreset() {
+function applyPreset(): void {
   const cfg = presetConfig()
   if (!cfg) return
   if (typeof cfg.burnSubtitle === 'boolean') burnSubtitle.value = cfg.burnSubtitle
   ElMessage.success(t('preview.presetApplied'))
 }
 
-function fmtSnapTime(t) {
-  if (!t) return ''
-  return new Date(t).toLocaleString('zh-CN', { hour12: false, month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit' })
+function fmtSnapTime(value: string | number | undefined): string {
+  if (!value) return ''
+  return new Date(value).toLocaleString('zh-CN', { hour12: false, month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit' })
 }
 
-async function saveSnapshot() {
+async function saveSnapshot(): Promise<void> {
   try {
     const { value } = await ElMessageBox.prompt(t('preview.snapPromptMsg'), t('preview.snapPromptTitle'), {
       inputValue: t('preview.snapDefaultName', { time: fmtSnapTime(Date.now()) }),
@@ -1628,27 +1743,27 @@ async function saveSnapshot() {
     await createSnapshot(projectId, value)
     ElMessage.success(t('preview.snapSaved'))
     await loadSnapshots()
-  } catch (e) { if (e !== 'cancel') ElMessage.error(t('preview.snapSaveFailed', { msg: (e.message || e) })) }
+  } catch (e: unknown) { if (e !== 'cancel') ElMessage.error(t('preview.snapSaveFailed', { msg: errorMessage(e) })) }
 }
 
-async function doRestore(s) {
+async function doRestore(s: Snapshot): Promise<void> {
   try {
     await ElMessageBox.confirm(t('preview.restoreConfirm', { label: s.label }), t('preview.restoreTitle'), { type: 'warning' })
     await restoreSnapshot(s.id)
     ElMessage.success(t('preview.restored'))
     await fetchStoryboards()
-  } catch (e) { if (e !== 'cancel') ElMessage.error(t('preview.restoreFailed', { msg: (e.message || e) })) }
+  } catch (e: unknown) { if (e !== 'cancel') ElMessage.error(t('preview.restoreFailed', { msg: errorMessage(e) })) }
 }
 
-async function doDeleteSnap(s) {
+async function doDeleteSnap(s: Snapshot): Promise<void> {
   try {
     await deleteSnapshot(s.id)
     await loadSnapshots()
-  } catch (e) { ElMessage.error(t('preview.snapDeleteFailed', { msg: (e.message || e) })) }
+  } catch (e: unknown) { ElMessage.error(t('preview.snapDeleteFailed', { msg: errorMessage(e) })) }
 }
 
-async function applyBatch() {
-  const patch = {}
+async function applyBatch(): Promise<void> {
+  const patch: Record<string, unknown> = {}
   if (batchForm.value.motion) patch.motion = batchForm.value.motion
   if (batchForm.value.transition) patch.transition = batchForm.value.transition
   if (batchForm.value.voice) patch.voice = batchForm.value.voice
@@ -1659,10 +1774,10 @@ async function applyBatch() {
     ElMessage.success(t('preview.batchUpdated', { n: res.data?.updated ?? ids.length }))
     batchForm.value = { motion: '', transition: '', voice: '' }
     await fetchStoryboards()
-  } catch (e) { ElMessage.error(t('preview.batchFailed', { msg: (e.message || e) })) }
+  } catch (e: unknown) { ElMessage.error(t('preview.batchFailed', { msg: errorMessage(e) })) }
 }
 
-async function doSuggestDuration() {
+async function doSuggestDuration(): Promise<void> {
   try {
     const data = await suggestDuration(projectId, { apply: false })
     const list = data.suggestions || []
@@ -1676,51 +1791,50 @@ async function doSuggestDuration() {
     await suggestDuration(projectId, { apply: true })
     ElMessage.success(t('preview.suggestApplied'))
     await fetchStoryboards()
-  } catch (e) { if (e !== 'cancel') ElMessage.error(t('preview.suggestFailed', { msg: (e.message || e) })) }
+  } catch (e: unknown) { if (e !== 'cancel') ElMessage.error(t('preview.suggestFailed', { msg: errorMessage(e) })) }
 }
 
-function initCanvas() {
+function initCanvas(): void {
   const canvas = canvasRef.value
   if (!canvas) return
-  const m = RATIO_MAP[ratio.value] || RATIO_MAP['16:9']
+  const m = RATIO_MAP[ratio.value] ?? { w: 1280, h: 720 }
   canvas.width = m.w
   canvas.height = m.h
   drawFrame()
 }
 
 // ③ 读取项目画幅比例，作为预览与导出的统一比例
-async function fetchProject() {
+async function fetchProject(): Promise<void> {
   try {
-    const res = await api.get(`/projects/${projectId}`)
-    const p = res.data.data || res.data
-    project.value = p || null
+    const p = await getProject(projectId)
+    project.value = p
     if (p && p.ratio && RATIO_MAP[p.ratio]) ratio.value = p.ratio
-  } catch (e) { /* 静默，保持默认 16:9 */ }
+  } catch { /* 静默，保持默认 16:9 */ }
 }
 
-async function loadExportLocation() {
+async function loadExportLocation(): Promise<void> {
   try {
     const data = await getExportLocation()
     exportLocation.value = { ...exportLocation.value, ...(data || {}) }
-  } catch (e) {
+  } catch {
     // 导出位置只是提示信息，读取失败不影响预览与导出主流程
   }
 }
 
-function resetRealVideoClock(duration = 0) {
+function resetRealVideoClock(duration = 0): void {
   realVideoCurrentTime.value = 0
   realVideoDuration.value = Number(duration) > 0 ? Number(duration) : 0
 }
 
-function exportIsLong(row) {
+function exportIsLong(row: ExportRecord | ExportResult): boolean {
   return Number(row?.long_video_mode) === 1 || Number(row?.chapter_count) > 1 || Number(row?.duration) >= 600
 }
 
-function currentTimelineIsLong() {
+function currentTimelineIsLong(): boolean {
   return originalTotalDuration.value >= 600 || storyboards.value.length >= 80 || Number(project.value?.long_video_mode) === 1
 }
 
-function exportFreshness(row) {
+function exportFreshness(row: ExportRecord): { fresh: boolean; reason: string } {
   const exportDuration = Number(row?.duration)
   const expectedDuration = Number(totalDuration.value || 0)
   if (!row?.file_url) return { fresh: false, reason: '成片文件地址缺失，无法作为当前预览。' }
@@ -1749,12 +1863,15 @@ function exportFreshness(row) {
   return { fresh: true, reason: '' }
 }
 
-function activateVideoExport(row, { source = 'fresh', autoPlay = false, bakedSpeed = null } = {}) {
+function activateVideoExport(
+  row: ExportRecord | ExportResult,
+  { source = 'fresh', autoPlay = false, bakedSpeed = null }: VideoExportActivationOptions = {},
+): void {
   if (!row?.file_url) return
   projectVideoUrl.value = mediaUrl(row.file_url)
   projectVideoBakedSpeed.value = Number(row.video_speed || bakedSpeed) || null
   activeVideoSource.value = source
-  resetRealVideoClock(row.duration)
+  resetRealVideoClock(row.duration || 0)
   if (source === 'fresh') freshExport.value = row
   if (source === 'stale') staleExport.value = row
   playMode.value = autoPlay ? 'video' : 'canvas'
@@ -1762,13 +1879,13 @@ function activateVideoExport(row, { source = 'fresh', autoPlay = false, bakedSpe
     stopCanvasPlayback()
     nextTick(() => setRealVideoPlaybackRate())
   } else {
-    try { videoRef.value && videoRef.value.pause() } catch (e) { /* 忽略 */ }
+    try { videoRef.value && videoRef.value.pause() } catch { /* 忽略 */ }
     isRealVideoPlaying.value = false
     nextTick(() => initCanvas())
   }
 }
 
-function clearProjectVideo() {
+function clearProjectVideo(): void {
   projectVideoUrl.value = ''
   projectVideoBakedSpeed.value = null
   freshExport.value = null
@@ -1781,7 +1898,7 @@ function clearProjectVideo() {
 
 // 加载该项目成片（exports）。只有与当前分镜时间轴匹配的成片才默认播放；
 // 旧成片保留为可手动查看，避免旧 mp4 冒充当前草稿预览。
-async function loadProjectVideo(knownBakedSpeed = null) {
+async function loadProjectVideo(knownBakedSpeed: number | null = null): Promise<void> {
   try {
     const list = await projectExports(projectId)
     const ok = (Array.isArray(list) ? list : []).filter((e) => e && e.status === 'success' && e.file_url)
@@ -1801,13 +1918,13 @@ async function loadProjectVideo(knownBakedSpeed = null) {
     } else {
       clearProjectVideo()
     }
-  } catch (e) {
+  } catch {
     // 查不到成片时静默回退草稿模拟
     clearProjectVideo()
   }
 }
 
-function playStaleExport() {
+function playStaleExport(): void {
   if (!staleExport.value) return
   activateVideoExport(staleExport.value, {
     source: 'stale',
@@ -1817,14 +1934,14 @@ function playStaleExport() {
 }
 
 // 停掉 canvas 模拟播放与配音（切换到真实视频或卸载时调用）
-function stopCanvasPlayback() {
+function stopCanvasPlayback(): void {
   isPlaying.value = false
   if (animationFrame) { cancelAnimationFrame(animationFrame); animationFrame = null }
-  try { stopAudio() } catch (e) { /* 忽略 */ }
+  try { stopAudio() } catch { /* 忽略 */ }
 }
 
 // 用户手动切换播放模式：切到草稿时暂停真实视频；切到真实视频时停掉 canvas 模拟
-function onPlayModeChange(mode) {
+function onPlayModeChange(mode: PlayMode): void {
   if (mode === 'video') {
     stopCanvasPlayback()
     nextTick(() => {
@@ -1835,26 +1952,26 @@ function onPlayModeChange(mode) {
           videoRef.value.volume = playerVolume.value
           setRealVideoPlaybackRate()
         }
-      } catch (e) { /* 忽略 */ }
+      } catch { /* 忽略 */ }
     })
   } else {
-    try { videoRef.value && videoRef.value.pause() } catch (e) { /* 忽略 */ }
+    try { videoRef.value && videoRef.value.pause() } catch { /* 忽略 */ }
     isRealVideoPlaying.value = false
     nextTick(() => { initCanvas() })
   }
 }
 
-function setRealVideoPlaybackRate() {
+function setRealVideoPlaybackRate(): void {
   try {
     if (videoRef.value) {
       const baked = Number(projectVideoBakedSpeed.value)
       const rate = baked && baked > 0 ? (videoSpeed.value / baked) : videoSpeed.value
       videoRef.value.playbackRate = Math.max(0.25, Math.min(4, rate))
     }
-  } catch (e) { /* 忽略 */ }
+  } catch { /* 忽略 */ }
 }
 
-function onVideoLoadedMetadata() {
+function onVideoLoadedMetadata(): void {
   setRealVideoPlaybackRate()
   if (videoRef.value) {
     videoRef.value.muted = playerMuted.value
@@ -1867,9 +1984,9 @@ function onVideoLoadedMetadata() {
 }
 
 // ③ 切换比例：写回项目 + 重设 canvas + 重绘
-async function applyRatio() {
+async function applyRatio(): Promise<void> {
   initCanvas()
-  try { await api.put(`/projects/${projectId}`, { ratio: ratio.value }) } catch (e) { /* 静默 */ }
+  try { await updateProject(projectId, { ratio: ratio.value }) } catch { /* 静默 */ }
 }
 
 onMounted(() => {
@@ -1889,7 +2006,7 @@ onUnmounted(() => {
   // 关闭可能仍在运行的任务进度 SSE 连接，避免泄漏与卸载后回调
   if (stopTracking) { stopTracking(); stopTracking = null }
   // 停止真实视频播放
-  try { videoRef.value && videoRef.value.pause() } catch (e) { /* 忽略 */ }
+  try { videoRef.value && videoRef.value.pause() } catch { /* 忽略 */ }
 })
 </script>
 

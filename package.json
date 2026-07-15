@@ -4,20 +4,28 @@
   "description": "AIGC 视频工作台 - 本地优先、可恢复的桌面视频创作应用",
   "author": "王从天降",
   "license": "MIT",
-  "main": "electron/main.js",
+  "main": "electron/dist/main.js",
   "scripts": {
-    "install:all": "npm install && npm --prefix server install && npm --prefix client install",
+    "install:all": "npm install && npm --prefix packages/contracts install && npm --prefix server install && npm --prefix client install",
     "dev": "node scripts/dev.mjs",
     "demo": "node scripts/dev.mjs --demo",
     "test:smoke": "node scripts/run-smoke.mjs && node scripts/demo-acceptance.mjs",
-    "test:demo": "node scripts/demo-acceptance.mjs",
+    "test:demo": "npm --prefix server run build && node scripts/demo-acceptance.mjs",
     "build:client": "cd client && npm run build",
     "check:server": "npm --prefix server run preflight && npm run test:smoke",
     "check:client": "npm --prefix client test && npm --prefix client run build",
-    "security:audit": "npm audit --omit=dev && npm --prefix server audit --omit=dev && npm --prefix client audit --omit=dev",
-    "security:audit:all": "npm audit && npm --prefix server audit && npm --prefix client audit",
-    "quality": "npm run check:server && npm run check:client",
-    "electron:dev": "electron .",
+    "security:audit": "npm audit --omit=dev && npm --prefix packages/contracts audit --omit=dev && npm --prefix server audit --omit=dev && npm --prefix client audit --omit=dev",
+    "security:audit:all": "npm audit && npm --prefix packages/contracts audit && npm --prefix server audit && npm --prefix client audit",
+    "build:contracts": "npm --prefix packages/contracts run build",
+    "test:contracts": "npm --prefix packages/contracts test",
+    "build:server": "npm --prefix server run build",
+    "build:electron": "tsc -p electron/tsconfig.build.json",
+    "typecheck:electron": "tsc -p electron/tsconfig.json --noEmit",
+    "typecheck": "npm run build:contracts && npm --prefix server run typecheck && npm --prefix client run typecheck && npm run typecheck:electron",
+    "lint": "eslint packages/contracts/src/**/*.ts client/src/**/*.{ts,vue} server/**/*.ts electron/**/*.ts --no-error-on-unmatched-pattern --max-warnings=0",
+    "type-coverage": "node scripts/check-typescript-coverage.mjs",
+    "quality": "npm run typecheck && npm run lint && npm run type-coverage && npm run test:contracts && npm run check:server && npm run check:client",
+    "electron:dev": "npm run build:contracts && npm run build:server && npm run build:client && npm run build:electron && electron .",
     "prepare:desktop": "node scripts/prepare-desktop.mjs",
     "electron:preflight": "node scripts/electron-preflight.mjs",
     "pack": "npm run prepare:desktop && npm run electron:preflight && node scripts/package-preflight.mjs",
@@ -37,7 +45,7 @@
       "buildResources": "resources"
     },
     "files": [
-      "electron/**/*",
+      "electron/dist/**/*",
       "node_modules/**/*",
       "package.json"
     ],
@@ -105,14 +113,24 @@
   },
   "devDependencies": {
     "@electron/notarize": "3.1.1",
+    "@types/node": "22.20.1",
     "bytenode": "^1.5.7",
     "electron": "43.1.0",
     "electron-builder": "26.15.3",
-    "javascript-obfuscator": "^5.4.3"
+    "eslint": "10.7.0",
+    "eslint-plugin-vue": "10.9.2",
+    "javascript-obfuscator": "^5.4.3",
+    "typescript": "5.9.3",
+    "typescript-eslint": "8.64.0",
+    "vue-eslint-parser": "10.4.1"
   },
   "dependencies": {
+    "@aigc-video/contracts": "file:packages/contracts",
     "@sentry/electron": "7.15.0",
     "electron-updater": "6.8.9",
     "ffmpeg-static": "5.3.0"
+  },
+  "overrides": {
+    "esbuild": "0.28.1"
   }
 }

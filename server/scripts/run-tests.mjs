@@ -6,6 +6,8 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 const SERVER_ROOT = path.resolve(fileURLToPath(new URL('..', import.meta.url)));
+const SERVER_ENTRY = path.join(SERVER_ROOT, 'dist', 'app.js');
+const TSX = path.join(SERVER_ROOT, 'node_modules', '.bin', process.platform === 'win32' ? 'tsx.cmd' : 'tsx');
 const tempRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'aigc-video-server-test-'));
 
 async function reservePort() {
@@ -71,14 +73,22 @@ async function waitForExit(child, label) {
 
 const port = await reservePort();
 const env = childEnv(port);
-const server = run(process.execPath, ['app.js'], { env, stdio: ['ignore', 'pipe', 'pipe'] });
+if (!fs.existsSync(SERVER_ENTRY)) throw new Error('缺少 server/dist/app.js，请先运行 npm run build');
+const server = run(process.execPath, [SERVER_ENTRY], { env, stdio: ['ignore', 'pipe', 'pipe'] });
 server.stdout.pipe(process.stdout);
 server.stderr.pipe(process.stderr);
 
 try {
   await waitForHealth(env.BASE_URL, server);
-  const tests = run(process.execPath, ['--test', 'test/**/*.test.js'], { env });
-  await waitForExit(tests, '服务端测试');
+  // Migration tests can load a legacy .js module that already depends on a new
+  // .ts domain module, so both groups use tsx. They remain separate processes:
+  // this avoids the compiler/DB contention previously seen when every test file
+  // ran in one large concurrent group.
+  const javascriptTests = run(TSX, ['--test', 'test/**/*.test.js'], { env });
+  await waitForExit(javascriptTests, '服务端 JavaScript 测试');
+
+  const typescriptTests = run(TSX, ['--test', 'test/**/*.test.ts'], { env });
+  await waitForExit(typescriptTests, '服务端 TypeScript 测试');
 } finally {
   if (server.exitCode === null) {
     server.kill('SIGTERM');

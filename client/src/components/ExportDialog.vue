@@ -119,7 +119,7 @@
   </el-dialog>
 </template>
 
-<script setup>
+<script setup lang="ts">
 import { reactive, ref, computed, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { ElMessage } from 'element-plus'
@@ -129,17 +129,43 @@ import { displayLocalPath } from '../utils/localPath'
 
 const { t } = useI18n()
 
-const props = defineProps({
-  modelValue: { type: Boolean, default: false },
-  initialRatio: { type: String, default: '16:9' },
-  initialFps: { type: Number, default: 30 },
-  exportLocation: { type: Object, default: () => ({}) },
-})
-const emit = defineEmits(['update:modelValue', 'confirm'])
+interface ExportLocation { default_directory?: string; library_directory?: string }
+interface ExportSettings {
+  ratio: string
+  resolution: string
+  format: string
+  fps: number
+  quality: string
+  copyToCustomDir: boolean
+  exportDirectory: string
+  setAsDefaultExportDirectory: boolean
+}
+interface ExportOptions {
+  ratio: string
+  resolution: string
+  format: string
+  fps: number
+  quality: string
+  skipExternalExportCopy: boolean
+  exportDirectory: string
+  setAsDefaultExportDirectory: boolean
+}
+interface DirectoryState { ok: boolean; message: string; path?: string }
+
+const props = withDefaults(defineProps<{
+  modelValue?: boolean
+  initialRatio?: string
+  initialFps?: number
+  exportLocation?: ExportLocation
+}>(), { modelValue: false, initialRatio: '16:9', initialFps: 30, exportLocation: () => ({}) })
+const emit = defineEmits<{
+  'update:modelValue': [visible: boolean]
+  confirm: [options: ExportOptions]
+}>()
 
 const visible = computed({
   get: () => props.modelValue,
-  set: (val) => emit('update:modelValue', val),
+  set: (value: boolean) => emit('update:modelValue', value),
 })
 
 const ratioOptions = [
@@ -161,7 +187,7 @@ const platformPresets = [
 
 const selectedPlatform = ref('custom')
 
-const settings = reactive({
+const settings = reactive<ExportSettings>({
   ratio: props.initialRatio || '16:9',
   resolution: '1080p',
   format: 'mp4',
@@ -174,7 +200,7 @@ const settings = reactive({
 
 const pickingDir = ref(false)
 const checkingDir = ref(false)
-const directoryCheck = ref(null)
+const directoryCheck = ref<DirectoryState | null>(null)
 
 function initExportDirectory() {
   const saved = props.exportLocation?.default_directory || ''
@@ -194,7 +220,7 @@ watch(() => props.modelValue, (open) => {
   }
 })
 
-function applyPlatformPreset(value) {
+function applyPlatformPreset(value: string) {
   selectedPlatform.value = value
   const p = platformPresets.find((x) => x.value === value)
   if (!p || value === 'custom') return
@@ -210,14 +236,15 @@ function onManualChange() {
 }
 
 // 分辨率档位 → 实际像素提示（与后端 resolveResolutionByTier 算法一致）
-const TIER_BASE = { '720p': 1280, '1080p': 1920, '2k': 2560, '4k': 3840 }
+const TIER_BASE: Record<string, number> = { '720p': 1280, '1080p': 1920, '2k': 2560, '4k': 3840 }
 const resolutionHint = computed(() => {
   const base = TIER_BASE[settings.resolution] || 1920
   const parts = String(settings.ratio).split(':')
-  const wr = parseFloat(parts[0]) || 16
-  const hr = parseFloat(parts[1]) || 9
-  const even = (n) => { n = Math.round(n); return n % 2 === 0 ? n : n + 1 }
-  let w, h
+  const wr = parseFloat(parts[0] ?? '') || 16
+  const hr = parseFloat(parts[1] ?? '') || 9
+  const even = (number: number): number => { const rounded = Math.round(number); return rounded % 2 === 0 ? rounded : rounded + 1 }
+  let w: number
+  let h: number
   if (Math.abs(wr - hr) < 0.01) { w = h = even(base * 0.5625) }
   else if (wr > hr) { w = even(base); h = even(base * (hr / wr)) }
   else { w = even(base * (wr / hr)); h = even(base) }
@@ -225,7 +252,7 @@ const resolutionHint = computed(() => {
 })
 
 const qualityHint = computed(() => {
-  const map = {
+  const map: Record<string, string> = {
     standard: t('preview.qualityStandardHint'),
     high: t('preview.qualityHighHint'),
     ultra: t('preview.qualityUltraHint'),
@@ -243,14 +270,14 @@ async function chooseExportDirectory() {
       directoryCheck.value = { ok: true, message: '目录已选择并可写', path: picked.path }
       ElMessage.success('已选择导出目录')
     }
-  } catch (e) {
-    ElMessage.warning(e?.response?.data?.message || e.message || '无法打开目录选择器，请手动输入目录路径')
+  } catch (cause) {
+    ElMessage.warning(cause instanceof Error ? cause.message : '无法打开目录选择器，请手动输入目录路径')
   } finally {
     pickingDir.value = false
   }
 }
 
-async function verifyExportDirectory({ silent = false } = {}) {
+async function verifyExportDirectory({ silent = false }: { silent?: boolean } = {}): Promise<boolean> {
   if (!settings.copyToCustomDir) {
     directoryCheck.value = null
     return true
@@ -264,7 +291,7 @@ async function verifyExportDirectory({ silent = false } = {}) {
   checkingDir.value = true
   try {
     const result = await checkDir(dir, true)
-    directoryCheck.value = result
+    directoryCheck.value = { ok: result.ok === true, message: result.message || '', path: result.path }
     if (result?.ok && result.path) settings.exportDirectory = result.path
     if (!result?.ok) {
       if (!silent) ElMessage.warning(result?.message || '目录不可用')
@@ -272,8 +299,8 @@ async function verifyExportDirectory({ silent = false } = {}) {
     }
     if (!silent) ElMessage.success('目录可用')
     return true
-  } catch (e) {
-    directoryCheck.value = { ok: false, message: e?.response?.data?.message || e.message || '目录验证失败' }
+  } catch (cause) {
+    directoryCheck.value = { ok: false, message: cause instanceof Error ? cause.message : '目录验证失败' }
     if (!silent) ElMessage.error(directoryCheck.value.message)
     return false
   } finally {

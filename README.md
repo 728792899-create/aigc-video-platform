@@ -239,7 +239,7 @@ stateDiagram-v2
   succeeded --> [*]
 ```
 
-### 程序退出后的自动恢复
+### 程序退出后的安全恢复
 
 ```mermaid
 sequenceDiagram
@@ -253,12 +253,17 @@ sequenceDiagram
   API--xUI: 应用或服务进程退出
   Note over DB: 已完成资产与当前阶段仍在磁盘
   API->>DB: 下次启动加载 pending/running/interrupted
-  API->>Runner: 按 recovery.kind 重建执行器
-  Runner->>DB: 从最近检查点继续并增加恢复次数
-  Runner-->>UI: 返回恢复进度、结果或诊断
+  alt Demo/local 且 safe-auto
+    API->>Runner: 按 recovery.kind 重建执行器
+    Runner->>DB: 从最近检查点继续并增加恢复次数
+    Runner-->>UI: 返回恢复进度、结果或诊断
+  else 云 Provider 或结果未知
+    API->>DB: 标记 orphaned，不自动重复提交
+    API-->>UI: 展示核对、诊断和人工重试入口
+  end
 ```
 
-恢复器默认最多自动尝试三次；超过上限会进入可诊断失败终态，而不是无限循环。重试某阶段时会保留上游成功资产，并重置其下游检查点以避免使用过期数据。
+明确安全的 Demo/local 任务默认最多自动尝试三次；超过上限会进入可诊断失败终态。云任务若在结果不确定时退出，会进入 `orphaned`，避免静默重提和重复计费。用户核对后可确认重试某阶段，并保留上游成功资产。
 
 ## Provider 与 Demo Mode
 
@@ -392,7 +397,7 @@ flowchart LR
 | 从主题到导出的完整用户操作 | [创作操作手册](docs/user-guide.md) |
 | 从页面和用户任务理解产品 | [产品导览](docs/product-tour.md) |
 | 当前内部兼容 API、幂等和错误格式 | [API 参考](docs/api-reference.md) |
-| schema v3、ERD、快照和迁移 | [数据模型](docs/data-model.md) |
+| schema v6、阶段 revision/stale、Candidate/Variant、持久化幂等、ERD 和迁移 | [数据模型](docs/data-model.md) |
 | 数据库、媒体和恢复验证 | [备份与恢复手册](docs/backup-restore.md) |
 | 状态机、检查点、幂等和重启恢复 | [工作流与崩溃恢复](docs/workflow-recovery.md) |
 | Provider、降级、Demo Mode 和扩展方式 | [Provider 与 Demo 指南](docs/provider-guide.md) |
@@ -425,7 +430,7 @@ flowchart LR
 <details>
 <summary><strong>关闭应用后任务会怎样？</strong></summary>
 
-任务和工作流检查点同步写入 SQLite。下次启动会扫描可恢复状态，并按任务的 `recovery.kind` 重建 runner；超过恢复上限会给出明确诊断。
+任务和工作流检查点同步写入 SQLite。下次启动会扫描未完成任务：Demo/local 安全任务按 `recovery.kind` 续跑；云任务若结果无法确认则进入“结果待核对”，不会自动重复提交。超过恢复上限会给出明确诊断。
 </details>
 
 <details>

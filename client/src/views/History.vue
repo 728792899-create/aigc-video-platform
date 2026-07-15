@@ -13,6 +13,7 @@
           <el-option :label="$t('common.success')" value="success" />
           <el-option :label="$t('common.failed')" value="failed" />
           <el-option :label="$t('history.statusInterrupted')" value="interrupted" />
+          <el-option :label="$t('task.orphaned')" value="orphaned" />
         </el-select>
         <el-button size="small" @click="reload">{{ $t('common.refresh') }}</el-button>
         <el-button size="small" type="danger" plain :disabled="!total" @click="clearAll">{{ $t('history.clearHistory') }}</el-button>
@@ -51,16 +52,17 @@
   </div>
 </template>
 
-<script setup>
+<script setup lang="ts">
+import { z } from 'zod'
 import { ref, onMounted } from 'vue'
 import { useRouter } from 'vue-router'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { useI18n } from 'vue-i18n'
-import { getHistory, retryHistory, deleteHistory, deleteHistoryBatch } from '../api/history'
+import { getHistory, retryHistory, deleteHistory, deleteHistoryBatch, type HistoryRecord } from '../api/history'
 
 const { t } = useI18n()
 const router = useRouter()
-const list = ref([])
+const list = ref<HistoryRecord[]>([])
 const total = ref(0)
 const page = ref(1)
 const pageSize = ref(20)
@@ -68,29 +70,48 @@ const loading = ref(false)
 const filterType = ref('')
 const filterStatus = ref('')
 
-const TYPE_KEYS = { 'auto-produce': 'history.typeAutoProduce', image: 'history.typeImage', video: 'history.typeVideo', tts: 'history.typeTts' }
-const STATUS_KEYS = { success: 'common.success', failed: 'common.failed', interrupted: 'history.statusInterrupted', running: 'common.running', pending: 'common.pending' }
-const STATUS_TYPES = { success: 'success', failed: 'danger', interrupted: 'info', running: 'warning', pending: '' }
+const TYPE_KEYS: Record<string, string> = { 'auto-produce': 'history.typeAutoProduce', image: 'history.typeImage', video: 'history.typeVideo', tts: 'history.typeTts' }
+const STATUS_KEYS: Record<string, string> = { success: 'common.success', failed: 'common.failed', interrupted: 'history.statusInterrupted', orphaned: 'task.orphaned', running: 'common.running', pending: 'common.pending' }
+const STATUS_TYPES: Record<string, '' | 'success' | 'warning' | 'info' | 'danger'> = { success: 'success', failed: 'danger', interrupted: 'info', orphaned: 'warning', running: 'warning', pending: '' }
 
-function typeLabel(tp) { return TYPE_KEYS[tp] ? t(TYPE_KEYS[tp]) : tp }
-function statusLabel(s) { return STATUS_KEYS[s] ? t(STATUS_KEYS[s]) : s }
-function statusType(s) { return STATUS_TYPES[s] || '' }
-function fmtTime(ts) {
-  if (!ts) return '—'
-  const d = new Date(Number(ts))
-  const p = (n) => String(n).padStart(2, '0')
+const DiagnosisSchema = z.object({
+  title: z.string().optional(),
+  reason: z.string().optional(),
+  rawError: z.string().optional(),
+  advice: z.array(z.string()).optional(),
+  partialResult: z.object({
+    storyboard_count: z.number().optional(),
+    image_count: z.number().optional(),
+    selected_image_count: z.number().optional(),
+    audio_count: z.number().optional(),
+  }).optional(),
+  assetHealth: z.object({ issues: z.array(z.object({ message: z.string() })).optional() }).optional(),
+}).passthrough()
+type Diagnosis = z.infer<typeof DiagnosisSchema>
+
+function typeLabel(type: string): string { return TYPE_KEYS[type] ? t(TYPE_KEYS[type]) : type }
+function statusLabel(status: string): string { return STATUS_KEYS[status] ? t(STATUS_KEYS[status]) : status }
+function statusType(status: string): '' | 'success' | 'warning' | 'info' | 'danger' { return STATUS_TYPES[status] || '' }
+function fmtTime(timestamp: string | number | null | undefined): string {
+  if (!timestamp) return '—'
+  const d = new Date(Number(timestamp))
+  const p = (number: number) => String(number).padStart(2, '0')
   return `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())} ${p(d.getHours())}:${p(d.getMinutes())}`
 }
 
-function hasDiagnosis(row) {
-  return !!(row?.diagnosis || row?.meta?.diagnosis || row?.result?.diagnosis)
+function diagnosisOf(row: HistoryRecord): Diagnosis | null {
+  for (const value of [row.diagnosis, row.meta?.diagnosis, row.result?.diagnosis]) {
+    const parsed = DiagnosisSchema.safeParse(value)
+    if (parsed.success) return parsed.data
+  }
+  return null
 }
 
-function diagnosisOf(row) {
-  return row?.diagnosis || row?.meta?.diagnosis || row?.result?.diagnosis || null
+function hasDiagnosis(row: HistoryRecord): boolean {
+  return diagnosisOf(row) !== null
 }
 
-function showDiagnosis(row) {
+function showDiagnosis(row: HistoryRecord) {
   const d = diagnosisOf(row)
   if (!d) return
   const partial = d.partialResult
@@ -116,7 +137,7 @@ function showDiagnosis(row) {
   )
 }
 
-function escapeHtml(s) {
+function escapeHtml(s: unknown): string {
   return String(s || '')
     .replace(/&/g, '&amp;')
     .replace(/</g, '&lt;')
@@ -131,38 +152,44 @@ async function reload() {
     const data = await getHistory({ type: filterType.value || undefined, status: filterStatus.value || undefined, page: page.value, pageSize: pageSize.value })
     list.value = data.list || []
     total.value = data.total || 0
-  } catch (e) {
-    ElMessage.error(t('history.loadFailed') + e.message)
+  } catch (cause) {
+    ElMessage.error(t('history.loadFailed') + (cause instanceof Error ? cause.message : String(cause)))
   } finally {
     loading.value = false
   }
 }
 
-function onPage(p) { page.value = p; reload() }
+function onPage(nextPage: number) { page.value = nextPage; void reload() }
 
-function openProject(row) {
+function openProject(row: HistoryRecord) {
   router.push(`/projects/${row.project_id}/preview`)
 }
 
-async function retry(row) {
+async function retry(row: HistoryRecord) {
   try {
-    await ElMessageBox.confirm(t('history.retryConfirm', { theme: row.theme }), t('common.regenerate'), { type: 'warning' })
-    const data = await retryHistory(row.id)
+    const message = row.status === 'orphaned'
+      ? t('task.orphanedConfirm')
+      : t('history.retryConfirm', { theme: row.theme })
+    await ElMessageBox.confirm(message, t('common.regenerate'), { type: 'warning' })
+    const data = await retryHistory(row.id, {
+      confirm_uncertain_outcome: row.status === 'orphaned',
+    })
     ElMessage.success(t('history.retryStarted'))
-    router.push(`/projects/${data.project_id}/preview`)
-  } catch (e) {
-    if (e !== 'cancel') ElMessage.error(t('history.retryFailed') + (e.message || e))
+    const projectId = data.project_id
+    if (typeof projectId === 'string' || typeof projectId === 'number') router.push(`/projects/${projectId}/preview`)
+  } catch (cause) {
+    if (cause !== 'cancel') ElMessage.error(t('history.retryFailed') + (cause instanceof Error ? cause.message : String(cause)))
   }
 }
 
-async function removeOne(row) {
+async function removeOne(row: HistoryRecord) {
   try {
     await ElMessageBox.confirm(t('history.removeConfirm'), t('history.deleteConfirmTitle'), { type: 'warning' })
     await deleteHistory(row.id)
     ElMessage.success(t('history.deleted'))
     reload()
-  } catch (e) {
-    if (e !== 'cancel') ElMessage.error(t('history.removeFailed') + (e.message || e))
+  } catch (cause) {
+    if (cause !== 'cancel') ElMessage.error(t('history.removeFailed') + (cause instanceof Error ? cause.message : String(cause)))
   }
 }
 
@@ -173,8 +200,8 @@ async function clearAll() {
     ElMessage.success(t('history.cleared'))
     page.value = 1
     reload()
-  } catch (e) {
-    if (e !== 'cancel') ElMessage.error(t('history.clearFailed') + (e.message || e))
+  } catch (cause) {
+    if (cause !== 'cancel') ElMessage.error(t('history.clearFailed') + (cause instanceof Error ? cause.message : String(cause)))
   }
 }
 

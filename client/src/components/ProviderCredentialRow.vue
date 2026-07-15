@@ -32,15 +32,45 @@
   </section>
 </template>
 
-<script setup>
-defineProps({
-  provider: { type: Object, required: true },
-  credential: { type: Object, default: () => ({}) },
-  testing: { type: Boolean, default: false },
-  result: { type: Object, default: null },
+<script setup lang="ts">
+interface CredentialProvider {
+  key?: string
+  label: string
+  userConfigured?: boolean
+  configured?: boolean
+  free?: boolean
+  auth?: string
+  baseUrl?: string
+}
+
+interface CredentialDraft {
+  accessKey?: string
+  secretKey?: string
+  appId?: string
+  apiKey?: string
+  cluster?: string
+  baseUrl?: string
+}
+
+interface TestResult { ok: boolean; latency_ms?: number; error?: string }
+
+withDefaults(defineProps<{
+  provider: CredentialProvider
+  credential?: CredentialDraft
+  testing?: boolean
+  result?: TestResult | null
+}>(), {
+  credential: () => ({}),
+  testing: false,
+  result: null,
 })
-const emit = defineEmits(['update-field', 'save', 'clear', 'test'])
-function update(field, value) { emit('update-field', { field, value }) }
+const emit = defineEmits<{
+  'update-field': [change: { field: keyof CredentialDraft; value: string }]
+  save: []
+  clear: []
+  test: []
+}>()
+function update(field: keyof CredentialDraft, value: string): void { emit('update-field', { field, value }) }
 </script>
 
 <style scoped>

@@ -15,7 +15,11 @@
 const fs = require('fs');
 const path = require('path');
 const { spawnSync } = require('child_process');
-const { resolveFfmpegPath } = require('../utils/ffmpeg');
+const { resolveFfmpegPath } = require('../dist/utils/ffmpeg');
+
+function runtimeModule(name) {
+  return require(path.join(__dirname, '..', 'dist', 'services', name));
+}
 
 function resolvePort() {
   const envPort = parseInt(process.env.PORT, 10);
@@ -48,7 +52,7 @@ function checkNode() {
 // ② FFmpeg：用配置里的路径或 PATH 中的 ffmpeg 跑 -version
 function checkFfmpeg() {
   let configured = 'ffmpeg';
-  try { configured = require('../services/config').get('ffmpegPath') || 'ffmpeg'; } catch (_) {}
+  try { configured = runtimeModule('config').get('ffmpegPath') || 'ffmpeg'; } catch (_) {}
   const { path: bin, source } = resolveFfmpegPath(configured);
   const r = spawnSync(bin, ['-version'], { encoding: 'utf8' });
   if (r.error || r.status !== 0) {
@@ -82,7 +86,7 @@ function checkPort() {
 // ④ 上传目录：存在且可写（试写一个临时文件再删）
 function checkUploadDir() {
   let dir;
-  try { dir = require('../services/config').get('uploadDir'); } catch (_) {}
+  try { dir = runtimeModule('config').get('uploadDir'); } catch (_) {}
   if (!dir) dir = path.join(__dirname, '..', 'uploads');
   try {
     fs.mkdirSync(dir, { recursive: true });
@@ -123,8 +127,8 @@ async function checkDatabase() {
 function checkProviders() {
   let providers, config;
   try {
-    providers = require('../services/providers');
-    config = require('../services/config');
+    providers = runtimeModule('providers');
+    config = runtimeModule('config');
   } catch (e) {
     warn('AI 服务接入', `无法读取 Provider 配置：${e.message}`);
     return;

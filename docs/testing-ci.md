@@ -20,7 +20,9 @@ flowchart TB
 
 | 命令 | 覆盖内容 | 是否需要 Key |
 | --- | --- | --- |
-| `npm run quality` | server 预检、测试、Demo、client 测试和构建 | 否 |
+| `npm run quality` | contracts/server/client/Electron typecheck、ESLint、95% 类型覆盖率、server 预检、测试、Demo、client 测试和构建 | 否 |
+| `npm run typecheck` | 共享契约、server、Vue SFC 与 Electron strict TypeScript | 否 |
+| `npm run type-coverage` | 一方运行时代码 TypeScript 覆盖率门禁（当前 100%） | 否 |
 | `npm run test:smoke` | 公共 API、MP4、阶段重试、重启恢复 | 否 |
 | `npm --prefix client test` | i18n、路径脱敏等客户端单元测试 | 否 |
 | `npm run security:audit:all` | 三套依赖树完整审计 | 否 |
@@ -55,6 +57,8 @@ CI 与验收脚本显式设置 Demo 和本地静音模式，并清空 OpenAI、D
 - Provider health 不返回凭证；
 - 任务重启后仍可查询；
 - 达到恢复上限时进入诊断失败。
+- 回收站部分恢复保持图片/分镜引用一致，动态快照恢复只允许白名单表和安全字段名；
+- FFmpeg 子进程错误、导出目录不可写、文件魔数和数据库时间兼容均有独立工具测试。
 
 ## Demo 验收
 
@@ -63,7 +67,8 @@ flowchart LR
   Start["临时目录启动"] --> Produce["创建项目并生产"]
   Produce --> Kill["图片检查点终止服务"]
   Kill --> Restart["同 DB/媒体目录重启"]
-  Restart --> Resume["自动续跑"]
+  Restart --> Resume["Demo/local safe-auto 自动续跑"]
+  Restart --> Orphan["云/未知任务 orphaned"]
   Resume --> MP4["验证 MP4"]
   MP4 --> Inject["导出阶段注入一次失败"]
   Inject --> Retry["只重试 export"]
@@ -74,10 +79,13 @@ flowchart LR
 
 ## 客户端测试与构建
 
-客户端测试保护两个桌面特有风险：
+客户端测试保护桌面与 Web 共用的关键边界：
 
 - CSP 下 i18n 不依赖运行时 `eval`；
 - UI 展示路径时隐藏 `/Users/<name>`、`/home/<name>` 和 `C:\\Users\\<name>`。
+- Script/Preview/API 响应通过共享 Zod 契约解析，语义化版本不会被误当成整数；
+- Candidate 选择不覆盖既有选择，分镜卡和项目卡提供明确的键盘/辅助技术入口；
+- 视图路由、模型能力标签和 Electron bridge 的类型边界可被静态检查。
 
 生产构建是质量门禁的一部分。大 chunk 警告不会使构建失败，但应持续关注 Element Plus 的体积并在后续做更细粒度拆分。
 
@@ -97,7 +105,7 @@ flowchart TD
   Signed --> Draft["GitHub draft release"]
 ```
 
-Ubuntu job 执行三套 `npm ci`、完整审计、源码扫描、FFmpeg、quality、桌面准备和 Electron 预检。
+Ubuntu job 对 root、contracts、server、client 四套 lockfile 执行 `npm ci`，然后运行完整审计、源码扫描、FFmpeg、quality、桌面准备和 Electron 预检。
 
 桌面矩阵在 macOS 生成 arm64 ad-hoc 包并严格验签，在 Windows 生成 x64 unsigned 预检目录。手动 Release 默认只做预检；tag 或关闭预检开关时要求正式签名与公证 Secrets。
 
@@ -105,6 +113,7 @@ Ubuntu job 执行三套 `npm ci`、完整审计、源码扫描、FFmpeg、qualit
 
 ```bash
 npm ci
+npm --prefix packages/contracts ci
 npm --prefix server ci
 npm --prefix client ci
 npm run security:audit:all
@@ -114,6 +123,11 @@ npm run quality
 npm run prepare:desktop
 npm run electron:preflight
 ```
+
+桌面冒烟启动必须与真实用户数据隔离。测试进程同时设置
+`AIGC_STUDIO_ALLOW_USER_DATA_OVERRIDE=1` 和绝对路径
+`AIGC_STUDIO_USER_DATA_DIR=/tmp/...`；覆盖仅在显式开关开启时生效，正常启动仍
+使用 Electron 的系统 `userData` 目录。
 
 如需模拟完全无 Git 的源码包，`security-check.mjs` 会回退到文件系统扫描，并跳过 `.git`、`node_modules`、构建产物和 coverage。
 

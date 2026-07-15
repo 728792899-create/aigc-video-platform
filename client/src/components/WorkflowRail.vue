@@ -15,15 +15,18 @@
   </div>
 </template>
 
-<script setup>
+<script setup lang="ts">
 import { computed } from 'vue'
 
-const props = defineProps({
-  workflow: { type: Object, default: null },
-  compact: { type: Boolean, default: false },
+interface WorkflowStageState { status?: string; attempts?: number; error?: string }
+interface WorkflowState { stages?: Record<string, WorkflowStageState> }
+
+const props = withDefaults(defineProps<{ workflow?: WorkflowState | null; compact?: boolean }>(), {
+  workflow: null,
+  compact: false,
 })
 
-const STAGES = [
+const STAGES: Array<[key: string, label: string]> = [
   ['topic', '主题'], ['script', '脚本'], ['storyboard', '分镜'], ['image', '图片'],
   ['voice', '配音'], ['subtitle', '字幕'], ['timeline', '时间线'], ['export', '导出'],
 ]

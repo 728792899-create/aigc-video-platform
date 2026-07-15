@@ -14,6 +14,7 @@
 - 服务暴露到局域网；
 - 安装包混入开发数据库、上传文件或日志；
 - 迁移/恢复破坏数据库且无法回退。
+- Provider 返回的媒体 URL 指向本机/私网、重定向绕过或超大/伪造媒体耗尽资源。
 
 当前不承诺抵御已经取得用户操作系统账户、调试权限或进程内存读取能力的本地攻击者。代码混淆和 ASAR 也不等同于加密或 DRM。
 
@@ -111,6 +112,14 @@ sequenceDiagram
 - 文件名与目标目录规范化。
 
 不要把桌面后端直接反向代理到公网。需要远程访问时，应重新设计鉴权、租户隔离、CSRF、配额、审计和密钥管理。
+
+## Provider 远程媒体边界
+
+云端图片/视频结果必须先经过 `server/services/remoteMedia.js`，不能由 adapter 自行递归跟随跳转。下载器会全量检查 DNS 结果并固定已验证地址，每一次重定向重新校验；拒绝回环、私网、link-local、CGNAT、云 metadata 和保留网段。响应还需通过大小上限、MIME 与 magic bytes 一致性检查，最终以临时文件 `fsync` 后原子落盘。
+
+adapter 对客户端只返回受管的 `/uploads/...` 引用，不持久化或透传 Provider 签名 URL及其 query。新增媒体 Provider 时必须复用该边界并补充对应 kind/格式测试。
+
+T2V 输入首帧已统一经过 `server/services/mediaAdapter.js`：ModelCatalog 先确认 `image_to_video` 能力，本地媒体再验证受管目录、穿越片段、普通文件、9 MB 上限与 PNG/JPEG/WebP/GIF magic bytes。data URL 仅作为瞬时 Provider 请求值，持久化快照不包含 base64、绝对路径或 URL query。`public_url` 会复用 DNS/私网检查；object key 只有显式配置 resolver 后才能使用。对象存储上传和短期签名 URL 生成仍未实现。
 
 ## 数据分类
 

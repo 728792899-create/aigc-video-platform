@@ -17,6 +17,24 @@
       @primary="handleGuidePrimary"
     />
 
+    <div v-if="artifactState.current.length || artifactState.stale.length" class="artifact-status" role="status">
+      <div class="artifact-status-main">
+        <strong>阶段产物</strong>
+        <el-tag
+          v-for="artifact in artifactState.current"
+          :key="artifact.id"
+          size="small"
+          effect="plain"
+        >
+          {{ artifact.stage }} r{{ artifact.revision }}
+        </el-tag>
+        <el-tag v-if="artifactState.stale.length" size="small" type="warning" effect="plain">
+          {{ artifactState.stale.length }} 个旧版本待复查
+        </el-tag>
+      </div>
+      <small>上游改稿会保留旧产物并标记 stale，不会静默删除候选素材。</small>
+    </div>
+
     <div v-if="chapterSummary.length" class="chapter-summary">
       <div class="chapter-summary-head">
         <strong>章节结构</strong>
@@ -149,6 +167,13 @@
         <div>
           <h2>{{ scriptResult.title }}</h2>
           <p class="summary">{{ scriptResult.summary }}</p>
+          <div v-if="scriptResult.schema_version" class="contract-badges">
+            <el-tag size="small" type="success" effect="plain">Schema {{ scriptResult.schema_version }}</el-tag>
+            <el-tag size="small" effect="plain">{{ scriptResult.prompt_version }}</el-tag>
+            <el-tag size="small" type="info" effect="plain">
+              {{ scriptResult.generation?.provider || 'manual' }} · {{ scriptResult.generation?.model || 'manual-edit' }}
+            </el-tag>
+          </div>
         </div>
         <el-button type="success" @click="saveStoryboards" :loading="saving">
           {{ $t('script.saveStoryboards') }}
@@ -272,16 +297,32 @@
   </div>
 </template>
 
-<script setup>
-import { ref, computed, nextTick, onMounted } from 'vue'
+<script setup lang="ts">
+import type { Project } from '@aigc-video/contracts'
+import { ref, computed, nextTick, onMounted, type Ref } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { useI18n } from 'vue-i18n'
 import { ElMessage, ElMessageBox } from 'element-plus'
-import api from '../api'
-import { getProviders } from '../api/providers'
-import { listSkills, listActiveSkills } from '../api/skills'
+import { getProviders, type ProviderView } from '../api/providers'
+import { listSkills, listActiveSkills, type CreativeSkill } from '../api/skills'
 import { mediaUrl } from '../api/config'
-import { getWorkbenchStatus, repairWorkbench } from '../api/projects'
+import { getProject, repairWorkbench } from '../api/projects'
+import {
+  expandStoryboardDialog,
+  generateStructuredScript,
+  getArtifactState,
+  getScriptWorkbenchStatus,
+  listStoryboards,
+  optimizeScriptTheme,
+  reconcileStoryboards,
+  submitStoryboardImage,
+  submitStoryboardVoice,
+  type ArtifactState,
+  type EditableStoryboard,
+  type ScriptResult,
+  type WorkbenchAction,
+  type WorkbenchStatus,
+} from '../api/script'
 import WorkbenchGuide from '../components/WorkbenchGuide.vue'
 import ProjectStageFooter from '../components/ProjectStageFooter.vue'
 import StoryboardEditor from '../components/StoryboardEditor.vue'
@@ -300,6 +341,9 @@ import {
   sliderMaxForDuration,
   sliderStepForDuration,
   targetDurationSec,
+  type DetailLevel,
+  type DurationPresetValue,
+  type DurationRange,
 } from '../utils/durationPresets'
 import {
   getStoryBible,
@@ -308,49 +352,62 @@ import {
   extractCharacters,
   updateCharacter,
   lockCharacter,
+  type ContinuityRecord,
+  type StoryBible,
 } from '../api/continuity'
+
+type ExpandableScene = {
+  id?: string | number
+  dialog: string
+  _expanding?: boolean
+}
 
 const route = useRoute()
 const router = useRouter()
 const { t } = useI18n()
-const projectId = route.params.id
+const projectId = String(route.params.id || '')
 
-const project = ref(null)
+function errorMessage(cause: unknown, fallback: string): string {
+  return cause instanceof Error ? cause.message : fallback
+}
+
+const project = ref<Project | null>(null)
 const theme = ref('')
-const duration = ref([...DEFAULT_DURATION_RANGE])
-const durationPreset = ref(DEFAULT_DURATION_PRESET)
+const duration = ref<DurationRange>([...DEFAULT_DURATION_RANGE])
+const durationPreset = ref<DurationPresetValue>(DEFAULT_DURATION_PRESET)
 const style = ref('写实')
 const generating = ref(false)
 const saving = ref(false)
 const optimizing = ref(false)
-const scriptResult = ref(null)
-const storyboards = ref([])
-const savedStoryboardIds = ref([])
-const activeScenes = ref([])
+const scriptResult = ref<ScriptResult | null>(null)
+const storyboards = ref<EditableStoryboard[]>([])
+const savedStoryboardIds = ref<Array<string | number>>([])
+const activeScenes = ref<Array<string | number>>([])
 // ⑥⑦ 台词详细程度 + 创作技能
-const detailLevel = ref('standard')
-const skillIds = ref([])
-const scriptSkills = ref([])
-const autoSkills = ref([])
-const skillSelectRef = ref(null)
+const detailLevel = ref<DetailLevel>('standard')
+const skillIds = ref<Array<string | number>>([])
+const scriptSkills = ref<CreativeSkill[]>([])
+const autoSkills = ref<CreativeSkill[]>([])
+const skillSelectRef = ref<{ blur?: () => void } | null>(null)
 const continuityVisible = ref(false)
 const savingBible = ref(false)
 const extractingCharacters = ref(false)
-const storyBible = ref({})
-const characters = ref([])
-const workbenchStatus = ref(null)
+const storyBible = ref<StoryBible>({ worldview: '', mainline: '', previous_summary: '', locked_facts: '', scene_rules: '' })
+const characters = ref<ContinuityRecord[]>([])
+const workbenchStatus = ref<WorkbenchStatus | null>(null)
+const artifactState = ref<ArtifactState>({ current: [], stale: [], history: [] })
 const repairingWorkbench = ref(false)
 const durationPresetOptions = DURATION_PRESET_OPTIONS
 
-const llmProviders = ref([])
+const llmProviders = ref<ProviderView[]>([])
 const scriptProvider = ref('deepseek')
 const scriptModel = ref('')
 
-function closeSelectAfterChange(selectRef) {
+function closeSelectAfterChange(selectRef: Ref<{ blur?: () => void } | null>): void {
   nextTick(() => selectRef.value?.blur?.())
 }
 
-function closeSkillSelect() {
+function closeSkillSelect(): void {
   closeSelectAfterChange(skillSelectRef)
 }
 const scriptModelOptions = computed(() => {
@@ -369,7 +426,7 @@ const detailLevelOptions = computed(() => [
 ])
 const currentDetailHint = computed(() => {
   const item = detailLevelOptions.value.find((x) => x.value === detailLevel.value)
-  return item ? item.label : detailLevelOptions.value[1].label
+  return item?.label || detailLevelOptions.value[0]?.label || ''
 })
 const scriptStageReady = computed(() => storyboards.value.some((s) => s.id))
 const totalStoryboardDuration = computed(() => storyboards.value.reduce((sum, s) => sum + (Number(s.duration) || 5), 0))
@@ -385,7 +442,7 @@ const narrationCps = computed(() => {
   if (detailLevel.value === 'rich') return 5.1
   return 4.25
 })
-function countNarrationChars(text) {
+function countNarrationChars(text: unknown): number {
   return String(text || '')
     .replace(/(^|[\n。！？；.!?;])\s*[（(【[][^）)】\]\n]{1,12}[）)】\]][:：]?\s*/g, '$1')
     .replace(/^[^：:\n]{1,8}\s*[：:]\s*/gm, '')
@@ -417,7 +474,7 @@ const qualityWarnings = computed(() => {
   return [...new Set(warnings)]
 })
 const chapterSummary = computed(() => {
-  const map = new Map()
+  const map = new Map<number, { index: number; title: string; count: number; duration: number }>()
   for (const sb of storyboards.value) {
     const index = Number(sb.chapter_index || 0)
     if (!index || storyboards.value.length < 20) continue
@@ -428,6 +485,7 @@ const chapterSummary = computed(() => {
       duration: 0,
     })
     const item = map.get(index)
+    if (!item) continue
     item.count += 1
     item.duration += Number(sb.duration) || 5
   }
@@ -439,20 +497,20 @@ const scriptStageBlockedReason = computed(() => {
   return '请先生成并保存分镜，再进入画面生成。'
 })
 
-function goNextStage() {
+function goNextStage(): void {
   router.push(`/projects/${projectId}/images`)
 }
 
-function applyDurationPreset(value) {
+function applyDurationPreset(value: DurationPresetValue): void {
   if (value === 'custom') return
   duration.value = rangeForPreset(value, duration.value)
 }
 
-function markDurationCustom() {
+function markDurationCustom(): void {
   durationPreset.value = 'custom'
 }
 
-function expandDialogLocally(scene, targetExtraChars, index) {
+function expandDialogLocally(scene: EditableStoryboard, targetExtraChars: number, index: number): void {
   const chapter = scene.chapter_title || '当前章节'
   const topic = theme.value || project.value?.theme || '这个主题'
   const sentences = [
@@ -469,14 +527,14 @@ function expandDialogLocally(scene, targetExtraChars, index) {
   const target = countNarrationChars(original) + targetExtraChars
   while (countNarrationChars(text) < target && guard < sentences.length * 3) {
     const sentence = sentences[(index + guard) % sentences.length]
-    text += sentence
+    if (sentence) text += sentence
     guard++
   }
   scene.dialog = text
   scene.duration = Math.max(8, Math.min(60, Math.round(countNarrationChars(text) / narrationCps.value + 0.8)))
 }
 
-function refreshNarrationMeta() {
+function refreshNarrationMeta(): void {
   if (!scriptResult.value) return
   scriptResult.value.narration_stats = {
     char_count: narrationStats.value.charCount,
@@ -489,7 +547,7 @@ function refreshNarrationMeta() {
   scriptResult.value.quality_warnings = qualityWarnings.value.filter((item) => !item.includes('低于目标下限'))
 }
 
-function expandNarrationToTarget() {
+function expandNarrationToTarget(): void {
   if (!storyboards.value.length) return
   const targetSec = targetDurationSec(duration.value)
   const missingChars = Math.max(0, Math.ceil((targetSec - narrationStats.value.estimatedNarrationSec) * narrationCps.value))
@@ -500,23 +558,24 @@ function expandNarrationToTarget() {
   ElMessage.success('已扩写当前生成结果的对白。确认效果后再保存分镜，旧分镜不会被自动覆盖。')
 }
 
-function onScriptProviderChange() {
+function onScriptProviderChange(): void {
   const models = scriptModelOptions.value
   if (models.length && !models.includes(scriptModel.value)) {
-    scriptModel.value = models[0]
+    scriptModel.value = models[0] || ''
   }
 }
 
 const loadLlmProviders = async () => {
   try {
     const grouped = await getProviders()
-    llmProviders.value = (grouped && grouped.llm) || []
+    llmProviders.value = grouped.llm
     const configured = llmProviders.value.filter((p) => p.configured)
-    if (configured.length && !configured.find((p) => p.key === scriptProvider.value)) {
-      scriptProvider.value = configured[0].key
+    const firstConfigured = configured[0]
+    if (firstConfigured && !configured.find((p) => p.key === scriptProvider.value)) {
+      scriptProvider.value = firstConfigured.key
     }
     onScriptProviderChange()
-  } catch (e) {
+  } catch {
     // 拉取失败则保持默认 deepseek，generateScript 不传 provider 即走后端默认
   }
 }
@@ -532,13 +591,12 @@ const styleOptions = computed(() => [
 
 const loadProject = async () => {
   try {
-    const res = await api.get(`/projects/${projectId}`)
-    project.value = res.data.data || res.data
+    project.value = await getProject(projectId)
     if (project.value?.theme && !theme.value) theme.value = project.value.theme
     if (project.value?.style && !style.value) style.value = project.value.style
     const savedMin = Number(project.value?.duration_min)
     const savedMax = Number(project.value?.duration_max)
-    const savedRange = Number.isFinite(savedMin) && Number.isFinite(savedMax) && savedMin > 0 && savedMax >= savedMin
+    const savedRange: DurationRange | null = Number.isFinite(savedMin) && Number.isFinite(savedMax) && savedMin > 0 && savedMax >= savedMin
       ? [savedMin, savedMax]
       : null
     if (savedRange && !(savedRange[0] === 60 && savedRange[1] === 180)) {
@@ -552,26 +610,34 @@ const loadProject = async () => {
 
 const loadWorkbenchStatus = async () => {
   try {
-    workbenchStatus.value = await getWorkbenchStatus(projectId)
+    workbenchStatus.value = await getScriptWorkbenchStatus(projectId)
   } catch {
     workbenchStatus.value = null
   }
 }
 
-const handleWorkbenchRepair = async (type = 'auto') => {
+const loadArtifactState = async () => {
+  try {
+    artifactState.value = await getArtifactState(projectId)
+  } catch {
+    artifactState.value = { current: [], stale: [], history: [] }
+  }
+}
+
+const handleWorkbenchRepair = async (type = 'auto'): Promise<void> => {
   repairingWorkbench.value = true
   try {
     await repairWorkbench(projectId, { type })
     ElMessage.success('工作台已完成修复')
-    await Promise.all([loadContinuity(), loadWorkbenchStatus(), loadStoryboards()])
-  } catch (e) {
-    ElMessage.error(e.message || '修复失败')
+    await Promise.all([loadContinuity(), loadWorkbenchStatus(), loadStoryboards(), loadArtifactState()])
+  } catch (cause: unknown) {
+    ElMessage.error(errorMessage(cause, '修复失败'))
   } finally {
     repairingWorkbench.value = false
   }
 }
 
-const handleGuidePrimary = async (action) => {
+const handleGuidePrimary = async (action: WorkbenchAction): Promise<void> => {
   if (!action) return
   if (action.type === 'repair_characters') {
     await handleExtractCharacters()
@@ -588,17 +654,18 @@ const handleGuidePrimary = async (action) => {
 
 const loadStoryboards = async () => {
   try {
-    const res = await api.get(`/storyboards/project/${projectId}`)
-    const list = res.data.data || res.data || []
+    const list = await listStoryboards(projectId)
     if (list.length) {
       storyboards.value = list
-      savedStoryboardIds.value = list.map((item) => item.id).filter(Boolean)
-      scriptResult.value = { title: t('script.savedStoryboards'), summary: '' }
+      savedStoryboardIds.value = list
+        .map((item) => item.id)
+        .filter((id): id is string | number => id !== undefined)
+      scriptResult.value = { title: t('script.savedStoryboards'), summary: '', storyboards: list }
       activeScenes.value = [0]
     } else {
       savedStoryboardIds.value = []
     }
-  } catch (e) {
+  } catch {
     // No existing storyboards
   }
 }
@@ -611,15 +678,13 @@ const optimizeTheme = async () => {
   }
   optimizing.value = true
   try {
-    const res = await api.post('/ai/optimize-theme', {
+    const data = await optimizeScriptTheme({
       theme: theme.value,
       style: style.value,
       scriptProvider: scriptProvider.value || undefined,
       scriptModel: scriptModel.value || undefined,
     })
-    const data = res.data.data || res.data
     const optimized = data.theme
-    if (!optimized) throw new Error('empty')
     await ElMessageBox.confirm(
       `<div style="margin-bottom:10px;line-height:1.6"><b>${t('script.optimizeOriginal')}</b><br/>${escapeHtml(data.original || theme.value)}</div>` +
       `<div style="line-height:1.6"><b style="color:var(--el-color-primary)">${t('script.optimizeResult')}</b><br/>${escapeHtml(optimized)}</div>`,
@@ -636,8 +701,9 @@ const optimizeTheme = async () => {
   }
 }
 
-function escapeHtml(s) {
-  return String(s || '').replace(/[&<>"]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]))
+function escapeHtml(value: unknown): string {
+  const entities: Record<string, string> = { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }
+  return String(value || '').replace(/[&<>"]/g, (character) => entities[character] || character)
 }
 
 const generateScript = async () => {
@@ -647,7 +713,7 @@ const generateScript = async () => {
   }
   generating.value = true
   try {
-    const res = await api.post('/ai/generate-script', {
+    const data = await generateStructuredScript({
       theme: theme.value,
       duration: durationPayload(duration.value),
       durationPreset: durationPreset.value,
@@ -660,41 +726,39 @@ const generateScript = async () => {
       skill_ids: skillIds.value?.length ? skillIds.value : undefined,
       project_id: projectId,
     })
-    const data = res.data.data || res.data
     scriptResult.value = data
-    storyboards.value = data.storyboards || []
+    storyboards.value = data.storyboards
     activeScenes.value = storyboards.value.map((_, i) => i)
     ElMessage.success(t('script.generateSuccess'))
     await loadWorkbenchStatus()
-  } catch (e) {
-    ElMessage.error(t('script.generateFailed'))
+  } catch (cause: unknown) {
+    ElMessage.error(errorMessage(cause, t('script.generateFailed')))
   } finally {
     generating.value = false
   }
 }
 
 // ⑥ 单镜台词 AI 扩写
-const expandSceneDialog = async (scene) => {
+const expandSceneDialog = async (scene: ExpandableScene): Promise<void> => {
   if (!scene.dialog || !scene.dialog.trim()) {
     ElMessage.warning(t('script.dialogEmpty'))
     return
   }
   scene._expanding = true
   try {
-    const res = await api.post('/ai/expand-dialog', {
+    const data = await expandStoryboardDialog({
       dialog: scene.dialog,
       storyboard_id: scene.id || undefined,
       detailLevel: 'rich',
       skill_ids: skillIds.value?.length ? skillIds.value : undefined,
     })
-    const data = res.data.data || res.data
-    if (data && data.dialog) {
+    if (data.dialog) {
       scene.dialog = data.dialog
       ElMessage.success(t('script.expandSuccess'))
     } else {
       ElMessage.warning(t('script.expandFailed'))
     }
-  } catch (e) {
+  } catch {
     ElMessage.error(t('script.expandFailed'))
   } finally {
     scene._expanding = false
@@ -705,10 +769,10 @@ const saveStoryboards = async () => {
   saving.value = true
   try {
     const hadSavedStoryboards = savedStoryboardIds.value.length > 0
-    const response = await api.post('/storyboards/reconcile', {
+    const detail = await reconcileStoryboards({
       project_id: projectId,
       storyboards: storyboards.value,
-      visual_anchor: (scriptResult.value && scriptResult.value.visual_anchor) || undefined,
+      visual_anchor: scriptResult.value?.visual_anchor || undefined,
       script_result: scriptResult.value || undefined,
       duration_min: duration.value[0],
       duration_max: duration.value[1],
@@ -716,10 +780,9 @@ const saveStoryboards = async () => {
       durationPreset: durationPreset.value,
       durationMode: 'tolerance',
     })
-    const detail = response.data.data || {}
-    const regenerateIds = detail.regenerate_ids || []
+    const regenerateIds = detail.regenerate_ids
     ElMessage.success(regenerateIds.length
-      ? `分镜保存成功，${regenerateIds.length} 个镜头的旧素材已失效`
+      ? `分镜保存成功，${regenerateIds.length} 个镜头的旧素材已保留并标记待复查`
       : t('script.saveStoryboardsSuccess'))
 
     // 已有项目改稿时给用户明确选择；确认后只重生成后端 diff 返回的受影响镜头。
@@ -731,39 +794,31 @@ const saveStoryboards = async () => {
           '局部重生成',
           { confirmButtonText: '仅重生成变化镜头', cancelButtonText: '稍后手动生成', type: 'warning' }
         )
-        await regenerateStoryboardAssets(regenerateIds, detail.storyboards || [])
-      } catch (e) {
-        if (e !== 'cancel' && e !== 'close') throw e
+        await regenerateStoryboardAssets(regenerateIds, detail.storyboards)
+      } catch (cause: unknown) {
+        if (cause !== 'cancel' && cause !== 'close') throw cause
       }
     }
-    await Promise.all([loadContinuity(), loadWorkbenchStatus(), loadStoryboards()])
-  } catch (e) {
+    await Promise.all([loadContinuity(), loadWorkbenchStatus(), loadStoryboards(), loadArtifactState()])
+  } catch {
     ElMessage.error(t('script.saveFailed'))
   } finally {
     saving.value = false
   }
 }
 
-async function regenerateStoryboardAssets(ids, rows) {
+async function regenerateStoryboardAssets(
+  ids: Array<string | number>,
+  rows: EditableStoryboard[],
+): Promise<void> {
   let submitted = 0
   let failed = 0
   for (const id of ids) {
     const scene = rows.find((item) => Number(item.id) === Number(id))
     if (!scene) continue
-    const jobs = [api.post('/ai/generate-image', {
-      storyboard_id: id,
-      async: true,
-      batch_size: 1,
-      repair_mode: true,
-      auto_select_best: true,
-      reuse_cache: false,
-    })]
+    const jobs: Array<Promise<Record<string, unknown>>> = [submitStoryboardImage(id)]
     if (String(scene.dialog || '').trim() && !scene.no_voice) {
-      jobs.push(api.post('/ai/generate-tts', {
-        text: scene.dialog,
-        storyboard_id: id,
-        voice: scene.voice || undefined,
-      }))
+      jobs.push(submitStoryboardVoice(scene))
     }
     const results = await Promise.allSettled(jobs)
     if (results.some((item) => item.status === 'rejected')) failed++
@@ -775,9 +830,9 @@ async function regenerateStoryboardAssets(ids, rows) {
 
 const loadContinuity = async () => {
   try {
-    storyBible.value = await getStoryBible(projectId) || {}
+    storyBible.value = await getStoryBible(projectId)
   } catch {
-    storyBible.value = {}
+    storyBible.value = { worldview: '', mainline: '', previous_summary: '', locked_facts: '', scene_rules: '' }
   }
   try {
     characters.value = await listCharacters(projectId) || []
@@ -796,8 +851,8 @@ const saveStoryBible = async () => {
   try {
     storyBible.value = await updateStoryBible(projectId, storyBible.value)
     ElMessage.success(t('script.storyBibleSaved'))
-  } catch (e) {
-    ElMessage.error(e.message || t('script.storyBibleSaveFailed'))
+  } catch (cause: unknown) {
+    ElMessage.error(errorMessage(cause, t('script.storyBibleSaveFailed')))
   } finally {
     savingBible.value = false
   }
@@ -809,32 +864,32 @@ const handleExtractCharacters = async () => {
     characters.value = await extractCharacters(projectId, false)
     ElMessage.success(t('script.charactersExtracted'))
     await loadWorkbenchStatus()
-  } catch (e) {
-    ElMessage.error(e.message || t('script.charactersExtractFailed'))
+  } catch (cause: unknown) {
+    ElMessage.error(errorMessage(cause, t('script.charactersExtractFailed')))
   } finally {
     extractingCharacters.value = false
   }
 }
 
-const saveCharacter = async (character) => {
+const saveCharacter = async (character: ContinuityRecord): Promise<void> => {
   try {
     await updateCharacter(character.id, character)
     ElMessage.success(t('script.characterSaved'))
     await loadContinuity()
     await loadWorkbenchStatus()
-  } catch (e) {
-    ElMessage.error(e.message || t('script.characterSaveFailed'))
+  } catch (cause: unknown) {
+    ElMessage.error(errorMessage(cause, t('script.characterSaveFailed')))
   }
 }
 
-const toggleCharacterLock = async (character) => {
+const toggleCharacterLock = async (character: ContinuityRecord): Promise<void> => {
   try {
     await lockCharacter(character.id, !character.locked)
     ElMessage.success(!character.locked ? t('script.characterLocked') : t('script.characterUnlocked'))
     await loadContinuity()
     await loadWorkbenchStatus()
-  } catch (e) {
-    ElMessage.error(e.message || t('script.characterLockFailed'))
+  } catch (cause: unknown) {
+    ElMessage.error(errorMessage(cause, t('script.characterLockFailed')))
   }
 }
 
@@ -844,6 +899,7 @@ onMounted(() => {
   loadLlmProviders()
   loadContinuity()
   loadWorkbenchStatus()
+  loadArtifactState()
   // 加载可选技能(供手动勾选),只显示 enabled 且非自动应用的技能(避免重复)
   listSkills('script', true).then((list) => { 
     scriptSkills.value = list.filter(s => !s.auto_apply) 

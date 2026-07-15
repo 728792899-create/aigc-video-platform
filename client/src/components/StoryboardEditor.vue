@@ -15,11 +15,27 @@
   </el-collapse>
 </template>
 
-<script setup>
+<script setup lang="ts">
 import { useI18n } from 'vue-i18n'
 const { t } = useI18n()
-defineProps({ scenes:{type:Array,default:()=>[]}, active:{type:Array,default:()=>[]} })
-defineEmits(['update:active','expand'])
+
+interface EditableScene {
+  id?: string | number
+  scene_number: number
+  description: string
+  dialog: string
+  duration: number
+  _expanding?: boolean
+}
+
+withDefaults(defineProps<{ scenes?: EditableScene[]; active?: Array<string | number> }>(), {
+  scenes: () => [],
+  active: () => [],
+})
+defineEmits<{
+  'update:active': [value: Array<string | number>]
+  expand: [scene: EditableScene]
+}>()
 </script>
 
 <style scoped>

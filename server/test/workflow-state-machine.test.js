@@ -61,3 +61,19 @@ test('非法越级会被拒绝，避免资产与任务状态不一致', () => {
     /前置阶段 storyboard 尚未完成/,
   );
 });
+
+test('结果不确定的运行中阶段只有在人工确认后才能转为重试', () => {
+  let workflow = createWorkflow({ projectId: 10 });
+  workflow = transition(workflow, { type: 'START', stage: 'script' });
+  assert.throws(
+    () => transition(workflow, { type: 'RETRY', stage: 'script' }),
+    /当前不可重试：running/,
+  );
+  const retried = transition(workflow, {
+    type: 'RETRY',
+    stage: 'script',
+    allowUncertain: true,
+  });
+  assert.equal(retried.stages.script.status, 'ready');
+  assert.equal(retried.stages.script.attempts, 2);
+});
