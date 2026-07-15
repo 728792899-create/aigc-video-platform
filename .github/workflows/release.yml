@@ -20,7 +20,7 @@ jobs:
       fail-fast: false
       matrix:
         include:
-          - os: macos-14
+          - os: macos-15-intel
             artifact: macos
           - os: windows-2022
             artifact: windows
@@ -45,6 +45,7 @@ jobs:
       - run: npm --prefix server ci
       - run: npm --prefix client ci
       - run: npm run prepare:desktop
+      - run: npm run electron:preflight
       - name: Verify macOS release credentials
         if: runner.os == 'macOS' && (github.event_name != 'workflow_dispatch' || !inputs.unsigned_preflight)
         shell: bash
@@ -74,20 +75,41 @@ jobs:
           echo "APPLE_API_KEY=$RUNNER_TEMP/AuthKey.p8" >> "$GITHUB_ENV"
       - if: runner.os == 'macOS' && (github.event_name != 'workflow_dispatch' || !inputs.unsigned_preflight)
         env:
+          AIGC_RELEASE_SIGNING_REQUIRED: '1'
           CSC_LINK: ${{ secrets.MAC_CSC_LINK }}
           CSC_KEY_PASSWORD: ${{ secrets.MAC_CSC_KEY_PASSWORD }}
           APPLE_API_KEY_ID: ${{ secrets.APPLE_API_KEY_ID }}
           APPLE_API_ISSUER: ${{ secrets.APPLE_API_ISSUER }}
-        run: npx electron-builder --mac --publish never
+        run: npm run release:verify-credentials && npx electron-builder --mac --publish never
       - if: runner.os == 'macOS' && github.event_name == 'workflow_dispatch' && inputs.unsigned_preflight
         env:
           SKIP_NOTARIZE: '1'
         run: npx electron-builder --mac --publish never -c.mac.identity=- -c.mac.entitlements=resources/entitlements.adhoc.plist -c.mac.entitlementsInherit=resources/entitlements.adhoc.plist
       - if: runner.os == 'Windows'
         env:
+          AIGC_RELEASE_SIGNING_REQUIRED: ${{ (github.event_name != 'workflow_dispatch' || !inputs.unsigned_preflight) && '1' || '0' }}
           CSC_LINK: ${{ secrets.WIN_CSC_LINK }}
           CSC_KEY_PASSWORD: ${{ secrets.WIN_CSC_KEY_PASSWORD }}
-        run: npx electron-builder --win --x64 --publish never
+        run: npm run release:verify-credentials && npx electron-builder --win --x64 --publish never
+      - name: Verify auto-update metadata
+        shell: bash
+        run: node scripts/verify-update-artifacts.mjs dist-electron "${{ runner.os == 'macOS' && 'mac' || 'win32' }}"
+      - name: Verify macOS signature, Gatekeeper and notarization ticket
+        if: runner.os == 'macOS' && (github.event_name != 'workflow_dispatch' || !inputs.unsigned_preflight)
+        shell: bash
+        run: |
+          app="$(find dist-electron -type d -name 'AIGC 视频工作台.app' -print -quit)"
+          test -n "$app"
+          codesign --verify --deep --strict --verbose=2 "$app"
+          spctl --assess --type execute --verbose=2 "$app"
+          xcrun stapler validate "$app"
+      - name: Verify Windows Authenticode signature
+        if: runner.os == 'Windows' && (github.event_name != 'workflow_dispatch' || !inputs.unsigned_preflight)
+        shell: pwsh
+        run: |
+          $installer = Get-ChildItem dist-electron -Filter '*.exe' | Select-Object -First 1
+          if (-not $installer) { throw 'signed installer not found' }
+          signtool verify /pa /v $installer.FullName
       - uses: actions/upload-artifact@v4
         with:
           name: ${{ matrix.artifact }}

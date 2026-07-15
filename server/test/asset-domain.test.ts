@@ -60,6 +60,7 @@ function assetRepository(): MemoryRepository {
       return { ...(current || row) }
     },
     bindingsForVariant(variantId) { return bindings.filter((row) => String(row.variant_id) === String(variantId)) },
+    bindingsForStoryboards(storyboardIds) { return bindings.filter((row) => storyboardIds.includes(row.storyboard_id)) },
     archiveVariant(id, archivedAt) {
       const row = this.getVariant(id)
       if (!row) throw new Error('test variant missing')
@@ -140,6 +141,61 @@ test('Episode > Series > Global 按同名同类型解析，并保留不同资产
   assert.equal(resolved.find((unit) => unit.asset_type === 'style')?.id, episode.id)
   assert.equal(resolved.find((unit) => unit.asset_type === 'prop')?.id, prop.id)
   assert.equal(resolved.filter((unit) => unit.asset_type === 'style').length, 1)
+})
+
+test('通用资产绑定保存稳定 AssetUnit ID，不泄漏旧表负数 surrogate', () => {
+  const repository = assetRepository()
+  let id = 0
+  const service = createAssetLibraryService({ repository, idFactory: () => `generic-${++id}` })
+  const unit = service.createUnit({ assetType: 'scene', name: '雨夜车站', scope: 'episode', projectId: 3 })
+  const variant = service.addVariant({
+    assetType: 'scene', assetId: unit.id,
+    mediaReference: { kind: 'project_media', media_id: 9, url: '/uploads/images/station.png' },
+  })
+  const binding = service.bindVariant({ storyboardId: 11, assetType: 'scene', assetId: unit.id, variantId: variant.id })
+  assert.equal(binding.asset_id, unit.id)
+  assert.equal(binding.asset_unit_id, unit.id)
+})
+
+test('Series 资产 fork 为 Episode 独立副本并保留 lineage 与选中 Variant 快照', () => {
+  const repository = assetRepository()
+  let id = 0
+  const service = createAssetLibraryService({ repository, now: () => 2000 + id, idFactory: () => `fork-${++id}` })
+  const source = service.createUnit({ assetType: 'scene', name: '系列车站', scope: 'series', seriesId: 2 })
+  const sourceVariant = service.addVariant({
+    assetType: 'scene', assetId: source.id, label: '系列默认', provider: 'demo', model: 'fixture',
+    mediaReference: { kind: 'project_media', media_id: 18, url: '/uploads/images/series-station.png' },
+  })
+
+  const forked = service.forkUnit({ assetType: 'scene', assetId: source.id, projectId: 3, seriesId: 2 })
+  assert.equal(forked.unit.scope, 'episode')
+  assert.equal(forked.unit.project_id, 3)
+  assert.equal(forked.unit.forked_from_unit_id, source.id)
+  assert.equal(forked.unit.forked_from_variant_id, sourceVariant.id)
+  assert.notEqual(forked.unit.id, source.id)
+  assert.equal(forked.variant.revision, 1)
+  assert.equal(forked.variant.media_reference.url, '/uploads/images/series-station.png')
+  assert.equal(forked.variant.selected, 1)
+})
+
+test('批量改绑在单事务内跳过相同绑定，并返回稳定 changed/skipped 结果', () => {
+  const repository = assetRepository()
+  let id = 0
+  const service = createAssetLibraryService({ repository, idFactory: () => `batch-${++id}` })
+  const unit = service.createUnit({ assetType: 'music', name: '片头氛围', scope: 'series', seriesId: 2 })
+  const variant = service.addVariant({
+    assetType: 'music', assetId: unit.id,
+    mediaReference: { kind: 'project_media', media_id: 61, url: '/uploads/audio/intro.mp3' },
+  })
+  service.bindVariant({ storyboardId: 11, projectId: 3, assetType: 'music', assetId: unit.id, variantId: variant.id })
+  const result = service.batchBindVariant({
+    storyboardIds: [11, 12, 13, 13], projectId: 3,
+    assetType: 'music', assetId: unit.id, variantId: variant.id,
+  })
+  assert.deepEqual(result.changed_storyboard_ids, [12, 13])
+  assert.deepEqual(result.skipped_storyboard_ids, [11])
+  assert.deepEqual(result.conflicts, [])
+  assert.equal(repository.bindings.filter((row) => row.asset_unit_id === unit.id).length, 3)
 })
 
 test('MediaReference 拒绝越界路径、对象键穿越，并移除签名查询参数', () => {

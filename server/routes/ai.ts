@@ -1,4 +1,5 @@
 import express from 'express'
+import { redactDiagnostic } from '../services/appError'
 
 const router = express.Router();
 const { generateScript, expandDialog, optimizeTheme } = require('../services/deepseek');
@@ -128,7 +129,9 @@ function asRecord(value: unknown): JsonObject {
   return Object.fromEntries(Object.entries(value))
 }
 
-const safeError = (error: unknown): string => credentialStore.redact(errorMessage(error || '未知错误'));
+const safeError = (error: unknown): string => redactDiagnostic(
+  credentialStore.redact(errorMessage(error || '未知错误')),
+);
 const isDemoMode = (): boolean => ['1', 'true'].includes(String(process.env.DEMO_MODE || '').toLowerCase());
 
 /**
@@ -151,7 +154,7 @@ function cleanupFailedAutoProduce(projectId: EntityId): { hasContent: boolean; p
       return { hasContent: false, projectStatus: 'deleted' };
     }
   } catch (e: unknown) {
-    console.error('[auto-produce] 清理失败项目出错:', errorMessage(e));
+    console.error('[auto-produce] 清理失败项目出错:', safeError(e));
   }
   return { hasContent: false, projectStatus: 'unknown' };
 }
@@ -233,7 +236,7 @@ async function runAutoProduceTask(taskId: string, projectId: EntityId, producePa
     }
     taskManager.succeed(taskId, result, '🎬 视频已生成');
   } catch (err: unknown) {
-    console.error('[auto-produce] 失败:', err);
+    console.error('[auto-produce] 失败:', safeError(err));
     try {
       const workflow = taskManager.get(taskId)?.meta?.workflow;
       const currentStage = workflow?.current_stage;
@@ -416,7 +419,7 @@ router.post('/generate-image', idempotency({ scope: 'ai.generate-image' }), vali
         reuseCache: shouldReuseCache,
       })
         .catch((e) => {
-          console.error('doImageGeneration 启动失败:', e);
+          console.error('doImageGeneration 启动失败:', safeError(e));
           try { taskManager.fail(task.id, e); } catch (_) {}
         });
       return;
@@ -519,7 +522,7 @@ router.post('/generate-image', idempotency({ scope: 'ai.generate-image' }), vali
       message: result.notice || (result.local_files.length > 0 ? '生成成功' : '生成完成但未获取到图片'),
     });
   } catch (err) {
-    console.error('generate-image error:', err);
+    console.error('generate-image error:', safeError(err));
     res.status(500).json({ code: 500, data: null, message: `图片生成失败: ${safeError(err)}` });
   }
 });
@@ -649,7 +652,7 @@ async function doImageGeneration(
       },
     }, result.notice || '图片生成完成');
   } catch (err) {
-    console.error('async generate-image error:', err);
+    console.error('async generate-image error:', safeError(err));
     taskManager.fail(taskId, err);
   }
 }
@@ -868,7 +871,7 @@ router.post('/auto-produce', idempotency({ scope: 'ai.auto-produce' }), validate
       message: queued.status === 'waiting' ? '任务已提交，正在排队' : '已开始一键成片',
     });
   } catch (err) {
-    console.error('auto-produce error:', err);
+    console.error('auto-produce error:', safeError(err));
     res.status(500).json({ code: 500, data: null, message: `一键成片启动失败: ${safeError(err)}` });
   }
 });
@@ -919,7 +922,7 @@ router.post('/auto-produce/:taskId/retry', idempotency(), async (req, res) => {
       message: queued.status === 'waiting' ? '已加入重试队列' : '已重新开始成片',
     });
   } catch (err) {
-    console.error('auto-produce retry error:', err);
+    console.error('auto-produce retry error:', safeError(err));
     res.status(500).json({ code: 500, data: null, message: `重试启动失败: ${safeError(err)}` });
   }
 });
@@ -1142,7 +1145,7 @@ router.post('/podcast/generate', async (req, res) => {
       message: 'success',
     });
   } catch (err: unknown) {
-    console.error('[podcast] 生成失败:', errorMessage(err));
+    console.error('[podcast] 生成失败:', safeError(err));
     res.status(500).json({ code: 500, data: null, message: `播客生成失败: ${safeError(err)}` });
   }
 });

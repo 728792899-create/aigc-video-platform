@@ -22,17 +22,19 @@ function statusFrom(error: HttpError, fallback: number): number {
 
 export const errorHandler: ErrorRequestHandler = (cause, request, response, next) => {
   const error = errorLike(cause)
+  const declaredStatus = Number(error.status || error.statusCode)
   const isClientError = error.type === 'entity.parse.failed'
     || error.type === 'entity.too.large'
     || error instanceof SyntaxError
     || /^CORS/.test(error.message)
+    || (Number.isInteger(declaredStatus) && declaredStatus >= 400 && declaredStatus < 500)
   const safeMessage = credentialStore.redact(redactDiagnostic(error.message || '服务器内部错误'))
   const explicitStatus = statusFrom(error, isClientError ? 400 : 500)
   const normalized = cause instanceof AppError
     ? cause.payload
     : normalizeAppError(error, {
         correlationId: request.requestId,
-        fallbackCode: isClientError ? 'REQUEST_INVALID' : undefined,
+        fallbackCode: isClientError && !error.code ? 'REQUEST_INVALID' : undefined,
       })
   const payload = isClientError
     ? { ...normalized, userMessage: safeMessage, retryable: false }

@@ -3,6 +3,7 @@ import { GenerationTaskSchema } from '@aigc-video/contracts'
 import { defineStore } from 'pinia'
 
 import api, { unwrap } from '../api'
+import { connectTaskRealtime } from '../api/taskRealtime'
 
 type LocalTask = GenerationTask & { _finishedAt?: number }
 
@@ -10,7 +11,9 @@ interface TaskState {
   tasks: Record<string, LocalTask>
   dismissed: Record<string, boolean>
   polling: boolean
+  transport: 'idle' | 'socket' | 'polling'
   _timer: ReturnType<typeof setTimeout> | null
+  _realtimeStop: (() => void) | null
 }
 
 const TYPE_LABELS: Record<string, string> = {
@@ -30,7 +33,9 @@ export function taskTypeLabel(type: string): string {
 }
 
 export const useTaskStore = defineStore('tasks', {
-  state: (): TaskState => ({ tasks: {}, dismissed: {}, polling: false, _timer: null }),
+  state: (): TaskState => ({
+    tasks: {}, dismissed: {}, polling: false, transport: 'idle', _timer: null, _realtimeStop: null,
+  }),
 
   getters: {
     visibleTasks(state): LocalTask[] {
@@ -66,6 +71,13 @@ export const useTaskStore = defineStore('tasks', {
       }
     },
 
+    _upsert(task: GenerationTask) {
+      const previous = this.tasks[task.id]
+      const merged: LocalTask = { ...task }
+      if (FINISHED_STATUSES.has(task.status)) merged._finishedAt = previous?._finishedAt || Date.now()
+      this.tasks[task.id] = merged
+    },
+
     async fetchOnce() {
       try {
         const response = await api.get<ApiEnvelope<GenerationTask[]>>('/tasks')
@@ -76,21 +88,38 @@ export const useTaskStore = defineStore('tasks', {
       }
     },
 
+    _scheduleNext(delay?: number): void {
+      if (!this.polling) return
+      if (this._timer) clearTimeout(this._timer)
+      const interval = delay ?? (this.transport === 'socket' ? 30_000 : this.activeCount > 0 ? 2_000 : 6_000)
+      this._timer = setTimeout(() => {
+        void this.fetchOnce().finally(() => this._scheduleNext())
+      }, interval)
+    },
+
     startPolling() {
       if (this.polling) return
       this.polling = true
-      const tick = async () => {
-        if (!this.polling) return
-        await this.fetchOnce()
-        this._timer = setTimeout(tick, this.activeCount > 0 ? 2_000 : 6_000)
-      }
-      void tick()
+      this.transport = 'polling'
+      this._realtimeStop = connectTaskRealtime({
+        onSnapshot: (tasks) => this._merge(tasks),
+        onTask: (task) => this._upsert(task),
+        onConnectionChange: (connected) => {
+          if (!this.polling) return
+          this.transport = connected ? 'socket' : 'polling'
+          this._scheduleNext(connected ? 30_000 : 0)
+        },
+      })
+      void this.fetchOnce().finally(() => this._scheduleNext())
     },
 
     stopPolling() {
       this.polling = false
+      this.transport = 'idle'
       if (this._timer) clearTimeout(this._timer)
       this._timer = null
+      this._realtimeStop?.()
+      this._realtimeStop = null
     },
 
     dismiss(id: string) {

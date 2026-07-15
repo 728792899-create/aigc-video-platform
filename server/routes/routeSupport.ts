@@ -75,6 +75,12 @@ export function queryText(
   return fallback
 }
 
+export function pathText(value: string | string[] | undefined, fallback = ''): string {
+  if (typeof value === 'string') return value
+  if (Array.isArray(value)) return value[0] ?? fallback
+  return fallback
+}
+
 export function parseJsonRecord(value: unknown): JsonRecord {
   if (value && typeof value === 'object' && !Array.isArray(value)) return asRecord(value)
   if (typeof value !== 'string' || !value.trim()) return {}

@@ -225,6 +225,7 @@
       </div>
 
       <StoryboardEditor :scenes="storyboards" :active="activeScenes" @update:active="activeScenes = $event" @expand="expandSceneDialog" />
+      <PromptHistoryPanel :project-id="projectId" :storyboards="storyboards" @task-created="handlePromptTaskCreated" />
     </div>
 
     <ProjectStageFooter
@@ -302,7 +303,8 @@ import type { Project } from '@aigc-video/contracts'
 import { ref, computed, nextTick, onMounted, type Ref } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { useI18n } from 'vue-i18n'
-import { ElMessage, ElMessageBox } from 'element-plus'
+import { ElMessage } from 'element-plus/es/components/message/index'
+import { ElMessageBox } from 'element-plus/es/components/message-box/index'
 import { getProviders, type ProviderView } from '../api/providers'
 import { listSkills, listActiveSkills, type CreativeSkill } from '../api/skills'
 import { mediaUrl } from '../api/config'
@@ -325,6 +327,7 @@ import {
 } from '../api/script'
 import WorkbenchGuide from '../components/WorkbenchGuide.vue'
 import ProjectStageFooter from '../components/ProjectStageFooter.vue'
+import PromptHistoryPanel from '../components/script/PromptHistoryPanel.vue'
 import StoryboardEditor from '../components/StoryboardEditor.vue'
 import {
   DURATION_PRESET_OPTIONS,
@@ -499,6 +502,11 @@ const scriptStageBlockedReason = computed(() => {
 
 function goNextStage(): void {
   router.push(`/projects/${projectId}/images`)
+}
+
+function handlePromptTaskCreated(task: { task_id: string }): void {
+  ElMessage.success(`局部重生成任务已进入队列：${task.task_id}`)
+  void Promise.all([loadWorkbenchStatus(), loadArtifactState()])
 }
 
 function applyDurationPreset(value: DurationPresetValue): void {

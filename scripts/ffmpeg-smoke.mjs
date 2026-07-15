@@ -5,7 +5,13 @@ import path from 'node:path';
 import { createRequire } from 'node:module';
 
 const require = createRequire(import.meta.url);
-const ffmpeg = require('ffmpeg-static');
+const rootStatic = require('ffmpeg-static');
+const executableName = process.platform === 'win32' ? 'ffmpeg.exe' : 'ffmpeg';
+const ffmpeg = [
+  process.env.FFMPEG_PATH,
+  typeof rootStatic === 'string' ? rootStatic : '',
+  path.resolve('server', 'node_modules', 'ffmpeg-static', executableName),
+].find((candidate) => candidate && fs.existsSync(candidate)) || 'ffmpeg';
 const out = path.join(os.tmpdir(), `aigc-ffmpeg-smoke-${process.pid}.mp4`);
 const result = spawnSync(ffmpeg, [
   '-y', '-f', 'lavfi', '-i', 'color=c=0x18233b:s=320x180:d=1',

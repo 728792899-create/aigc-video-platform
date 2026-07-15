@@ -1,4 +1,5 @@
 import crypto, { randomUUID } from 'node:crypto'
+import { staleImpactForFields } from './staleDependencies'
 
 export const STAGES = ['topic', 'script', 'storyboard', 'image', 'voice', 'subtitle', 'timeline', 'export'] as const
 export type ArtifactStage = (typeof STAGES)[number]
@@ -21,6 +22,8 @@ export interface StageArtifactRow extends JsonObject {
   dependency_snapshot: JsonObject
   payload: unknown
   stale_reason: string
+  stale_fields: string[]
+  stale_sources: string[]
   created_at: number
   updated_at: number
 }
@@ -31,7 +34,7 @@ export interface StageArtifactRepository {
   get?(id: string): StageArtifactRow | null
   latest(projectId: number, stage: ArtifactStage): StageArtifactRow | null
   insert(row: StageArtifactRow): StageArtifactRow
-  updateStatus(id: string, status: ArtifactStatus, staleReason: string, updatedAt: number): void
+  updateStatus(id: string, status: ArtifactStatus, staleReason: string, updatedAt: number, staleFields?: string[], staleSources?: string[]): void
   transaction<T>(fn: () => T): T
 }
 
@@ -46,6 +49,8 @@ export interface PublishArtifactInput {
   promptVersion?: string
   provider?: string
   model?: string
+  changedFields?: string[]
+  staleSources?: string[]
 }
 
 function isJsonObject(value: unknown): value is JsonObject {
@@ -76,6 +81,11 @@ function parseJson(value: unknown, fallback: unknown): unknown {
   try { return JSON.parse(value) } catch { return fallback }
 }
 
+function stringArray(value: unknown): string[] {
+  const parsed = parseJson(value, [])
+  return Array.isArray(parsed) ? parsed.map(String).filter(Boolean) : []
+}
+
 function decode(row: unknown): StageArtifactRow | null {
   if (!isJsonObject(row) || !isStage(row.stage)) return null
   const projectId = Number(row.project_id)
@@ -99,6 +109,8 @@ function decode(row: unknown): StageArtifactRow | null {
     dependency_snapshot: isJsonObject(dependency) ? dependency : {},
     payload: parseJson(row.payload, null),
     stale_reason: String(row.stale_reason || ''),
+    stale_fields: stringArray(row.stale_fields),
+    stale_sources: stringArray(row.stale_sources),
     created_at: Number(row.created_at) || 0,
     updated_at: Number(row.updated_at) || 0,
   }
@@ -128,19 +140,19 @@ function createDbRepository(): StageArtifactRepository {
         `INSERT INTO stage_artifacts
           (id, project_id, task_id, stage, revision, status, schema_version, prompt_version,
            provider, model, input_hash, payload_hash, dependency_snapshot, payload,
-           stale_reason, created_at, updated_at)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+           stale_reason, stale_fields, stale_sources, created_at, updated_at)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       ).run(
         row.id, row.project_id, row.task_id, row.stage, row.revision, row.status,
         row.schema_version, row.prompt_version, row.provider, row.model, row.input_hash,
         row.payload_hash, JSON.stringify(row.dependency_snapshot), JSON.stringify(row.payload ?? null),
-        row.stale_reason, row.created_at, row.updated_at,
+        row.stale_reason, JSON.stringify(row.stale_fields), JSON.stringify(row.stale_sources), row.created_at, row.updated_at,
       )
       return row
     },
-    updateStatus(id, status, staleReason, updatedAt) {
-      getDb().prepare('UPDATE stage_artifacts SET status = ?, stale_reason = ?, updated_at = ? WHERE id = ?')
-        .run(status, staleReason || '', updatedAt, id)
+    updateStatus(id, status, staleReason, updatedAt, staleFields = [], staleSources = []) {
+      getDb().prepare('UPDATE stage_artifacts SET status = ?, stale_reason = ?, stale_fields = ?, stale_sources = ?, updated_at = ? WHERE id = ?')
+        .run(status, staleReason || '', JSON.stringify(staleFields), JSON.stringify(staleSources), updatedAt, id)
     },
     transaction<T>(fn: () => T): T { return getDb().transaction(fn)() },
   }
@@ -184,8 +196,13 @@ export function createStageArtifactService({
       const timestamp = Number(now())
       if (previous && ['current', 'stale'].includes(previous.status)) repository.updateStatus(previous.id, 'superseded', '', timestamp)
       const reason = `upstream ${input.stage} revision changed`
+      const changedFields = Array.from(new Set((input.changedFields || []).map(String))).sort()
+      const affectedStages = new Set(staleImpactForFields(changedFields))
       for (const artifact of list(projectId)) {
-        if (STAGES.indexOf(artifact.stage) > stageIndex && artifact.status === 'current') repository.updateStatus(artifact.id, 'stale', reason, timestamp)
+        if (STAGES.indexOf(artifact.stage) > stageIndex && artifact.status === 'current'
+          && (!changedFields.length || affectedStages.has(artifact.stage as never))) {
+          repository.updateStatus(artifact.id, 'stale', reason, timestamp, changedFields, input.staleSources || [])
+        }
       }
 
       const row: StageArtifactRow = {
@@ -204,6 +221,8 @@ export function createStageArtifactService({
         dependency_snapshot: dependencySnapshot,
         payload: input.payload ?? null,
         stale_reason: '',
+        stale_fields: [],
+        stale_sources: [],
         created_at: timestamp,
         updated_at: timestamp,
       }

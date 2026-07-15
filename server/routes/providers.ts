@@ -145,6 +145,29 @@ router.get('/catalog', (req, res) => {
   res.json({ code: 200, data: modelCatalog.list({ modality }), message: 'success' });
 });
 
+// 只返回官方文档可确认的运行能力；未公开的账单端点不猜测、不伪造余额。
+router.get('/:provider/billing-status', async (req, res) => {
+  const provider = String(req.params.provider || '');
+  const definition = registry.getProvider(provider);
+  if (!definition) return res.status(404).json({ code: 404, data: null, message: `未知 provider：${provider}` });
+  if (definition.kind !== 't2v') {
+    return res.json({
+      code: 200,
+      data: {
+        provider, capability: 'unverified', configured: registry.hasCredentials(provider),
+        status: 'unknown', reason_code: 'PROVIDER_BILLING_UNVERIFIED', checked_at: Date.now(),
+        currency: null, balance: null,
+      },
+      message: '当前 Provider 未提供已验证的账单状态接口',
+    });
+  }
+  const data = await t2vProvider.getBillingStatus(provider);
+  return res.json({
+    code: 200, data,
+    message: data.capability === 'supported' ? '账单状态已查询' : '未验证可用的官方账单状态接口',
+  });
+});
+
 // 启动/设置页使用的 Provider 健康快照：区分当前不可用与历史失败。
 router.get('/health', (req, res) => {
   const items = providerHealthItems();

@@ -122,7 +122,7 @@
 <script setup lang="ts">
 import { reactive, ref, computed, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
-import { ElMessage } from 'element-plus'
+import { ElMessage } from 'element-plus/es/components/message/index'
 import { InfoFilled } from '@element-plus/icons-vue'
 import { checkDir, pickDir } from '../api/settings'
 import { displayLocalPath } from '../utils/localPath'
@@ -328,6 +328,21 @@ async function handleConfirm() {
 </script>
 
 <style scoped>
+:deep(.export-dialog) {
+  display: flex;
+  flex-direction: column;
+  max-height: calc(100vh - 32px);
+  margin-top: 16px !important;
+  margin-bottom: 16px;
+}
+:deep(.export-dialog .el-dialog__header),
+:deep(.export-dialog .el-dialog__footer) {
+  flex: 0 0 auto;
+}
+:deep(.export-dialog .el-dialog__body) {
+  min-height: 0;
+  overflow-y: auto;
+}
 .platform-presets {
   display: flex;
   flex-wrap: wrap;
@@ -398,6 +413,12 @@ async function handleConfirm() {
   color: var(--el-text-color-regular);
 }
 @media (max-width: 640px) {
+  :deep(.export-dialog) {
+    width: calc(100vw - 24px) !important;
+    max-height: calc(100vh - 24px);
+    margin-top: 12px !important;
+    margin-bottom: 12px;
+  }
   .directory-line {
     grid-template-columns: 1fr;
   }

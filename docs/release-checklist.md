@@ -21,6 +21,9 @@
 - [ ] `npm run electron:preflight`
 - [ ] Windows unsigned package preflight
 - [ ] macOS ad-hoc package preflight
+- [ ] `windows-2022` 安装、Demo MP4、退出与静默卸载通过
+- [ ] `macos-15-intel` 从 DMG 安装、Demo MP4、退出与删除应用通过
+- [ ] `npm run test:electron` updater 状态/确认测试通过
 - [ ] macOS ad-hoc 包通过严格 `codesign --verify`
 - [ ] ad-hoc 包被 `spctl` 拒绝已记录为预期
 
@@ -59,7 +62,7 @@
 
 ## Electron 验收
 
-> 最近一次本地证据（2026-07-14）：隔离 userData 下已覆盖应用启动、Demo 全流程、重启恢复、Preview、系统目录选择和成功导出有效 MP4；正式签名、公证与跨平台安装仍需发布机复验。
+> 最近一次本地证据（2026-07-15）：隔离 userData 下已覆盖应用启动、Demo 全流程、重启恢复、Preview、macOS 系统目录选择，并由 Computer Use 在同一应用会话点击导出、生成外部目录有效 MP4；正式签名、公证与跨平台安装仍需发布机复验。
 
 - [ ] 安全配置：contextIsolation、sandbox 开启，nodeIntegration 关闭
 - [ ] preload 只暴露白名单接口
@@ -131,11 +134,13 @@
 - [ ] Draft 包含 Windows 安装包
 - [ ] Draft 包含 macOS DMG/ZIP
 - [ ] blockmap 与 `latest*.yml` 齐全
+- [ ] `npm run update:verify-artifacts` 在 Windows/macOS 产物上通过
 - [ ] SHA-256 已记录
 - [ ] 更新检查从上一版本验证
 - [ ] 安装包先于更新元数据可用
 - [ ] Release notes 包含迁移、备份、限制和人工签名状态
-- [ ] 所有干净机器验收完成后才发布 Draft
+- [ ] Draft 仅供人工验收；所有门禁完成后转为非 Draft 才允许客户端发现更新
+- [ ] 用两个连续的正式签名版本完成实际下载、重启安装与数据保留验证
 
 ## 发布后
 

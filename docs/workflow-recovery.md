@@ -193,7 +193,7 @@ sequenceDiagram
 
 ## 数据库写盘与迁移
 
-sql.js 在内存中运行，持久化时先写临时文件再原子 rename。schema 通过 `PRAGMA user_version` 管理。迁移开始前自动复制原数据库，并轮换保留最近五份迁移备份。
+发布包默认使用 `better-sqlite3` 的 WAL/外键/同步持久化；`sql.js` 作为显式兼容驱动，在写盘时先写临时文件再原子 rename。两个驱动共用 `PRAGMA user_version` 迁移契约。迁移开始前自动复制原数据库，并轮换保留最近五份迁移备份。
 
 恢复用户备份时先创建 restore point，再执行完整性检查和必要表校验，替换后运行迁移并重新检查资产引用。
 

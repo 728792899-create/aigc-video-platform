@@ -14,6 +14,7 @@ import path from 'node:path'
 import { autoUpdater } from 'electron-updater'
 import { DesktopLocaleSchema, type DesktopLocale } from '@aigc-video/contracts'
 import * as telemetry from './telemetry'
+import { DesktopUpdateService, type UpdateInfoLike } from './updateService'
 
 type JsonObject = Record<string, unknown>
 type SecretField = 'apiKey' | 'accessKey' | 'secretKey' | 'appId' | 'cluster' | 'resourceId'
@@ -191,18 +192,24 @@ function redactLogText(input: unknown): string {
   }
   return text
     .replace(/Bearer\s+[A-Za-z0-9._~+/=-]{8,}/gi, 'Bearer [REDACTED]')
-    .replace(/\b(sk|key|token)-[A-Za-z0-9_-]{8,}\b/gi, '[REDACTED]');
+    .replace(/\b(sk|key|token)-[A-Za-z0-9_-]{8,}\b/gi, '[REDACTED]')
+    // Electron persists backend stdout/stderr for offline diagnostics. Keep
+    // stack line/column suffixes useful while removing private home paths.
+    .replace(/\/Users\/[^/\s]+(?:\/[^\s:'"),]+)*/g, '[USER_PATH]')
+    .replace(/[A-Za-z]:\\Users\\[^\\\s]+(?:\\[^\s:'"),]+)*/g, '[USER_PATH]');
 }
 
 // FFmpeg 二进制路径（ffmpeg-static 提供，跨平台）
 let ffmpegPath = '';
 try {
-  ffmpegPath = require('ffmpeg-static') || '';
-  // asar:true 时 ffmpeg-static 返回的路径指向 app.asar 内部，但二进制实际被
-  // asarUnpack 解包到 app.asar.unpacked。必须把路径重定向到 unpacked，否则
-  // fork 的后端子进程拿到 asar 内路径无法作为外部进程执行 FFmpeg。
-  if (ffmpegPath && ffmpegPath.includes('app.asar') && !ffmpegPath.includes('app.asar.unpacked')) {
-    ffmpegPath = ffmpegPath.replace('app.asar', 'app.asar.unpacked');
+  if (isPackaged) {
+    // prepare:desktop 会把当前平台 FFmpeg 实体复制到后端 vendor。electron-builder
+    // 会裁剪根 app.asar 中 ffmpeg-static 的可选二进制，因此发布态必须使用这个
+    // 已由预检验证、并随 server extraResources 分发的可执行文件。
+    ffmpegPath = path.join(serverDir, 'vendor', 'ffmpeg-static', process.platform === 'win32' ? 'ffmpeg.exe' : 'ffmpeg');
+    if (!fs.existsSync(ffmpegPath)) throw new Error(`打包 FFmpeg 不存在: ${ffmpegPath}`);
+  } else {
+    ffmpegPath = require('ffmpeg-static') || '';
   }
 } catch (error: unknown) {
   console.error('[main] 无法解析 ffmpeg-static:', errorMessage(error));
@@ -277,8 +284,13 @@ function startBackend() {
     CLIENT_DIST: clientDist,
     // FFmpeg 二进制（打包进安装包，无需用户自装）
     FFMPEG_PATH: ffmpegPath || 'ffmpeg',
-    // 后端依赖以 vendor/ 作为受管运行时目录，避免打包器过滤额外 node_modules。
-    NODE_PATH: path.join(serverDir, 'vendor'),
+    // better-sqlite3 由 electron-builder 按 Electron ABI 重建并放在 app
+    // node_modules；其他后端依赖继续来自受管 vendor。顺序不可交换，避免
+    // 误加载 server 安装阶段为普通 Node ABI 编译的 native addon。
+    NODE_PATH: [path.join(app.getAppPath(), 'node_modules'), path.join(serverDir, 'vendor')].join(path.delimiter),
+    // 开发态保留 sql.js，避免普通 npm install 的 Node ABI 与 Electron ABI
+    // 不同；发布包必须使用已重建的 better-sqlite3，加载失败时直接暴露问题。
+    DB_DRIVER: isPackaged ? 'better-sqlite3' : 'sqljs',
     // 桌面应用同源，无跨域；放行本地
     CORS_ORIGIN: `http://localhost:${PORT},http://127.0.0.1:${PORT}`,
     // 仅通过子进程启动环境传递一次，服务读取后会立即删除；不会写日志或配置文件。
@@ -476,10 +488,10 @@ function createWindow(): void {
   });
   // 渲染层异常也要进入桌面日志，否则用户只能看到空白窗口。
   // 输出经过与后端相同的凭证脱敏，不记录 info/debug 级别。
-  window.webContents.on('console-message', (_event, levelValue, messageValue) => {
-    const level = String(levelValue ?? '').toLowerCase();
-    if (!['2', '3', 'warning', 'error'].includes(level)) return;
-    const message = redactLogText(messageValue || 'Renderer console error');
+  window.webContents.on('console-message', (details) => {
+    const level = String(details.level ?? '').toLowerCase();
+    if (!['warning', 'error'].includes(level)) return;
+    const message = redactLogText(details.message || 'Renderer console error');
     console.error(`[renderer:${level}] ${message}`);
     try { if (logStream) logStream.write(`[${new Date().toISOString()}] RENDERER ${level} ${message}\n`); } catch (_) {}
   });
@@ -515,17 +527,60 @@ function createWindow(): void {
 }
 
 function configureAutoUpdates(): void {
-  if (!isPackaged || process.env.DISABLE_AUTO_UPDATE === '1') return;
+  const disabledByEnvironment = process.env.DISABLE_AUTO_UPDATE === '1'
+    || process.env.AIGC_DISABLE_AUTO_UPDATE === '1';
+  const configured = fs.existsSync(path.join(process.resourcesPath, 'app-update.yml'));
+  const confirmDownload = async (info: UpdateInfoLike): Promise<boolean> => {
+    const options: MessageBoxOptions = {
+      type: 'info',
+      title: '发现新版本',
+      message: `AIGC 视频工作台 ${info.version} 已发布`,
+      detail: '是否现在下载？下载不会中断当前创作任务。',
+      buttons: ['下载更新', '稍后'],
+      defaultId: 0,
+      cancelId: 1,
+      noLink: true,
+    };
+    const result = mainWindow
+      ? await dialog.showMessageBox(mainWindow, options)
+      : await dialog.showMessageBox(options);
+    return result.response === 0;
+  };
+  const confirmInstall = async (info: UpdateInfoLike): Promise<boolean> => {
+    const options: MessageBoxOptions = {
+      type: 'info',
+      title: '更新已下载',
+      message: `版本 ${info.version} 已准备完成`,
+      detail: '立即重启会先关闭本地后端；选择稍后将在正常退出后安装。',
+      buttons: ['重启并安装', '退出时安装'],
+      defaultId: 1,
+      cancelId: 1,
+      noLink: true,
+    };
+    const result = mainWindow
+      ? await dialog.showMessageBox(mainWindow, options)
+      : await dialog.showMessageBox(options);
+    return result.response === 0;
+  };
   try {
-    autoUpdater.autoDownload = false;
-    autoUpdater.autoInstallOnAppQuit = true;
-    autoUpdater.on('error', (error) => {
-      console.error('[update] 检查失败:', telemetry.redact(error.message));
-      telemetry.captureException(error, { feature: 'auto-update' });
+    const service = new DesktopUpdateService(autoUpdater, {
+      enabled: isPackaged && !disabledByEnvironment,
+      configured,
+      confirmDownload,
+      confirmInstall,
+      log: (message) => console.log(message),
+      onState: (state) => {
+        if (state.status === 'unconfigured') console.log('[update] 当前构建未配置自动更新');
+        if (state.status === 'downloading' && state.percent != null) {
+          console.log(`[update] 下载进度 ${state.percent.toFixed(1)}%`);
+        }
+      },
+      onError: (error, state) => {
+        console.error(`[update] ${state.errorCode}:`, telemetry.redact(error.message));
+        telemetry.captureException(error, { feature: 'auto-update', code: state.errorCode });
+      },
     });
-    autoUpdater.on('update-available', (info) => console.log(`[update] 发现新版本 ${info.version}`));
-    autoUpdater.on('update-not-available', () => console.log('[update] 当前已是最新版本'));
-    setTimeout(() => autoUpdater.checkForUpdates().catch(() => {}), 15_000).unref();
+    service.start();
   } catch (error: unknown) {
     console.error('[update] 初始化失败:', telemetry.redact(errorMessage(error)));
   }

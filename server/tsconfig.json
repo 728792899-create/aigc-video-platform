@@ -9,5 +9,5 @@
     "noEmit": true
   },
   "include": ["**/*.ts", "**/*.js", "**/*.mjs"],
-  "exclude": ["node_modules", "dist", "uploads", "logs"]
+  "exclude": ["node_modules", "dist", "uploads", "logs", "**/* 2.ts", "**/* 2.js"]
 }

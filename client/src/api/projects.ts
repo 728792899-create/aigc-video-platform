@@ -1,4 +1,13 @@
-import { ProjectSchema, type ApiEnvelope, type Project } from '@aigc-video/contracts'
+import {
+  ProjectSchema,
+  DirectorAdvicePlanSchema,
+  StudioLayoutSchema,
+  type ApiEnvelope,
+  type Project,
+  type DirectorAdvicePlan,
+  type StudioLayout,
+  type StudioLayoutUpdate,
+} from '@aigc-video/contracts'
 
 import api, { unwrap } from './index'
 import { ProjectViewSchema, type ProjectView } from '../domain/projects'
@@ -20,6 +29,21 @@ export async function createProject(payload: JsonObject): Promise<Project> {
 
 export async function updateProject(id: ProjectId, payload: JsonObject): Promise<Project> {
   return ProjectSchema.parse(unwrap(await api.put<ApiEnvelope<Project>>(`/projects/${encodeURIComponent(id)}`, payload)))
+}
+
+export async function getStudioLayout(id: ProjectId): Promise<StudioLayout> {
+  const data = unwrap(await api.get<ApiEnvelope<StudioLayout>>(`/projects/${encodeURIComponent(id)}/studio-layout`))
+  return StudioLayoutSchema.parse(data)
+}
+
+export async function saveStudioLayout(id: ProjectId, payload: StudioLayoutUpdate): Promise<StudioLayout> {
+  const data = unwrap(await api.put<ApiEnvelope<StudioLayout>>(`/projects/${encodeURIComponent(id)}/studio-layout`, payload))
+  return StudioLayoutSchema.parse(data)
+}
+
+export async function getDirectorAdvice(id: ProjectId): Promise<DirectorAdvicePlan> {
+  const data = unwrap(await api.get<ApiEnvelope<DirectorAdvicePlan>>(`/projects/${encodeURIComponent(id)}/director-advice`))
+  return DirectorAdvicePlanSchema.parse(data)
 }
 
 async function getRecord(path: string): Promise<JsonObject> {

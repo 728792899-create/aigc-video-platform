@@ -2,11 +2,11 @@
   <el-config-provider :locale="elLocale">
   <div class="app-container">
     <!-- 窄屏汉堡按钮（仅移动端显示） -->
-    <button class="mobile-menu-btn" @click="sidebarOpen = true" :title="$t('nav.menu')">
+    <button v-if="showSidebar" class="mobile-menu-btn" @click="sidebarOpen = true" :title="$t('nav.menu')">
       <el-icon :size="20"><Expand /></el-icon>
     </button>
     <!-- 窄屏遮罩：点击关闭抽屉 -->
-    <div v-if="sidebarOpen" class="sidebar-overlay" @click="sidebarOpen = false"></div>
+    <div v-if="showSidebar && sidebarOpen" class="sidebar-overlay" @click="sidebarOpen = false"></div>
     <el-container class="main-container">
       <!-- 左侧导航 -->
       <el-aside v-if="showSidebar" width="220px" class="sidebar" :class="{ 'is-open': sidebarOpen }">
@@ -30,7 +30,11 @@
           router
           @select="sidebarOpen = false"
         >
-          <el-menu-item index="/">
+          <el-menu-item :index="currentProjectId ? `/studio/${currentProjectId}` : '/studio'">
+            <el-icon><MagicStick /></el-icon>
+            <span>{{ $t('nav.studio') }}</span>
+          </el-menu-item>
+          <el-menu-item index="/dashboard">
             <el-icon><HomeFilled /></el-icon>
             <span>{{ $t('nav.dashboard') }}</span>
           </el-menu-item>
@@ -47,6 +51,10 @@
             <el-menu-item class="project-menu-item" :index="`/projects/${currentProjectId}/images`">
               <el-icon><PictureFilled /></el-icon>
               <span>{{ $t('nav.images') }}</span>
+            </el-menu-item>
+            <el-menu-item class="project-menu-item" :index="`/projects/${currentProjectId}/assets`">
+              <el-icon><Collection /></el-icon>
+              <span>{{ $t('nav.assets') }}</span>
             </el-menu-item>
             <el-menu-item class="project-menu-item" :index="`/projects/${currentProjectId}/audio`">
               <el-icon><Microphone /></el-icon>
@@ -84,7 +92,7 @@
         </el-menu>
       </el-aside>
       <!-- 右侧内容 -->
-      <el-main class="content-area">
+      <el-main class="content-area" :class="{ 'studio-content': isStudioRoute }">
         <router-view v-slot="{ Component }">
           <!-- Electron 下异步 chunk 与 out-in 离场动画组合会偶发保留旧页面；
                页面可靠切换优先于装饰性动画。 -->
@@ -104,14 +112,14 @@
 import { computed, ref } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { useI18n } from 'vue-i18n'
-import { ElConfigProvider } from 'element-plus'
+import { ElConfigProvider } from 'element-plus/es/components/config-provider/index'
 import zhCn from 'element-plus/es/locale/lang/zh-cn'
 import enLocale from 'element-plus/es/locale/lang/en'
 // 显式导入模板用到的图标（组件自包含并便于 tree-shaking）
 import {
   FolderOpened, EditPen,
   PictureFilled, VideoPlay, Microphone, Setting,
-  Clock, Files, DeleteFilled, Moon, Sunny, Expand, Film, MagicStick, HomeFilled
+  Clock, Files, DeleteFilled, Moon, Sunny, Expand, Film, MagicStick, HomeFilled, Collection
 } from '@element-plus/icons-vue'
 import TaskDock from './components/TaskDock.vue'
 import TopProgress from './components/TopProgress.vue'
@@ -144,7 +152,8 @@ const currentProjectId = computed(() => {
   const id = route.params.id
   return Array.isArray(id) ? id[0] || '' : id || ''
 })
-const showSidebar = computed(() => true)
+const isStudioRoute = computed(() => route.meta.fullscreen === true)
+const showSidebar = computed(() => !isStudioRoute.value)
 const activeMenu = computed(() => route.path)
 </script>
 
@@ -206,6 +215,10 @@ const activeMenu = computed(() => route.path)
   background: var(--bg-primary);
   padding: 24px;
   overflow-y: auto;
+}
+.content-area.studio-content {
+  padding: 0;
+  overflow: hidden;
 }
 
 /* —— Apple 风格侧边菜单 —— */

@@ -54,11 +54,12 @@ test('MediaAdapter 只读取受管 uploads 图片，限制大小并返回可持�
   context.after(() => fs.rmSync(root, { recursive: true, force: true }))
   const images = path.join(root, 'images')
   fs.mkdirSync(images, { recursive: true })
-  const png = Buffer.from('89504e470d0a1a0a0000000d49484452', 'hex')
+  const png = Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAusB9Y9Zl8sAAAAASUVORK5CYII=', 'base64')
   fs.writeFileSync(path.join(images, 'frame.png'), png)
-  fs.writeFileSync(path.join(images, 'large.png'), Buffer.concat([png, Buffer.alloc(64)]))
+  fs.writeFileSync(path.join(images, 'large.png'), Buffer.concat([png, Buffer.alloc(256)]))
+  fs.writeFileSync(path.join(images, 'truncated.png'), png.subarray(0, 16))
 
-  const adapter = createMediaAdapter({ uploadDir: root, maxInputBytes: 32 })
+  const adapter = createMediaAdapter({ uploadDir: root, maxInputBytes: 128 })
   const resolved = await adapter.resolveForModel({
     provider: 'cogvideo', model: 'cogvideox-flash',
     reference: { kind: 'project_media', media_id: 9, url: '/uploads/images/frame.png?token=secret' },
@@ -66,6 +67,9 @@ test('MediaAdapter 只读取受管 uploads 图片，限制大小并返回可持�
   assert.match(resolved.transient_value, /^data:image\/png;base64,/)
   assert.equal(resolved.snapshot.source_url, '/uploads/images/frame.png')
   assert.equal(resolved.snapshot.media_id, 9)
+  assert.equal(resolved.snapshot.width, 1)
+  assert.equal(resolved.snapshot.height, 1)
+  assert.equal(resolved.snapshot.format, 'png')
   assert.equal('transient_value' in resolved.snapshot, false)
   assert.equal(JSON.stringify(resolved.snapshot).includes('token=secret'), false)
 
@@ -75,6 +79,13 @@ test('MediaAdapter 只读取受管 uploads 图片，限制大小并返回可持�
       reference: { kind: 'project_media', url: '/uploads/images/large.png' },
     }),
     (error) => hasCode(error, 'MEDIA_INPUT_TOO_LARGE'),
+  )
+  await assert.rejects(
+    adapter.resolveForModel({
+      provider: 'cogvideo', model: 'cogvideox-flash',
+      reference: { kind: 'project_media', url: '/uploads/images/truncated.png' },
+    }),
+    (error) => hasCode(error, 'MEDIA_DECODE_INVALID'),
   )
   await assert.rejects(
     adapter.resolveForModel({

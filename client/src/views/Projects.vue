@@ -318,7 +318,7 @@
           <el-button type="primary" plain @click="handleContinueProject(seriesCurrentProject)">继续下一集</el-button>
         </div>
         <div class="series-episodes">
-          <div v-for="ep in seriesData.episodes" :key="ep.id" class="series-episode" @click="router.push(`/projects/${ep.id}/script`)">
+          <div v-for="ep in seriesData.episodes" :key="ep.id" class="series-episode" @click="router.push(`/studio/${ep.id}`)">
             <div class="episode-index">{{ String(ep.episode_index || 1).padStart(3, '0') }}</div>
             <div class="episode-main">
               <strong>{{ ep.name }}</strong>
@@ -370,7 +370,8 @@ import { z } from 'zod'
 import { ref, computed, nextTick, onMounted, onUnmounted } from 'vue'
 import { useRouter } from 'vue-router'
 import { useI18n } from 'vue-i18n'
-import { ElMessage, ElMessageBox } from 'element-plus'
+import { ElMessage } from 'element-plus/es/components/message/index'
+import { ElMessageBox } from 'element-plus/es/components/message-box/index'
 import { Plus, Search, MagicStick } from '@element-plus/icons-vue'
 import api, { unwrap } from '../api'
 import ProjectCard from '../components/ProjectCard.vue'
@@ -652,7 +653,7 @@ function onCoverError(project: ProjectView) {
 }
 
 function goToScript(id: EntityId) {
-  router.push(`/projects/${id}/script`)
+  router.push(`/studio/${id}`)
 }
 
 function applyProjectDurationPreset(value: DurationPresetValue) {
@@ -1053,7 +1054,7 @@ async function submitContinueProject() {
     continueVisible.value = false
     await fetchProjects()
     const nextId = next.id
-    if (typeof nextId === 'string' || typeof nextId === 'number') router.push(`/projects/${nextId}/script`)
+    if (typeof nextId === 'string' || typeof nextId === 'number') router.push(`/studio/${nextId}`)
   } catch (cause) {
     ElMessage.error(errorMessage(cause, t('projects.continueFailed')))
   } finally {

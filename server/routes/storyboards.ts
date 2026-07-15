@@ -8,6 +8,11 @@ import {
   latest as latestStageArtifact,
   publish as publishStageArtifact,
 } from '../services/stageArtifacts'
+import {
+  changedStoryboardFields,
+  recordStoryboardFieldRevision,
+  staleImpactForFields,
+} from '../services/staleDependencies'
 import { asRecord, errorDetails, errorMessage, queryText, sqlText, type JsonRecord } from './routeSupport'
 const router = express.Router();
 const { safeUnlink, safeUnlinkMany, resolveUploadPath } = require('../utils/fileCleanup');
@@ -211,6 +216,8 @@ router.post('/reconcile', (req, res) => {
     const createdIds: number[] = [];
     const preservedIds: number[] = [];
     const removedIds: number[] = [];
+    const regenerateIdSet = new Set<number>();
+    const fieldChanges = new Map<number, string[]>();
     const normalizeContent = (value: unknown): string => String(value ?? '').trim();
     const asJson = (value: unknown, fallback = '[]'): string => {
       if (value === undefined) return fallback;
@@ -223,8 +230,8 @@ router.post('/reconcile', (req, res) => {
           (project_id, scene_number, description, dialog, duration, sort_order, prompt,
            subtitle_text, transition, voice, no_voice, chapter_index, chapter_title,
            characters_in_scene, continuity_notes, scene_state_before, scene_state_after,
-           sync_status, quality_status, assets_stale, stale_reason)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+           sync_status, quality_status, assets_stale, stale_reason, stale_fields, stale_sources)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
       );
       const update = db.prepare(
         `UPDATE storyboards SET
@@ -232,7 +239,8 @@ router.post('/reconcile', (req, res) => {
           subtitle_text=?, subtitle_style=?, transition=?, voice=?, motion=?, no_voice=?,
           chapter_index=?, chapter_title=?, characters_in_scene=?, continuity_notes=?,
           scene_state_before=?, scene_state_after=?, selected_image_id=?, audio_url=?,
-          audio_words=?, video_path=?, sync_status=?, quality_status=?, assets_stale=?, stale_reason=?
+           audio_words=?, video_path=?, sync_status=?, quality_status=?, assets_stale=?, stale_reason=?
+           , stale_fields=?, stale_sources=?
          WHERE id=?`
       );
 
@@ -269,33 +277,48 @@ router.post('/reconcile', (req, res) => {
             'pending',
             'unchecked',
             0,
-            ''
+            '',
+            '[]',
+            '[]'
           );
-          createdIds.push(Number(created.lastInsertRowid));
+          const createdId = Number(created.lastInsertRowid);
+          createdIds.push(createdId);
+          regenerateIdSet.add(createdId);
+          const createdSnapshot = { ...item, description: item.description || '', dialog: item.dialog || '', prompt: item.prompt || item.description || '' };
+          const createdFields = changedStoryboardFields({}, createdSnapshot);
+          recordStoryboardFieldRevision(db, {
+            storyboardId: createdId, projectId: Number(project_id), changedFields: createdFields,
+            snapshot: createdSnapshot, source: 'reconcile-create',
+          });
           return;
         }
 
         const id = Number(existing.id);
         usedIds.add(id);
-        const contentChanged =
-          normalizeContent(item.description ?? existing.description) !== normalizeContent(existing.description) ||
-          normalizeContent(item.dialog ?? existing.dialog) !== normalizeContent(existing.dialog);
-
-        if (contentChanged) {
-          // 旧候选仍可能是用户认可的版本或失败诊断证据。保留记录与文件，只标记 stale；
-          // 后续生成会新增候选，不能静默覆盖 selected_image_id。
-          db.prepare('UPDATE images SET stale = 1, stale_reason = ? WHERE storyboard_id = ?')
-            .run('SCRIPT_CONTENT_CHANGED', id);
-          changedIds.push(id);
-        } else {
-          preservedIds.push(id);
-        }
-
         const description = item.description !== undefined ? item.description : existing.description;
         const dialog = item.dialog !== undefined ? item.dialog : existing.dialog;
         const prompt = item.prompt !== undefined
           ? item.prompt
-          : (contentChanged ? (description || '') : existing.prompt);
+          : (normalizeContent(description) !== normalizeContent(existing.description) ? (description || '') : existing.prompt);
+        const nextFieldState = { ...existing, ...item, description, dialog, prompt };
+        const changedFields = changedStoryboardFields(existing, nextFieldState);
+        const staleStages = staleImpactForFields(changedFields);
+        const contentChanged = changedFields.length > 0;
+        fieldChanges.set(id, changedFields);
+
+        if (staleStages.includes('image')) {
+          // 旧候选仍可能是用户认可的版本或失败诊断证据。保留记录与文件，只标记 stale；
+          // 后续生成会新增候选，不能静默覆盖 selected_image_id。
+          db.prepare('UPDATE images SET stale = 1, stale_reason = ?, stale_fields = ?, stale_sources = ? WHERE storyboard_id = ?')
+            .run('SCRIPT_CONTENT_CHANGED', JSON.stringify(changedFields), JSON.stringify([`storyboard:${id}`]), id);
+        }
+        if (contentChanged) {
+          changedIds.push(id);
+          if (staleStages.includes('image') || staleStages.includes('voice')) regenerateIdSet.add(id);
+        } else {
+          preservedIds.push(id);
+        }
+
         const subtitleText = item.subtitle_text !== undefined
           ? item.subtitle_text
           : (contentChanged ? (dialog || '') : existing.subtitle_text);
@@ -328,8 +351,16 @@ router.post('/reconcile', (req, res) => {
           contentChanged ? 'review' : (existing.quality_status || 'unchecked'),
           contentChanged ? 1 : (existing.assets_stale || 0),
           contentChanged ? 'SCRIPT_CONTENT_CHANGED' : (existing.stale_reason || ''),
+          contentChanged ? JSON.stringify(changedFields) : (existing.stale_fields || '[]'),
+          contentChanged ? JSON.stringify([`storyboard:${id}`]) : (existing.stale_sources || '[]'),
           id
         );
+        if (contentChanged) {
+          recordStoryboardFieldRevision(db, {
+            storyboardId: id, projectId: Number(project_id), changedFields,
+            snapshot: nextFieldState, source: 'reconcile-update',
+          });
+        }
       });
 
       for (const existing of current) {
@@ -395,6 +426,8 @@ router.post('/reconcile', (req, res) => {
           input_hash: scriptArtifact.input_hash,
         },
       },
+      changedFields: Array.from(new Set(Array.from(fieldChanges.values()).flat())),
+      staleSources: changedIds.map((id) => `storyboard:${id}`),
       payload: {
         storyboard_ids: result.map((row) => Number(row.id)),
         changed_ids: changedIds,
@@ -403,7 +436,7 @@ router.post('/reconcile', (req, res) => {
       },
     });
 
-    const regenerateIds = [...changedIds, ...createdIds];
+    const regenerateIds = Array.from(regenerateIdSet);
     opLog.log('storyboard.reconcile', 'project', project_id, {
       changed: changedIds.length,
       created: createdIds.length,
@@ -419,6 +452,7 @@ router.post('/reconcile', (req, res) => {
         created_ids: createdIds,
         removed_ids: removedIds,
         preserved_ids: preservedIds,
+        field_changes: Object.fromEntries(fieldChanges),
         cleaned_files: cleanedFiles,
         artifacts: { script: scriptArtifact, storyboard: storyboardArtifact },
       },
@@ -484,14 +518,15 @@ router.put('/:id', (req, res) => {
     scene_state_before: req.body.scene_state_before !== undefined ? req.body.scene_state_before : cur.scene_state_before,
     scene_state_after: req.body.scene_state_after !== undefined ? req.body.scene_state_after : cur.scene_state_after,
   };
-  const contentChanged = String(merged.description || '').trim() !== String(cur.description || '').trim()
-    || String(merged.dialog || '').trim() !== String(cur.dialog || '').trim();
+  const changedFields = changedStoryboardFields(cur, merged);
+  const staleStages = staleImpactForFields(changedFields);
+  const contentChanged = changedFields.length > 0;
 
   getDb().prepare(`UPDATE storyboards SET description=?, dialog=?, duration=?, sort_order=?, 
     prompt=?, selected_image_id=?, subtitle_text=?, subtitle_style=?, transition=?, voice=?, motion=?, no_voice=?,
     chapter_index=?, chapter_title=?,
     characters_in_scene=?, continuity_notes=?, scene_state_before=?, scene_state_after=?,
-    sync_status=?, quality_status=?, assets_stale=?, stale_reason=? WHERE id=?`
+    sync_status=?, quality_status=?, assets_stale=?, stale_reason=?, stale_fields=?, stale_sources=? WHERE id=?`
   ).run(
     merged.description, merged.dialog, merged.duration, merged.sort_order,
     merged.prompt, merged.selected_image_id,
@@ -503,11 +538,19 @@ router.put('/:id', (req, res) => {
     contentChanged ? 'review' : (cur.quality_status || 'unchecked'),
     contentChanged ? 1 : (cur.assets_stale || 0),
     contentChanged ? 'SCRIPT_CONTENT_CHANGED' : (cur.stale_reason || ''),
+    contentChanged ? JSON.stringify(changedFields) : (cur.stale_fields || '[]'),
+    contentChanged ? JSON.stringify([`storyboard:${id}`]) : (cur.stale_sources || '[]'),
     id
   );
   if (contentChanged) {
-    getDb().prepare('UPDATE images SET stale = 1, stale_reason = ? WHERE storyboard_id = ?')
-      .run('SCRIPT_CONTENT_CHANGED', id);
+    if (staleStages.includes('image')) {
+      getDb().prepare('UPDATE images SET stale = 1, stale_reason = ?, stale_fields = ?, stale_sources = ? WHERE storyboard_id = ?')
+        .run('SCRIPT_CONTENT_CHANGED', JSON.stringify(changedFields), JSON.stringify([`storyboard:${id}`]), id);
+    }
+    recordStoryboardFieldRevision(getDb(), {
+      storyboardId: Number(id), projectId: Number(cur.project_id), changedFields,
+      snapshot: merged, source: 'single-update',
+    });
     const rows = getDb().prepare(
       'SELECT id, scene_number, description, dialog, duration FROM storyboards WHERE project_id = ? ORDER BY sort_order ASC'
     ).all(cur.project_id);
@@ -524,6 +567,8 @@ router.put('/:id', (req, res) => {
           input_hash: scriptArtifact.input_hash,
         },
       } : {},
+      changedFields,
+      staleSources: [`storyboard:${id}`],
       payload: { storyboard_ids: rows.map((row) => Number(row.id)), changed_ids: [Number(id)] },
     });
   }

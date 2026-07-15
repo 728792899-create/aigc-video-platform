@@ -3,8 +3,9 @@ import {
   EditPen, Expand, Files, Film, FolderOpened, Loading, MagicStick, Microphone, Moon, Picture,
   PictureFilled, Plus, Setting, Sunny, VideoCamera, VideoPause, VideoPlay, Warning,
 } from '@element-plus/icons-vue'
-import ElementPlus, { ElMessage } from 'element-plus'
-import 'element-plus/dist/index.css'
+import { ElMessage } from 'element-plus/es/components/message/index'
+import 'element-plus/es/components/message/style/css'
+import 'element-plus/es/components/message-box/style/css'
 import { createPinia } from 'pinia'
 import { createApp } from 'vue'
 
@@ -28,7 +29,6 @@ for (const [key, component] of Object.entries(icons)) app.component(key, compone
 
 app.use(createPinia())
 app.use(router)
-app.use(ElementPlus)
 app.use(i18n)
 
 app.config.errorHandler = (cause, _instance, info) => {

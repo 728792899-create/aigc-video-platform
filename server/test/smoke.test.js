@@ -176,6 +176,65 @@ test('项目读取：GET /:id 返回项目并带 cover_url 派生字段', async 
   assert.ok('asset_health' in body.data, '项目详情应包含 asset_health 字段');
 });
 
+test('Studio 布局：默认读取、乐观并发保存与非法节点拒绝', async () => {
+  const initial = await req('GET', `/api/projects/${testProjectId}/studio-layout`);
+  assert.strictEqual(initial.status, 200);
+  assert.strictEqual(initial.body.data.revision, 0);
+  assert.deepEqual(initial.body.data.positions, {});
+
+  const rejected = await req('PUT', `/api/projects/${testProjectId}/studio-layout`, {
+    schema_version: 1,
+    base_revision: 0,
+    positions: { 'arbitrary-node': { x: 10, y: 20 } },
+  });
+  assert.strictEqual(rejected.status, 400);
+
+  const saved = await req('PUT', `/api/projects/${testProjectId}/studio-layout`, {
+    schema_version: 1,
+    base_revision: 0,
+    positions: {
+      [`project:${testProjectId}:topic`]: { x: 10, y: 20 },
+      [`project:${testProjectId}:script`]: { x: 360, y: 20 },
+    },
+  });
+  assert.strictEqual(saved.status, 200);
+  assert.strictEqual(saved.body.data.revision, 1);
+
+  const conflict = await req('PUT', `/api/projects/${testProjectId}/studio-layout`, {
+    schema_version: 1,
+    base_revision: 0,
+    positions: { [`project:${testProjectId}:topic`]: { x: 999, y: 999 } },
+  });
+  assert.strictEqual(conflict.status, 409);
+  assert.strictEqual(conflict.body.error.code, 'STUDIO_LAYOUT_CONFLICT');
+
+  const loaded = await req('GET', `/api/projects/${testProjectId}/studio-layout`);
+  assert.strictEqual(loaded.status, 200);
+  assert.strictEqual(loaded.body.data.revision, 1);
+  assert.deepEqual(loaded.body.data.positions[`project:${testProjectId}:topic`], { x: 10, y: 20 });
+});
+
+test('Director Advisor：根据真实项目证据生成可审查白名单动作且不自动调用 Provider', async () => {
+  const { status, body } = await req('GET', `/api/projects/${testProjectId}/director-advice`);
+  assert.strictEqual(status, 200);
+  assert.match(body.data.plan_id, /^director:[a-f0-9]{16}$/);
+  assert.strictEqual(body.data.project_id, testProjectId);
+  assert.strictEqual(body.data.evidence.shots, 0);
+  assert.ok(body.data.actions.some((item) => item.operation === 'edit-script'));
+  assert.ok(body.data.actions.every((item) => item.route.startsWith('/')));
+  assert.ok(body.data.actions.every((item) => !('code' in item) && !('prompt' in item)));
+  assert.strictEqual(body.data.next_action_id, body.data.actions[0].id);
+});
+
+test('Studio 新接口：非法项目 ID 稳定返回结构化 400', async () => {
+  for (const path of ['/api/projects/not-a-number/studio-layout', '/api/projects/0/director-advice']) {
+    const { status, body } = await req('GET', path);
+    assert.strictEqual(status, 400);
+    assert.strictEqual(body.error.code, 'PROJECT_ID_INVALID');
+    assert.strictEqual(body.error.retryable, false);
+  }
+});
+
 test('项目读取：不存在的 id 返回 404', async () => {
   const { status, body } = await req('GET', '/api/projects/99999999');
   assert.strictEqual(status, 404, '不存在的项目应 404');
@@ -250,6 +309,67 @@ test('分镜更新：PUT 单条改 duration 为 PATCH 语义', async () => {
   assert.strictEqual(status, 200);
   assert.strictEqual(body.data.duration, 8, 'duration 应更新为 8');
   assert.strictEqual(body.data.description, '测试镜头一：城市夜景全景', 'description 应保留');
+});
+
+test('Prompt revision：版本、diff、恢复与 Demo 逐场景重生成完整可用', async () => {
+  let projectId = null;
+  try {
+    const project = await req('POST', '/api/projects', {
+      name: '[smoke测试]Prompt revision 隔离项目', theme: '版本和局部重生成', style: '写实',
+    });
+    assert.strictEqual(project.status, 200);
+    projectId = project.body.data.id;
+    const created = await req('POST', '/api/storyboards/batch', {
+      project_id: projectId,
+      storyboards: [{ scene_number: 1, description: '城市夜景', dialog: '开始生成', duration: 5 }],
+    });
+    assert.strictEqual(created.status, 200);
+    const storyboardId = created.body.data[0].id;
+
+    const first = await req('POST', `/api/projects/${projectId}/prompts`, {
+      storyboard_id: storyboardId,
+      kind: 'image',
+      content: '城市夜景\n广角全景',
+      source: 'manual',
+      prompt_version: 'smoke-v1',
+    });
+    assert.strictEqual(first.status, 201);
+    assert.strictEqual(first.body.data.revision, 1);
+
+    const second = await req('POST', `/api/projects/${projectId}/prompts`, {
+      storyboard_id: storyboardId,
+      kind: 'image',
+      content: '城市夜景\n青色霓虹\n广角全景',
+      source: 'polish',
+      prompt_version: 'smoke-v2',
+      parent_revision_id: first.body.data.id,
+    });
+    assert.strictEqual(second.status, 201);
+    assert.strictEqual(second.body.data.revision, 2);
+
+    const diff = await req('GET', `/api/prompts/${second.body.data.id}/diff`);
+    assert.strictEqual(diff.status, 200);
+    assert.ok(diff.body.data.lines.some((line) => line.type === 'added' && line.line === '青色霓虹'));
+
+    const restored = await req('POST', `/api/prompts/${first.body.data.id}/restore`, {});
+    assert.strictEqual(restored.status, 201);
+    assert.strictEqual(restored.body.data.revision, 3, '恢复应创建新 revision，不覆盖历史');
+
+    const beforeCandidates = (await req('GET', `/api/images/storyboard/${storyboardId}`)).body.data.length;
+    const regeneration = await req('POST', `/api/storyboards/${storyboardId}/regenerate`, {
+      stages: ['image'],
+      prompt_revision_id: second.body.data.id,
+      idempotencyKey: `smoke-prompt-${storyboardId}`,
+    });
+    assert.strictEqual(regeneration.status, 202);
+    const task = await waitForTask(regeneration.body.data.task_id, 10000);
+    assert.strictEqual(task.status, 'success');
+    const candidates = (await req('GET', `/api/images/storyboard/${storyboardId}`)).body.data;
+    assert.strictEqual(candidates.length, beforeCandidates + 1, '新结果应追加为 Candidate');
+    assert.ok(candidates.some((candidate) => candidate.prompt_revision_id === second.body.data.id));
+  } finally {
+    if (projectId != null) await req('DELETE', `/api/projects/${projectId}?permanent=true`);
+  }
 });
 
 test('分镜增量改稿：变化镜头旧素材标记 stale 且保留，未变化镜头不受影响', async () => {
@@ -552,6 +672,34 @@ test('P2 资产 Variant：revision 递增、镜头绑定快照与引用保护可
   assert.ok(genericLibrary.body.data.units.some((item) => (
     item.id === styleUnit.body.data.id && item.variants[0]?.id === styleVariant.body.data.id
   )), '通用 Style 资产和 Variant 应可重新读取');
+
+  const nextStyleVariant = await req('POST', `/api/assets/units/${styleUnit.body.data.id}/variants`, {
+    label: '水墨参考 v2',
+    provider: 'demo',
+    model: 'placeholder-v2',
+    parent_variant_id: styleVariant.body.data.id,
+    media_reference: { kind: 'project_media', media_id: candidate.id, url: candidate.file_url },
+  });
+  assert.strictEqual(nextStyleVariant.status, 201);
+  const selectedStyleVariant = await req('POST', `/api/assets/units/${styleUnit.body.data.id}/variants/${nextStyleVariant.body.data.id}/select`, {});
+  assert.strictEqual(selectedStyleVariant.status, 200, '通用资产应支持切换默认 Variant');
+  assert.strictEqual(selectedStyleVariant.body.data.selected, 1);
+
+  const disposableVariant = await req('POST', `/api/assets/units/${styleUnit.body.data.id}/variants`, {
+    label: '可归档草稿',
+    provider: 'demo',
+    model: 'placeholder-draft',
+    media_reference: { kind: 'project_media', media_id: candidate.id, url: candidate.file_url },
+  });
+  assert.strictEqual(disposableVariant.status, 201);
+  const archivedDraft = await req('DELETE', `/api/assets/variants/${disposableVariant.body.data.id}`);
+  assert.strictEqual(archivedDraft.status, 200, '未选中且未绑定的 Variant 可以安全归档');
+  assert.strictEqual(archivedDraft.body.data.status, 'archived');
+
+  const invalidUnit = await req('POST', `/api/assets/projects/${p2ProjectId}/units`, {
+    asset_type: 'scene', name: '   ', scope: 'episode',
+  });
+  assert.strictEqual(invalidUnit.status, 400, '外部资产写入必须先通过 Zod 契约');
 });
 
 test('回收站：文件删除后可按分类查看详情，并只恢复指定图片内容', async () => {
@@ -797,6 +945,15 @@ test('Provider 列表：GET /api/providers 按 kind 分组（llm/t2i/t2v/tts）'
   }
   // DeepSeek 应在 llm 分组里
   assert.ok(body.data.llm.some((p) => p.key === 'deepseek'), 'llm 分组应含 deepseek');
+});
+
+test('Provider 账单状态：无 Key 时零计费且不伪造余额', async () => {
+  const { status, body } = await req('GET', '/api/providers/kling/billing-status');
+  assert.strictEqual(status, 200);
+  assert.strictEqual(body.data.capability, 'unverified');
+  assert.strictEqual(body.data.status, 'unknown');
+  assert.strictEqual(body.data.reason_code, 'PROVIDER_BILLING_UNVERIFIED');
+  assert.strictEqual(body.data.balance, null);
 });
 
 test('Demo Mode：积分探测不启动外部 Dreamina CLI', async () => {

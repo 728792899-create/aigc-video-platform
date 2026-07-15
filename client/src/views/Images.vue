@@ -334,7 +334,8 @@
 import type { Project } from '@aigc-video/contracts'
 import { ref, computed, onMounted, onUnmounted, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
-import { ElMessage, ElMessageBox } from 'element-plus'
+import { ElMessage } from 'element-plus/es/components/message/index'
+import { ElMessageBox } from 'element-plus/es/components/message-box/index'
 import { Picture, CopyDocument, MagicStick } from '@element-plus/icons-vue'
 import { useI18n } from 'vue-i18n'
 import { retryFailedTask, trackTask } from '../api/tasks'
@@ -519,7 +520,10 @@ const bindingFor = (characterId: string | number) => assetLibrary.value.bindings
     && Number(binding.asset_id) === Number(characterId)
 )
 
-const boundVariantId = (characterId: string | number): string | null => bindingFor(characterId)?.variant_id || null
+const boundVariantId = (characterId: string | number): string | null => {
+  const value = bindingFor(characterId)?.variant_id
+  return value == null ? null : String(value)
+}
 
 const bindExistingVariant = async (character: ContinuityRecord, variantId: string): Promise<void> => {
   const storyboardId = selectedStoryboard.value?.id

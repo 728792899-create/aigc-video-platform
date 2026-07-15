@@ -56,7 +56,8 @@
 import { z } from 'zod'
 import { ref, onMounted } from 'vue'
 import { useRouter } from 'vue-router'
-import { ElMessage, ElMessageBox } from 'element-plus'
+import { ElMessage } from 'element-plus/es/components/message/index'
+import { ElMessageBox } from 'element-plus/es/components/message-box/index'
 import { useI18n } from 'vue-i18n'
 import { getHistory, retryHistory, deleteHistory, deleteHistoryBatch, type HistoryRecord } from '../api/history'
 

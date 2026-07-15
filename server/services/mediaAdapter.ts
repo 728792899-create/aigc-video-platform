@@ -1,6 +1,7 @@
 import crypto from 'node:crypto'
 import fs from 'node:fs'
 import path from 'node:path'
+import sharp from 'sharp'
 import * as modelCatalog from './modelCatalog'
 import { normalizeMediaReference } from './assetDomain'
 import { assertSafeRemoteUrl, type RemoteLookup } from './remoteMedia'
@@ -133,6 +134,26 @@ export function createMediaAdapter({
     const bytes = fs.readFileSync(absolute)
     const mime = imageMime(bytes)
     if (!mime) adapterError('MEDIA_SIGNATURE_INVALID', '媒体内容不是受支持的 PNG/JPEG/WebP/GIF 图片')
+    let metadata: sharp.Metadata
+    try {
+      metadata = await sharp(bytes, {
+        failOn: 'error',
+        limitInputPixels: 40_000_000,
+        animated: false,
+      }).metadata()
+    } catch {
+      adapterError('MEDIA_DECODE_INVALID', '图片虽有合法文件头，但无法安全解码')
+    }
+    const width = Number(metadata.width) || 0
+    const height = Number(metadata.height) || 0
+    const expectedFormat = mime === 'image/jpeg' ? 'jpeg' : mime.slice('image/'.length)
+    if (!width || !height || width * height > 40_000_000 || metadata.format !== expectedFormat) {
+      adapterError('MEDIA_DECODE_INVALID', '图片尺寸或编码格式无效', {
+        width,
+        height,
+        format: metadata.format || '',
+      })
+    }
     const contentHash = crypto.createHash('sha256').update(bytes).digest('hex')
     return {
       kind: 'data_url',
@@ -142,6 +163,9 @@ export function createMediaAdapter({
         source_url: normalized.url,
         media_id: normalized.media_id,
         mime,
+        format: metadata.format,
+        width,
+        height,
         bytes: stat.size,
         content_hash: normalized.content_hash || contentHash,
       },

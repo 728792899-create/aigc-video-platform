@@ -1,6 +1,6 @@
 # 技术说明（简版）
 
-AIGC 视频工作台是一个 Vue + Express + Electron + SQLite/sql.js + FFmpeg 的本地优先应用。核心设计是把模型调用和媒体处理纳入持久化状态机，而不是把所有逻辑堆在页面按钮回调里。
+AIGC 视频工作台是一个 TypeScript + Vue + Express 5 + Electron 40 + SQLite/better-sqlite3 + FFmpeg 的本地优先应用。核心设计是把模型调用和媒体处理纳入持久化状态机，而不是把所有逻辑堆在页面按钮回调里。
 
 ## 关键决策
 
@@ -9,6 +9,8 @@ AIGC 视频工作台是一个 Vue + Express + Electron + SQLite/sql.js + FFmpeg 
 - 项目结构进数据库，大媒体进文件系统；
 - 每个长任务同步持久化，并带 recovery metadata；
 - Provider 通过契约层归一化错误与降级；
+- Socket.IO 只传输稳定任务事件，断线后回退到有上限 HTTP 轮询；
+- Studio 画布是默认入口，线性快速模式保留；
 - Demo 在网络适配器前短路，但真实运行字幕、时间线和 FFmpeg；
 - renderer 无 Node 权限，系统能力集中在 Electron Main；
 - 凭证与普通配置/备份分离；

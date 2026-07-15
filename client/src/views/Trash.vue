@@ -127,7 +127,8 @@
 <script setup lang="ts">
 import { computed, ref, onMounted } from 'vue'
 import { useI18n } from 'vue-i18n'
-import { ElMessage, ElMessageBox } from 'element-plus'
+import { ElMessage } from 'element-plus/es/components/message/index'
+import { ElMessageBox } from 'element-plus/es/components/message-box/index'
 import {
   listTrash, getTrashDetail, restoreTrash, restoreTrashItems, purgeTrash, purgeTrashItems,
   emptyTrash, listLogs, type OperationLog, type TrashDetail, type TrashDetailItem, type TrashRecord,

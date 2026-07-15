@@ -51,7 +51,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        os: [macos-14, windows-2022]
+        os: [macos-15-intel, windows-2022]
     runs-on: ${{ matrix.os }}
     timeout-minutes: 35
     steps:
@@ -71,9 +71,44 @@ jobs:
       - run: npm --prefix client ci
       - run: npm run prepare:desktop
       - run: npm run electron:preflight
-      - if: runner.os == 'macOS'
-        run: npx electron-builder --dir --mac --arm64 -c.directories.output="$RUNNER_TEMP/aigc-video-pack" -c.mac.identity=- -c.mac.entitlements=resources/entitlements.adhoc.plist -c.mac.entitlementsInherit=resources/entitlements.adhoc.plist
-      - if: runner.os == 'macOS'
-        run: codesign --verify --deep --strict --verbose=2 "$RUNNER_TEMP/aigc-video-pack/mac-arm64/AIGC 视频工作台.app"
-      - if: runner.os == 'Windows'
-        run: npx electron-builder --dir --win --x64 -c.win.signAndEditExecutable=false
+      - name: Build and install macOS Intel preflight
+        if: runner.os == 'macOS'
+        env:
+          SKIP_NOTARIZE: '1'
+        shell: bash
+        run: |
+          set -euo pipefail
+          output="$RUNNER_TEMP/aigc-video-pack"
+          npx electron-builder --mac --x64 --publish never -c.directories.output="$output" -c.mac.identity=- -c.mac.entitlements=resources/entitlements.adhoc.plist -c.mac.entitlementsInherit=resources/entitlements.adhoc.plist
+          dmg="$(find "$output" -maxdepth 1 -name '*.dmg' -print -quit)"
+          test -n "$dmg"
+          mount="$RUNNER_TEMP/aigc-video-mount"
+          install="$RUNNER_TEMP/aigc-video-installed"
+          mkdir -p "$mount" "$install"
+          hdiutil attach -nobrowse -mountpoint "$mount" "$dmg"
+          trap 'hdiutil detach "$mount" || true' EXIT
+          cp -R "$mount/AIGC 视频工作台.app" "$install/"
+          hdiutil detach "$mount"
+          trap - EXIT
+          codesign --verify --deep --strict --verbose=2 "$install/AIGC 视频工作台.app"
+          AIGC_DESKTOP_EXECUTABLE="$install/AIGC 视频工作台.app/Contents/MacOS/AIGC 视频工作台" npm run desktop:install-smoke
+          rm -rf "$install/AIGC 视频工作台.app"
+      - name: Build, install and uninstall Windows x64 preflight
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          $output = Join-Path $env:RUNNER_TEMP 'aigc-video-pack'
+          npx electron-builder --win --x64 --publish never "-c.directories.output=$output" -c.win.signAndEditExecutable=false
+          if ($LASTEXITCODE -ne 0) { throw 'electron-builder failed' }
+          $installer = Get-ChildItem $output -Filter '*.exe' | Select-Object -First 1
+          if (-not $installer) { throw 'NSIS installer not found' }
+          $install = Join-Path $env:RUNNER_TEMP 'aigc-video-installed'
+          Start-Process -FilePath $installer.FullName -ArgumentList '/S', "/D=$install" -Wait
+          $executable = Join-Path $install 'AIGC 视频工作台.exe'
+          if (-not (Test-Path $executable)) { throw 'installed executable not found' }
+          $env:AIGC_DESKTOP_EXECUTABLE = $executable
+          npm run desktop:install-smoke
+          $uninstaller = Get-ChildItem $install -Filter 'Uninstall*.exe' | Select-Object -First 1
+          if (-not $uninstaller) { throw 'uninstaller not found' }
+          Start-Process -FilePath $uninstaller.FullName -ArgumentList '/S' -Wait
+          if (Test-Path $executable) { throw 'uninstall left the application executable behind' }

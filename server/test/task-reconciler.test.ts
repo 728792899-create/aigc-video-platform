@@ -7,7 +7,7 @@ import type {
   ProviderReconciliation,
 } from '@aigc-video/contracts'
 
-import { normalizeAppError } from '../services/appError'
+import { normalizeAppError, redactDiagnostic } from '../services/appError'
 import { reconcileTask, type ReconcileTask } from '../services/taskReconciler'
 
 function task(patch: Partial<ReconcileTask> = {}): ReconcileTask {
@@ -83,4 +83,9 @@ test('限流、超时、鉴权和异常格式映射为稳定错误码且脱敏',
   const malformed = normalizeAppError(Object.assign(new Error('bad response sk-secret-123456'), { code: 'INVALID_RESPONSE' }))
   assert.equal(malformed.code, 'PROVIDER_INVALID_RESPONSE')
   assert.doesNotMatch(malformed.technicalMessage || '', /sk-secret/)
+  const unixPath = redactDiagnostic('at run (/Users/alice/Documents/private-project/server/app.ts:42:7)')
+  const windowsPath = redactDiagnostic('at run (C:\\Users\\alice\\Documents\\private-project\\server\\app.ts:42:7)')
+  assert.equal(unixPath, 'at run ([USER_PATH]:42:7)')
+  assert.equal(windowsPath, 'at run ([USER_PATH]:42:7)')
+  assert.doesNotMatch(`${unixPath}${windowsPath}`, /alice|private-project|Documents/)
 })

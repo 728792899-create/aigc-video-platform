@@ -21,5 +21,5 @@
     "utils/**/*.ts",
     "utils/**/*.js"
   ],
-  "exclude": ["node_modules", "dist", "test", "scripts", "uploads", "logs"]
+  "exclude": ["node_modules", "dist", "test", "scripts", "uploads", "logs", "**/* 2.ts", "**/* 2.js"]
 }

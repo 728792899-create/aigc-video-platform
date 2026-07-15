@@ -1,6 +1,6 @@
 # 数据模型与持久化
 
-当前数据库 schema 版本为 **7**，使用 sql.js 运行 SQLite。Electron 将数据库放在用户数据目录；开发模式默认位于 `server/db/database.sqlite`，测试通过 `DB_PATH` 指向隔离临时目录。
+当前数据库 schema 版本为 **8**。Electron 发布包使用 `better-sqlite3`，开发/兼容测试可通过 `DB_DRIVER=sqljs` 显式切换到 sql.js。Electron 将数据库放在用户数据目录；开发模式默认位于 `server/db/database.sqlite`，测试通过 `DB_PATH` 指向隔离临时目录。
 
 ## 核心关系
 
@@ -14,6 +14,7 @@ erDiagram
   PROJECTS ||--o{ WORKBENCH_CHECKS : diagnoses
   PROJECTS ||--o{ CONTINUITY_CHECKS : validates
   PROJECTS ||--o{ STAGE_ARTIFACTS : versions
+  PROJECTS ||--o{ PROJECT_VIEW_STATES : layouts
   PROJECTS }o--|| SERIES : belongs_to
   SERIES ||--o{ STORY_BIBLES : defines
   SERIES ||--o{ CHARACTERS : owns
@@ -30,6 +31,13 @@ erDiagram
     TEXT request_hash
     TEXT status
     INTEGER expires_at
+  }
+  PROJECT_VIEW_STATES {
+    INTEGER project_id PK
+    TEXT user_key PK
+    TEXT view_key PK
+    INTEGER revision
+    TEXT layout_json
   }
   STAGE_ARTIFACTS {
     TEXT id PK
@@ -219,12 +227,14 @@ topic → script → storyboard → image → voice → subtitle → timeline �
 | `asset_variants` | 通用资产不可变 revision、生成来源、MediaReference、选择/收藏/归档状态 |
 | `storyboard_characters` | 镜头与角色的动作、情绪和服装关系 |
 | `storyboard_asset_bindings` | 镜头对指定 Variant revision 的不可变快照绑定 |
+| `storyboard_field_revisions` | 分镜字段 hash、变更来源和字段级 stale 传播证据 |
+| `prompt_revisions` | script/image/video/voice/negative Prompt 的不可变版本、血缘和实际模型信息 |
 | `continuity_checks` | 连续性问题、评分、建议和修复动作 |
 | `workbench_checks` | 最近一次项目健康检查 |
 
 这些表中的提示词和引用可能包含用户创作内容，诊断或遥测不得自动上传完整记录。
 
-Character 继续由原兼容表提供稳定 API，并在 v7 幂等投影到通用资产层。Scene/Prop/Style/Voice/Music 通过 `asset_units / asset_variants` 持久化；解析顺序为 Episode → Series → Global。镜头绑定同时记录稳定 AssetUnit ID、Variant key、revision、来源作用域和不可变快照。
+Character 继续由原兼容表提供稳定 API，并在 v7 幂等投影到通用资产层。Scene/Prop/Style/Voice/Music 通过 `asset_units / asset_variants` 持久化；解析顺序为 Episode → Series → Global。Character Binding 保留旧数字 ID，通用资产 Binding 使用稳定 AssetUnit 字符串 ID；历史负数 surrogate 在 API 输出时归一化。镜头绑定同时记录 Variant key、revision、来源作用域和不可变快照。
 
 ## 运营与辅助表
 
@@ -275,7 +285,9 @@ flowchart TD
   Version -->|高于程序版本| Reject["拒绝打开且不改写"]
   DDL --> Backfill6["v6 幂等回填 Candidate / Character Variant"]
   Backfill6 --> Backfill7["v7 投影 AssetUnit / Task canonical fields"]
-  Backfill7 --> Set["写入 schema v7"]
+  Backfill7 --> Layout8["v8 创建 project_view_states"]
+  Layout8 --> Lineage9["v9 资产 lineage / 字段 stale / Prompt revision"]
+  Lineage9 --> Set["写入 schema v9"]
   Set --> Flush["同步写盘"]
 ~~~
 
@@ -287,7 +299,7 @@ flowchart TD
 4. 验证 foreign keys 与索引；
 5. 更新本页和备份恢复说明。
 
-v5 升级 v6 时，旧 `character_assets` 按创建顺序获得单调 revision，最新可用参考图成为默认 Variant；旧已选图获得 `selected_at`。MediaReference 回填会剔除 URL query/fragment。v7 再把旧 Character/Variant 幂等投影到通用 `asset_units / asset_variants`，并把 Provider 对账、attempt、幂等、时间边界、取消和快照提升为任务一等字段。迁移重复运行不会重排 revision、复制资产或改变既有快照。
+v5 升级 v6 时，旧 `character_assets` 按创建顺序获得单调 revision，最新可用参考图成为默认 Variant；旧已选图获得 `selected_at`。MediaReference 回填会剔除 URL query/fragment。v7 再把旧 Character/Variant 幂等投影到通用 `asset_units / asset_variants`，并把 Provider 对账、attempt、幂等、时间边界、取消和快照提升为任务一等字段。v8 仅新增画布布局表；使用 `revision` 乐观并发保护。v9 以 additive migration 增加资产 fork lineage、`stale_fields/stale_sources`、分镜字段 revision 和 Prompt revision，不删除旧 Candidate、选择或导出。迁移重复运行不会重排 revision、复制资产或改变既有快照。
 
 ## 不变量
 

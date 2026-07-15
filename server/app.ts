@@ -2,6 +2,7 @@ import 'dotenv/config'
 
 import { randomUUID } from 'node:crypto'
 import fs from 'node:fs'
+import { createServer } from 'node:http'
 import path from 'node:path'
 
 import cors from 'cors'
@@ -14,6 +15,7 @@ import { errorHandler } from './middleware/errorHandler'
 import security = require('./middleware/security')
 import config = require('./services/config')
 import type { TaskManager } from './services/taskManager'
+import { createTaskRealtimeServer } from './services/taskRealtime'
 import { recoverTasks } from './services/taskRecovery'
 
 // taskManager 暂时保留 CommonJS singleton 形状以兼容所有旧路由；这里把已知的
@@ -86,6 +88,7 @@ const aiGenerateOnly: RequestHandler = (request, response, next) => {
 }
 
 app.use('/api/projects', require('./routes/projects'))
+app.use('/api', require('./routes/prompts'))
 app.use('/api/storyboards', require('./routes/storyboards'))
 app.use('/api/images', require('./routes/images'))
 app.use('/api/audio', require('./routes/audio'))
@@ -160,13 +163,16 @@ export async function start(): Promise<void> {
     console.error('[startup] 回收站清理初始化失败:', errorMessage(cause))
   }
 
-  const server = app.listen(PORT, HOST, () => {
+  const server = createServer(app)
+  const realtime = createTaskRealtimeServer(server, taskManager, allowedOrigins)
+  server.listen(PORT, HOST, () => {
     console.log(`服务器运行在 http://${HOST}:${PORT}`)
     if (typeof process.send === 'function') process.send({ type: 'server-ready', port: PORT, host: HOST })
   })
 
   const shutdown = (signal: string) => {
     console.log(`[shutdown] 收到 ${signal}，正在优雅关闭...`)
+    realtime.stop()
     server.close(() => {
       try { require('./db').saveDb?.() } catch { /* best effort during shutdown */ }
       console.log('[shutdown] HTTP 服务已关闭，进程退出')

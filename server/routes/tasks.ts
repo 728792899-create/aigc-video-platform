@@ -6,10 +6,12 @@
  * GET /api/tasks?type=image   - 列表
  */
 import express from 'express'
-import type { TaskManager, TaskRecord } from '../services/taskManager'
+import type { TaskManager, TaskPatch, TaskRecord } from '../services/taskManager'
 import idempotency = require('../services/idempotency')
 import { STAGES, transition } from '../services/workflowStateMachine'
-import { asRecord, errorMessage, queryText } from './routeSupport'
+import { reconcileTask } from '../services/taskReconciler'
+import { getAdapter, getCapabilities } from '../services/t2vProvider'
+import { asRecord, errorMessage, pathText, queryText } from './routeSupport'
 const taskManager: TaskManager = require('../services/taskManager');
 const router = express.Router();
 
@@ -69,10 +71,48 @@ router.get('/:id/stream', (req, res) => {
 });
 
 // 取消任务：排队中任务可直接取消；运行中一键成片会标记 cancel_requested
-router.post('/:id/cancel', (req, res) => {
+router.post('/:id/cancel', async (req, res) => {
   const task = taskManager.get(req.params.id);
   if (!task) {
     return res.status(404).json({ code: 404, message: '任务不存在' });
+  }
+  if (task.provider && task.provider_task_id && !TERMINAL_STATUSES.has(task.status)) {
+    const adapter = getAdapter(task.provider);
+    const capabilities = getCapabilities(task.provider);
+    if (capabilities.cancel === 'supported' && adapter?.cancel) {
+      if (req.body?.confirm_remote_cancel !== true) {
+        return res.status(409).json({
+          code: 409,
+          data: { error_code: 'REMOTE_CANCEL_CONFIRMATION_REQUIRED', task_id: task.id },
+          message: '取消会改变远程 Provider 任务，需要明确确认',
+        });
+      }
+      try {
+        const result = await adapter.cancel(task.provider_task_id, {
+          correlationId: task.correlation_id || `cancel-${task.id}`,
+          idempotencyKey: task.idempotency_key || `cancel-${task.id}-${task.attempt}`,
+        });
+        if (result === 'confirmed') {
+          taskManager.update(task.id, { status: 'canceled', cancel_state: 'confirmed', message: 'Provider 已确认取消', retryable: false, finished_at: Date.now() });
+        } else if (result === 'requested') {
+          taskManager.update(task.id, { cancel_state: 'requested', message: '已向 Provider 请求取消，等待确认' });
+        } else {
+          taskManager.update(task.id, { cancel_state: 'local_only', message: 'Provider 不支持远程取消，已在本地停止跟踪' });
+        }
+        return res.json({ code: 200, data: taskManager.get(task.id), message: taskManager.get(task.id)?.message });
+      } catch (error) {
+        return res.status(502).json({ code: 502, data: { error_code: 'PROVIDER_CANCEL_FAILED' }, message: errorMessage(error) });
+      }
+    }
+    taskManager.update(task.id, {
+      cancel_state: 'local_only',
+      message: 'Provider 未提供已验证的远程取消能力，已在本地停止跟踪',
+    });
+    return res.json({
+      code: 200,
+      data: taskManager.get(task.id),
+      message: 'PROVIDER_CAPABILITY_UNSUPPORTED：未改变远程任务',
+    });
   }
   if (task.type === 'auto-produce') {
     const queue = require('../services/autoProduceQueue');
@@ -96,9 +136,32 @@ router.post('/:id/cancel', (req, res) => {
   res.status(400).json({ code: 400, message: '当前任务阶段暂不支持立即取消' });
 });
 
+router.post('/:id/reconcile', async (req, res) => {
+  const task = taskManager.get(pathText(req.params.id));
+  if (!task) return res.status(404).json({ code: 404, data: null, message: '任务不存在' });
+  try {
+    const result = await reconcileTask(task, {
+      getAdapter,
+      updateTask: (id, patch) => {
+        const { error: patchError, ...rest } = patch
+        const safePatch: TaskPatch = {
+          ...rest,
+          ...(patchError && typeof patchError === 'object'
+            ? { error: patchError.userMessage, error_details: patchError }
+            : { error: patchError }),
+        }
+        return taskManager.update(id, safePatch) || task
+      },
+    });
+    return res.json({ code: 200, data: result, message: '任务对账完成，未发起新的生成请求' });
+  } catch (error) {
+    return res.status(502).json({ code: 502, data: { error_code: 'PROVIDER_RECONCILE_FAILED' }, message: errorMessage(error) });
+  }
+});
+
 // 只重试失败项：当前支持项目级批量生图任务。
 router.post('/:id/retry-failed', idempotency(), (req, res) => {
-  const prev = taskManager.get(req.params.id || '');
+  const prev = taskManager.get(pathText(req.params.id));
   if (!prev) return res.status(404).json({ code: 404, message: '任务不存在' });
   if (prev.type !== 'image-batch') {
     return res.status(400).json({ code: 400, message: '当前任务不支持只重试失败项' });
@@ -148,7 +211,7 @@ router.post('/:id/retry-failed', idempotency(), (req, res) => {
 
 // 单阶段重试：保留此前成功检查点，只把目标阶段及其下游置回待运行。
 router.post('/:id/retry-stage', idempotency(), (req, res) => {
-  const task = taskManager.get(req.params.id || '');
+  const task = taskManager.get(pathText(req.params.id));
   if (!task) return res.status(404).json({ code: 404, message: '任务不存在' });
   if (task.type !== 'auto-produce' || !task.meta?.workflow) {
     return res.status(400).json({ code: 400, message: '当前任务不支持阶段级重试' });

@@ -13,6 +13,9 @@ module.exports = async function notarizeHook(context) {
   const apiKeyMode = process.env.APPLE_API_KEY && process.env.APPLE_API_KEY_ID && process.env.APPLE_API_ISSUER;
   const appleIdMode = process.env.APPLE_ID && process.env.APPLE_APP_SPECIFIC_PASSWORD && process.env.APPLE_TEAM_ID;
   if (!apiKeyMode && !appleIdMode) {
+    if (process.env.AIGC_RELEASE_SIGNING_REQUIRED === '1') {
+      throw new Error('正式 macOS 发布缺少公证凭据，拒绝生成看似可发布的包。');
+    }
     console.log('[notarize] 未配置 Apple 公证凭据，跳过；签名后的正式发布必须在 CI 中配置。');
     return;
   }

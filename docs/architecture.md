@@ -7,19 +7,21 @@ flowchart LR
   E["Electron Main"] --> P["受限 Preload"]
   P --> V["Vue 创作工作台"]
   V --> C["共享 TypeScript + Zod 契约"]
-  V -->|"同源 REST / SSE"| A["Express API"]
+  V -->|"同源 REST"| A["Express 5 API"]
+  V <-->|"Socket.IO / polling fallback"| RT["任务实时通道"]
+  RT --> T
   A --> C
   A --> T["Task Manager + Queue"]
   T --> W["八阶段状态机"]
   W --> R["Provider 契约层"]
   W --> M["媒体任务 / FFmpeg"]
-  W --> D["sql.js / SQLite 检查点"]
+  W --> D["better-sqlite3 / SQLite 检查点"]
   M --> F["本地媒体资产"]
   E --> K["系统安全存储"]
   K -->|"启动时一次性内存注入"| R
 ```
 
-Electron 只负责系统能力、后端子进程、窗口、安全存储、更新与崩溃边界。Vue 不接触 Node API；Express 默认仅绑定回环地址。数据库保存项目、资产引用和任务检查点，大文件保存在用户数据目录。
+Electron 只负责系统能力、后端子进程、窗口、安全存储、更新与崩溃边界。Vue 不接触 Node API；Express 默认仅绑定回环地址。发布包使用 `better-sqlite3` + WAL/外键，`sql.js` 作为显式兼容驱动；Knex 仅用于编译 SQL，不建立第二数据库连接。数据库保存项目、资产引用和任务检查点，大文件保存在用户数据目录。
 
 一方运行时代码以 TypeScript 为主。`packages/contracts` 提供不依赖 UI 或 Provider SDK 的 DTO、Zod schema、错误、任务、资产、模型与 IPC 契约；client/server 只通过包的构建产物消费。server 和 Electron 源码编译为 CommonJS 后运行，因此本轮没有同时改变既有模块加载语义。桌面准备链按 contracts、server、client、Electron 的顺序构建，Bytenode 只处理已经编译的 server JavaScript。
 
@@ -80,4 +82,4 @@ Demo Mode 在脚本、图片和配音入口先短路为本地实现，保证测�
 
 GitHub Actions 在 Linux 执行全质量门禁，在 Windows 生成 unsigned 预检包、在 macOS 生成可校验但不受 Gatekeeper 信任的 ad-hoc 预检包。正式 tag 工作流从 GitHub Secrets 注入签名/公证凭据，输出安装包、blockmap 和更新清单。Sentry 是显式 opt-in；本地 crash dump 与 `logs/backend.log` 在无 DSN 时仍可用于离线诊断。
 
-继续阅读：[升级审计与路线](architecture/short-video-upgrade.md)、[内部 API 参考](api-reference.md)、[schema v7 数据模型](data-model.md)、[工作流与崩溃恢复](workflow-recovery.md)、[备份与恢复手册](backup-restore.md)。
+继续阅读：[升级审计与路线](architecture/short-video-upgrade.md)、[Toonflow clean-room 转型](toonflow-clean-room-analysis.md)、[内部 API 参考](api-reference.md)、[schema v9 数据模型](data-model.md)、[工作流与崩溃恢复](workflow-recovery.md)、[备份与恢复手册](backup-restore.md)。

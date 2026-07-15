@@ -12,7 +12,7 @@
   <a href="LICENSE"><img alt="License MIT" src="https://img.shields.io/badge/license-MIT-38bdf8"></a>
   <img alt="Node 22+" src="https://img.shields.io/badge/Node.js-22%2B-22c55e">
   <img alt="Vue 3" src="https://img.shields.io/badge/Vue-3-42b883">
-  <img alt="Electron 43" src="https://img.shields.io/badge/Electron-43-8b5cf6">
+  <img alt="Electron 40" src="https://img.shields.io/badge/Electron-40-8b5cf6">
   <img alt="Demo no paid API" src="https://img.shields.io/badge/Demo-0%20paid%20API-f97316">
 </p>
 
@@ -27,6 +27,8 @@
 AIGC 视频工作台把容易中断、难以复现的模型调用，整理为一条明确的桌面生产线：
 
 > **主题 → 脚本 → 分镜 → 图片 → 配音 → 字幕 → 时间线 → 导出**
+
+默认的 **AI 导演工作室** 用可保存的节点画布表达这条流程；“一键成片”仍作为快速模式保留。Director Advisor 只读项目证据并给出可审查建议，不会自动调用 Provider 或执行任意代码。
 
 每个阶段都有独立状态、检查点、尝试次数、进度、输出和诊断信息。模型超时、限流或程序退出时，已经完成的素材不会被丢弃；重新启动后可以从最近检查点继续。没有任何 API Key 时，Demo Mode 仍会用本地实现走完整流程并生成真实可播放的 MP4。
 
@@ -76,6 +78,7 @@ AIGC 视频工作台把容易中断、难以复现的模型调用，整理为一
 | --- | --- | --- |
 | 创作流程 | 八阶段状态机、阶段解锁、检查点 | 清楚知道当前在哪一步、下一步是什么 |
 | 脚本与分镜 | 模板、脚本生成、逐镜编辑、稳定 storyboard id | 改一条分镜时不会重建全部资产 |
+| 视觉资产 | Character/Scene/Prop/Style、分层作用域、Variant revision、镜头快照绑定 | 共享参考图可追踪，切换默认版本不会静默改写旧镜头 |
 | 图片与配音 | Provider 切换、批量任务、部分成功、占位降级 | 成功项保留，失败项可单独修复 |
 | 字幕与时间线 | 字幕预设、时长、运镜、音轨、画幅 | 在导出前实时检查最终结构 |
 | 导出 | FFmpeg 合成、自定义目录、成片库 | 生成真实 MP4，而不是静态页面演示 |

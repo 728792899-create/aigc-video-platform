@@ -41,8 +41,9 @@ flowchart TD
 - [贡献指南](../CONTRIBUTING.md)：环境、分支、TDD、无 Key 测试、提交与 PR 规范。
 - [架构说明](architecture.md)：进程边界、数据流、状态机和发布结构。
 - [AI 短视频升级审计与路线](architecture/short-video-upgrade.md)：真实源码基线、知识库版本、差距矩阵、P0–P3 路线与实施状态。
+- [Toonflow 深度审计与 clean-room 转型](toonflow-clean-room-analysis.md)：固定源码证据、许可边界、实际采用栈、明确避免项与验收证据。
 - [API 参考](api-reference.md)：当前 `/api/*` 内部兼容接口、请求 ID、幂等与错误格式。
-- [数据模型](data-model.md)：schema v7 ERD、阶段 revision/stale、Candidate/Variant、Provider 对账字段、镜头快照、幂等和迁移。
+- [数据模型](data-model.md)：schema v9 ERD、Studio 布局、资产 fork lineage、字段级 stale、Prompt revision、Candidate/Variant、Provider 对账字段、镜头快照、幂等和迁移。
 - [工作流与崩溃恢复](workflow-recovery.md)：阶段记录、事件、幂等、重试与恢复算法。
 - [Provider 与 Demo 指南](provider-guide.md)：能力注册、错误归一化、降级与扩展清单。
 - [测试与 CI 指南](testing-ci.md)：测试分层、离线保证、CI 矩阵和复现方式。

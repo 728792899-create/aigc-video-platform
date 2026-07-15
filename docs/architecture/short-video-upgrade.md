@@ -2,7 +2,7 @@
 
 > 审计与实施基线：2026-07-14；TypeScript 实施状态更新：2026-07-15
 > 目标仓库分支：`codex/aigc-video-desktop-hardening`
-> 实际使用知识库：`open-source-feature-knowledge-base@15f11275d5d161d435c859079825fcdfaff49006`（本地研究分支；远端默认分支在审计时仍为 `81d0664da629ba9dd4eace1380a2872ae752b730`）
+> 本批实际使用知识库：`open-source-feature-knowledge-base@fdc96883bd762e4143a77b4270114d05ab208823`；交付前本地知识库已前进到 `59facd4a168fa23eba9391061daeb112151dbc2a`，本轮没有修改知识库。早期 TypeScript 迁移规划使用过 `15f11275d5d161d435c859079825fcdfaff49006`。
 
 本文记录本轮升级的源码事实、差距、采用边界和持续实施状态。它不是未来能力宣传页；“已实现”必须有当前仓库代码和测试支持，“计划”不等于完成。
 
@@ -44,11 +44,12 @@ flowchart LR
 | 共享契约 | TypeScript + Zod；ESM/CJS 双产物和声明文件 | `packages/contracts/src/index.ts` → `packages/contracts/dist` |
 | Web | Vue SFC `lang="ts"`、typed API/Pinia/router/composable | `client/src` → `client/dist` |
 | API/领域 | strict TypeScript；外部输入 Zod 校验；数据库行显式映射 | `server/**/*.ts` → `server/dist/**/*.js` |
-| 数据 | schema v7；任务对账字段与通用 AssetUnit/Variant | `server/db/index.ts` |
+| 数据 | schema v9；`better-sqlite3` 发布驱动、sql.js 回退、Knex SQL 编译 | `server/db/index.ts`、`runtimeDriver.ts`、`queryBuilder.ts` |
+| 实时 | Socket.IO 稳定任务事件；连接失败时有上限 polling fallback | `server/services/taskRealtime.ts`、`client/src/api/taskRealtime.ts` |
 | Desktop | typed main/preload/telemetry 与 Zod IPC 参数校验 | `electron/*.ts` → `electron/dist/*.js` |
 | 质量 | `tsc`、`vue-tsc`、ESLint、类型覆盖率、Node test、Vitest | 根 `package.json`、`.github/workflows` |
 
-TypeScript 覆盖率门禁按一方运行时代码的非空行计算，忽略测试、构建脚本和编译产物。2026-07-15 最终实测为 `38693 / 38693 = 100.00%`，超过本轮不低于 95% 的目标；`client/src`、server runtime 与 Electron source 已无需要豁免的 `.js` 业务源码。仍保留的 JavaScript 仅限测试、构建/验收脚本及 TypeScript 编译产物，不作为未迁移运行时源码统计。
+TypeScript 覆盖率门禁按一方运行时代码的非空行计算，忽略测试、构建脚本和编译产物。2026-07-15 最新实测为 `41367 / 41367 = 100.00%`，超过本轮不低于 95% 的目标；`client/src`、server runtime 与 Electron source 已无需要豁免的 `.js` 业务源码。仍保留的 JavaScript 仅限测试、构建/验收脚本及 TypeScript 编译产物，不作为未迁移运行时源码统计。
 
 桌面准备链固定为 `contracts build → server compile → client build → Electron compile → Bytenode 处理已编译 server JavaScript`。发布包不以 TypeScript 源码作为运行入口。
 
@@ -64,11 +65,11 @@ TypeScript 覆盖率门禁按一方运行时代码的非空行计算，忽略测
 | `npm run security:audit` | 通过 | root/server/client production dependency 均为 0 vulnerability |
 | `npm run electron:preflight` | 通过 | ASAR、sandbox、IPC、权限、图标、桌面产物边界通过 |
 
-已知非阻塞基线：Vite 报告 Element Plus 相关 JS chunk 约 1.0 MB，超过 700 kB 告警阈值；这是后续 P3 性能项，不是本轮 P0 的回归。
+已知非阻塞基线：升级前 Vite 的 Element Plus 相关 JS chunk 为 1,026,198 bytes、CSS 为 356,008 bytes。本轮组件直达入口与 shell/workbench 分包后最大 JS 约 250 KB（下降约 75.6%）、CSS 约 199 KB（下降约 44.1%），构建无循环 chunk、无超限告警，首屏不预加载 workbench chunk。
 
 2026-07-14 最新门禁：独立 `server npm test` 为 89/89；`npm run quality` 中 server 为 88 pass + 1 个仅因该进程未设置临时 `SETTINGS_FILE` 而跳过的凭证写入测试，client 为 7 个文件 13/13，Demo 重启恢复/阶段重试/有效 MP4 与生产构建均通过；安全源码扫描覆盖 296 个 tracked/untracked 源文件，三套 production audit 均为 0 vulnerability；桌面预检编译 79 个后端模块并完成 macOS arm64 ad-hoc 临时打包。
 
-2026-07-15 TypeScript 转型最终门禁：`npm run quality` 全部通过；contracts 3/3，server JavaScript 79 pass + 1 skip、server TypeScript 28/28，client 13 个文件 31/31，Demo 重启恢复、失败后阶段重试、有效 MP4 与 client production build 均通过。`node scripts/security-check.mjs` 扫描 439 个源文件，root/contracts/server/client 完整 `npm audit` 均为 0 vulnerability，FFmpeg smoke 通过。迁移过程中还补充了安全/媒体、导出/FFmpeg、技能/凭证和回收站动态恢复的边界测试；`npm run pack` 编译 83 个 server 模块，Electron 预检全部通过并成功生成 macOS arm64 ad-hoc 包，没有发布证书时公证按预期跳过。
+2026-07-15 当前门禁：在显式清空 Provider Key 且 `DEMO_MODE=1` 的环境中，`npm run quality` 全部通过；contracts 6/6，server HTTP/JavaScript 84 pass + 1 个因测试进程没有隔离 `SETTINGS_FILE` 而 skip、server TypeScript 29/29，client 16 个文件 42/42，Demo 重启恢复、失败后新 attempt 单阶段重试、有效 MP4 与 client production build 均通过。独立 server 全量运行为 85/85 + TypeScript 29/29。`node scripts/security-check.mjs` 扫描 355 个 tracked/untracked 源文件，root/contracts/server/client 完整 `npm audit` 均为 0 vulnerability，FFmpeg smoke 通过。`npm run pack` 编译 89 个 server 模块，Electron 40.10.6 + better-sqlite3 arm64 预检全部通过并成功生成 macOS arm64 ad-hoc 目录包；脚本验证最终包不含 TypeScript、sourcemap、Electron 示例应用或用户数据，隔离 userData 启动并优雅退出通过，没有发布证书时公证按预期跳过。
 
 ## 3. 源码审计结论
 
@@ -92,7 +93,7 @@ topic → script → storyboard → image → voice → subtitle → timeline �
 
 升级前的 `workflowStateMachine.js` 为每阶段保存状态、尝试次数、进度、输出摘要、错误和时间戳，`pipeline.js` 会跳过已有脚本检查点、已选图片和已有音频；两者现已等价迁移为 `.ts`。图片/配音仍按镜头保留成功项，因此它是持续使用的恢复基础。
 
-仍有三项关键差距：
+升级前有三项关键差距；本轮已用 StageArtifact、持久幂等和 Provider reconcile 处理主要路径，下列边界作为决策背景保留：
 
 1. 阶段输出只是任务 `meta` 中的摘要，没有独立的 artifact revision、dependency revision 和 stale 传播；
 2. 上游变更后的下游处理偏向“重置记录”，没有保留可比较的旧产物版本；
@@ -110,7 +111,7 @@ topic → script → storyboard → image → voice → subtitle → timeline �
 
 现有实现已经包含系列、Story Bible、角色稳定 id、角色参考图和镜头角色绑定，并用 `promptCompiler` 生成上下文 hash 和缓存键。这是 reference-first consistency 的可用基础。
 
-差距是：
+升级前差距是（通用资产领域/API 已在后续 P2 落地）：
 
 - 资产模型只覆盖角色为主，Scene、Prop、Style 没有统一 AssetUnit；
 - 参考资产没有明确 Variant、Revision、selectedVariant 和归档语义；
@@ -156,13 +157,13 @@ topic → script → storyboard → image → voice → subtitle → timeline �
 
 | 能力 | 当前实现 | 成熟度 | 参考知识 | 用户价值 | 风险 | 成本 | 动作 | 优先级 | 验收方法 |
 | --- | --- | ---: | --- | --- | --- | --- | --- | --- | --- |
-| 重启与重复计费安全 | DB 任务 + 自动 runner；幂等仅内存 | 45% | durable task lifecycle | 极高 | 极高 | M | harden | P0 | 重启后同 key 回放；云任务不自动重提 |
-| 数据版本与迁移 | schema v3、迁移备份、原子写盘 | 65% | local-first persistence | 极高 | 高 | S | harden | P0 | v3→v4、幂等迁移、未来版本拒绝 |
+| 重启与重复计费安全 | 持久任务/幂等/attempt；reconcile 与 orphan 语义已落地 | 88% | durable task lifecycle | 极高 | 极高 | M | harden | P2 | 重启后同 key 回放；云任务不自动重提 |
+| 数据版本与迁移 | schema v9、迁移备份、未来版本拒绝、双驱动奇偶测试 | 94% | local-first persistence | 极高 | 高 | S | harden | P2 | v3→v9、幂等迁移、未来版本拒绝 |
 | 结构化脚本契约 | 已完成 v1 Zod 契约、Prompt/model/input hash 与脱敏诊断 | 75% | structured breakdown、phase contract | 极高 | 中 | M | harden | P1 | Provider/可编辑输入双重校验、局部更新 |
 | 阶段产物 revision/stale | schema v5 已保存 revision/dependency/stale；细粒度依赖仍需扩展 | 70% | phase-contract pipeline | 高 | 中 | L | harden | P1/P2 | 上游修改只标 stale，历史不删除 |
 | 端到端 Demo | 无 Key 八阶段 + 真 MP4 | 85% | durable human review loop | 极高 | 低 | S | keep/harden | P1 | smoke、重启、阶段重试、有效 MP4 |
 | 候选评审 | 稳定 Candidate ID、选择保护、收藏/归档、生成来源、键盘 | 82% | multi-candidate review | 高 | 中 | M | harden | P2 | 选择不覆盖、引用中不可删、HTTP/UI 契约测试 |
-| 统一资产模型 | Character Variant/Revision/Binding 已落地；其他类型待扩展 | 65% | layered asset resolution | 高 | 中 | L | extract | P2 | revision 迁移、快照绑定、引用保护 |
+| 统一资产模型 | Character 兼容层 + 通用 AssetUnit/Variant/Binding；Scene/Prop/Style 领域/API 已落地 | 78% | layered asset resolution | 高 | 中 | L | harden | P2 | revision 迁移、快照绑定、引用保护 |
 | ModelCatalog | 已从现有 Registry 派生静态能力目录并接入 fail-fast | 75% | capability metadata routing | 高 | 中 | M | harden | P2 | capability fail-fast 契约测试 |
 | MediaAdapter | 输出安全下载 + T2V 受管首帧 resolver 已统一 | 65% | provider-aware media resolution | 高 | 高 | M | harden | P0/P2 | SSRF、redirect、MIME、size、timeout 测试 |
 | Provider 错误统一 | 契约层存在，adapter 使用不齐 | 55% | adapter routing | 高 | 中 | M | harden | P2 | 稳定 code/retryable/attempt chain |
@@ -184,7 +185,11 @@ topic → script → storyboard → image → voice → subtitle → timeline �
 
 ### LumenX
 
-固定版本 `743683387384fb1d9fff72038933e7249d416076` 的根代码为 MIT。适合借鉴 catalog/registry/media resolver/task snapshot/candidate selection 等抽象；本项目优先适配概念到现有 Express/Vue/sql.js 架构，不复制不需要的实现。其捆绑 FFmpeg、字体、图片、图标、模型和演示素材没有被根 MIT 自动覆盖，默认不复用。
+固定版本 `743683387384fb1d9fff72038933e7249d416076` 的根代码为 MIT。适合借鉴 catalog/registry/media resolver/task snapshot/candidate selection 等抽象；本项目优先适配概念到现有 Express/Vue/SQLite 架构，不复制不需要的实现。其捆绑 FFmpeg、字体、图片、图标、模型和演示素材没有被根 MIT 自动覆盖，默认不复用。
+
+### Toonflow
+
+固定版本 `bc61ec7a1b5df31293b286981a5f4ad4635464ee` 的可读服务端是 TypeScript + Express + Socket.IO + SQLite/Knex + Electron，但前端主要是大型编译 bundle，细粒度 UI 源码不可同等审计。根 LICENSE 在 Apache-2.0 文本后附带限制性补充协议，因此本项目只独立重新实现可视化制作、专业阶段、skill 渐进披露、计划审阅、能力目录和候选选定等思想。不复制代码、Prompt、CSS、编译 UI、品牌或资源，并明确避免默认凭据、wildcard CORS、query token、明文 secret 和 `vm2` Vendor 代码运行时。详见 [Toonflow clean-room 审计](../toonflow-clean-room-analysis.md)。
 
 ## 6. 分阶段实施路线
 
@@ -206,7 +211,7 @@ topic → script → storyboard → image → voice → subtitle → timeline �
 ### P2：资产、候选与 Provider 可替换性
 
 1. **Character 已完成**：在现有角色体系上抽取 AssetUnit/Variant/Revision/Binding，不平行重建。
-2. **待实施**：增加 Scene/Prop/Style，并实现完整 Episode > Series > Global 的作用域解析。
+2. **工作台闭环已完成**：Character/Scene/Prop/Style/Voice/Music、Episode > Series > Global、Series→Episode fork、受管媒体 Variant、默认选择、镜头快照绑定、批量改绑、引用保护归档、键盘和窄屏路径均已落地。
 3. **已完成基础闭环**：ModelCatalog 从现有 ProviderRegistry 派生静态能力，阶段路由与 LLM/T2I/T2V fail-fast；输入 MediaAdapter 已接入 T2V 首帧，输出继续统一走 RemoteMediaFetcher。对象存储 resolver 和短期签名 URL 仍待实施。
 4. **已完成基础闭环**：候选有任务来源、输入快照、收藏/归档、选定保护和键盘操作；并排对比大图仍可继续优化。
 5. **进行中**：在行为测试保护下持续拆分大页面与大服务。
@@ -214,7 +219,7 @@ topic → script → storyboard → image → voice → subtitle → timeline �
 ### P3：性能、可观测性与发布体验
 
 1. 按路由拆分 chunk、缩略图和媒体懒加载，记录 bundle 与首屏基线。
-2. 将无界/固定轮询收敛为 SSE 或有上限退避；增加任务背压指标。
+2. **实时通道已完成**：Socket.IO + 有上限 polling fallback；任务背压指标仍待增加。
 3. 完善 Sentry release/source map、离线崩溃包和诊断导出。
 4. 评估按 Provider 能力隔离出口代理；没有明确部署需求时不增加复杂度。
 
@@ -258,7 +263,7 @@ stateDiagram-v2
 - Demo/local-safe 任务继续自动从检查点恢复，保持既有体验；
 - 云/未知任务不再启动时静默重提，进入 `orphaned`；
 - TaskDock 和历史页显示“结果待核对”、诊断建议和费用风险确认；
-- `orphaned` 纳入 SSE、任务清理、前端轮询和终态判断。
+- `orphaned` 纳入稳定任务事件、Socket.IO/polling fallback、任务清理和终态判断。
 
 ### Attempt 血缘
 
@@ -269,8 +274,8 @@ stateDiagram-v2
 
 ### 迁移保护
 
-- v3 可直接自动升级到当前 v7，迁移前创建数据库备份；
-- 重复初始化保持 v7，不重复迁移、重排 revision 或创建多余备份；
+- v3 可直接自动升级到当前 v9，迁移前创建数据库备份；
+- 重复初始化保持 v9，不重复迁移、重排 revision 或创建多余备份；
 - 高于当前程序的未来 schema 直接拒绝打开，不改写原文件。
 
 ### 远程媒体边界
@@ -305,21 +310,23 @@ schema v5 新增 `stage_artifacts`。同阶段相同 input/payload/dependency �
 
 ### 本切片兼容边界
 
-- schema v3 可直接幂等迁移到 v7；旧 Character 参考图回填 revision/selected/MediaReference 并投影为通用 AssetUnit/Variant，旧已选 Candidate 回填 selected_at；未来 schema 继续 fail safely；
+- schema v3 可直接幂等迁移到 v9；旧 Character 参考图回填 revision/selected/MediaReference 并投影为通用 AssetUnit/Variant，旧已选 Candidate 回填 selected_at；v9 additive 增加 lineage、字段 stale 与 Prompt revision，未来 schema 继续 fail safely；
 - `/api/projects/:id/artifacts` 为内部兼容只读接口，默认不回传完整 payload；
 - 现有项目/分镜/图片 API 保持原路径，新增字段为加法；
 - `/storyboards/batch` 的显式整体替换仍保留旧语义，主工作台已使用安全的 `reconcile`；后续需为该兼容入口增加明确替换确认。
 
-## 9. 已完成的 P2 Character Variant 与 Candidate 评审切片
+## 9. 已完成的 P2 分层资产与 Candidate 评审切片
 
 - 没有新建平行资产系统：`character_assets` 增强为带稳定 key、revision、selected、parent、Provider/model 和 MediaReference 的 Variant；
 - `storyboard_asset_bindings` 保存镜头实际使用的 Variant revision 不可变快照，角色默认版本变化不会静默污染旧镜头；
 - `images` 增强为 Candidate，记录 task/Provider/model、脱敏输入快照、媒体引用、候选血缘、收藏和归档；
 - Candidate 选择使用独立 API，不再把整个分镜对象回写；当前选中项和被 Variant 引用项都无法物理删除；
 - 画面工作台显示作用域、revision、Provider/model/task，支持收藏、归档、恢复、Enter 选用和 `F` 收藏，窄屏保留核心路径；
+- 独立视觉资产工作台支持创建 Scene/Prop/Style、从受管媒体建立 Variant、切换默认 revision、绑定指定镜头和查看影响数量；Enter/B/Delete 提供完整键盘路径；
+- Character 继续使用旧数字 ID；通用资产绑定使用稳定 AssetUnit 字符串 ID。历史负数 surrogate 在 API 投影层归一化，不要求破坏性迁移；
 - schema v5→v7 用真实 legacy 行验证幂等回填，URL query/fragment 不进入 MediaReference。
 
-当前边界：Character 保持兼容 API；schema v7 和 `/api/assets` 已为 Scene/Prop/Style/Voice/Music 提供通用 AssetUnit/Variant、作用域解析、选择、绑定与引用保护。旧 Character 与通用表通过稳定投影兼容；工作台对后三类资产的完整可视化编辑仍待扩展。
+当前边界：Character 保持兼容 API；schema v9 的 `/api/assets` 已覆盖 Scene/Prop/Style/Voice/Music、显式 fork、批量改绑和引用影响查询。真实系列规模下的批量操作性能和复杂影响提示仍需发布前数据集验证。
 
 ## 10. 关键架构决策
 
@@ -333,12 +340,12 @@ schema v5 新增 `stage_artifacts`。同阶段相同 input/payload/dependency �
 
 - schema v7 已将 `provider_task_id/provider/model/attempt/parent_task_id/idempotency_key/timeout/retryable/cancel_state/input_snapshot/media_snapshot/correlation_id` 提升为任务列；adapter 支持查询时会只读 reconcile，缺 ID、不支持查询或返回未知状态时进入 `orphaned`，不会重新提交。真实付费 Provider 的线上状态组合仍未验证。
 - Retry 已创建新 attempt 并保留父任务；当前对账是任务表内字段和事件，不是独立的 Provider 账单对账表。
-- 结构化脚本 v1 已覆盖当前核心字段，但还没有 Prompt diff/version 管理 UI，也未实现逐场景模型局部重生成接口。
+- 结构化脚本 v1 已覆盖当前核心字段；Prompt revision、行级 diff、恢复为新 revision 和逐场景 Demo 重生成已落地。真实 Provider 局部重生成仍需各 Provider 的线上能力与费用验收。
 - Provider 输出远程下载的 SSRF/redirect/size/MIME 加固已完成；T2V 本地/公开 URL 首帧已有 provider-aware resolution，对象存储与 T2I 原生参考图仍未实现。
-- 通用 AssetUnit/Variant/Binding 与 Episode > Series > Global 解析已在领域/API 层落地；Scene/Prop/Style 的完整 UI、共享资产 fork 交互仍是计划，artifact stale 尚未形成字段级依赖图。
-- Computer Use 已用隔离 userData 真实验证 Electron 启动、Demo 生成、任务/素材重启恢复、预览、系统目录选择器打开与路径导航，以及成功导出 MP4。macOS 原生面板的“选择当前空目录”确认动作未被 Computer Use 暴露，因此本机副本路径使用弹窗内的手工路径输入/验证作为回退；成片库导出不受影响。
+- 通用 AssetUnit/Variant/Binding、Episode > Series > Global、Series fork、Voice/Music 工作台、批量改绑和字段级 artifact stale 已落地；真实大项目性能与跨集影响可理解性仍待验证。
+- Computer Use 已用隔离 userData 真实验证最新 Electron 40 包启动、项目创建、无 Key 结构化剧本生成/分镜保存、草稿预览、macOS 系统目录选择器路径导航和“打开”确认，并收到“目录已选择并可写”结果。完整成片 MP4 导出由同次 `npm run quality` 的隔离 Demo acceptance 实际执行；不把未在该手工项目中点击的导出按钮写成 Computer Use 导出成功。
 - 桌面实测产生的 MP4 为 32.03 秒、1920×1080、30 fps、H.264 High + AAC，428407 bytes；使用项目内 `ffmpeg-static` 完整解码到 null sink 成功。
-- Browser Control 已用隔离数据库验证空状态、Demo 结构化脚本、两次候选生成、既有选择不被覆盖、`F` 收藏、Character Variant/镜头 Binding、服务重启后恢复、归档/恢复和 700px 窄屏入口；模型设置页另验证了静态能力标签、CogVideoX 路由切换/保存且未触发 Provider 请求；两轮控制台均未出现 error。
+- Browser Control 已用隔离数据库验证空状态、Demo 结构化脚本、两次候选生成、既有选择不被覆盖、`F` 收藏、Character Variant/镜头 Binding、服务重启后恢复、归档/恢复和 700px 窄屏入口；新增 Scene 资产→受管媒体 Variant→`B` 键绑定镜头→受引用归档 409，并在 640×720 验证布局堆叠。模型设置页另验证了静态能力标签、CogVideoX 路由切换/保存且未触发 Provider 请求；控制台均未出现 error/warn。
 - 正式 macOS Developer ID、公证和 Windows 受信任签名需要发布者证书，当前只能验证配置与 unsigned/ad-hoc 预检。
 
 ## 12. 测试策略
@@ -348,7 +355,7 @@ schema v5 新增 `stage_artifacts`。同阶段相同 input/payload/dependency �
 P0 新增/增强测试：
 
 - `task-recovery.test.js`：`safe-auto` 恢复、云任务 orphaned、恢复次数上限；
-- `db-migration.test.js`：v3→v7、迁移幂等、未来 schema 安全拒绝、原项目数据保留；
+- `db-migration.test.js`：v3→v9、迁移幂等、未来 schema 安全拒绝、原项目数据保留；
 - `demo-acceptance.mjs`：服务重启后相同 Idempotency-Key 回放原 project/task，并继续导出有效 MP4；阶段重试创建新 attempt 且保留原失败证据；
 - 既有 Demo 阶段失败测试继续验证只重试 export，不重跑 storyboard。
 - `remote-media.test.js`：协议/凭证、IPv4/IPv6 私网、metadata、混合 DNS、逐跳 redirect、redirect limit、声明/实际大小、MIME/magic bytes 欺骗、失败清理和原子落盘。
@@ -367,4 +374,4 @@ P2 新增：
 - `model-catalog-settings.test.js`：设置页从独立 catalog 读取并显示四阶段能力摘要。
 - `runtime-utils.test.ts`：数据库时间兼容、FFmpeg/ffprobe 路径与上传文件魔数；`reliability-utils.test.ts`：导出目录、子进程诊断和阶段超时预算；`service-contracts.test.ts`：技能契约、内置凭证默认关闭及回收站动态恢复白名单。
 
-后续测试重点是 Prompt diff、字段级 stale、Provider task 对账、Scene/Prop/Style 作用域、Windows/macOS x64 干净机安装与真实签名发布。
+后续测试重点是真实 Provider 零提交对账、Windows/macOS x64 远端干净 runner、两个连续正式签名版本的自动更新，以及大规模系列资产批量改绑性能。

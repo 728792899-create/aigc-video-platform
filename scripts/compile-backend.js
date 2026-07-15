@@ -23,6 +23,7 @@ const OUT = path.join(ROOT, 'dist-server-jsc');
 // 不编译/不复制的目录与文件（相对 server/）
 const EXCLUDE_DIRS = new Set(['node_modules', 'test', 'uploads', 'logs']);
 const EXCLUDE_NAME_RE = /(_backup_|\.sqlite$|\.sqlite\.tmp$|settings\.json$|\.jsc$)/;
+const RELEASE_SOURCE_RE = /\.(?:[cm]?ts|tsx|map|tsbuildinfo)$/i;
 // 编译为 jsc 但保留明文 bootstrap 的入口文件
 const ENTRY = 'app.js';
 
@@ -35,7 +36,7 @@ function copyDir(src, dst) {
     const s = path.join(src, e.name);
     const d = path.join(dst, e.name);
     if (e.isDirectory()) copyDir(s, d);
-    else fs.copyFileSync(s, d);
+    else if (!RELEASE_SOURCE_RE.test(e.name)) fs.copyFileSync(s, d);
   }
 }
 
@@ -116,7 +117,7 @@ function copyDirRaw(src, dst) {
         // node_modules/.bin 等包内相对链接在 vendor 内仍可解析，保留即可。
         fs.symlinkSync(fs.readlinkSync(s), d);
       }
-    } else fs.copyFileSync(s, d);
+    } else if (!RELEASE_SOURCE_RE.test(e.name)) fs.copyFileSync(s, d);
   }
 }
 

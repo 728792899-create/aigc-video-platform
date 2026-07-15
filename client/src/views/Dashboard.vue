@@ -232,7 +232,7 @@ import { z } from 'zod'
 import { computed, onMounted, ref } from 'vue'
 import { useRouter } from 'vue-router'
 import { useI18n } from 'vue-i18n'
-import { ElMessage } from 'element-plus'
+import { ElMessage } from 'element-plus/es/components/message/index'
 import {
   ArrowRight,
   CircleCheck,
@@ -469,7 +469,7 @@ async function createFromTemplate(template: DashboardTemplate) {
       duration_max: template.duration[1],
     })
     ElMessage.success(t('dashboard.createSuccess'))
-    router.push(`/projects/${project.id}/script`)
+    router.push(`/studio/${project.id}`)
   } catch (cause) {
     ElMessage.error(t('dashboard.createFailed', { msg: errorMessage(cause) }))
   } finally {
@@ -490,7 +490,7 @@ async function createFromTopic(topic: DailyTopic) {
       duration_max: template.duration[1],
     })
     ElMessage.success(t('dashboard.createSuccess'))
-    router.push(`/projects/${project.id}/script`)
+    router.push(`/studio/${project.id}`)
   } catch (cause) {
     ElMessage.error(t('dashboard.createFailed', { msg: errorMessage(cause) }))
   } finally {
@@ -499,9 +499,7 @@ async function createFromTopic(topic: DailyTopic) {
 }
 
 function openProject(project: ProjectView) {
-  if (project.status === 'completed') router.push(`/projects/${project.id}/preview`)
-  else if (assetStatus(project) === 'error') router.push(`/projects/${project.id}/images`)
-  else router.push(`/projects/${project.id}/script`)
+  router.push(`/studio/${project.id}`)
 }
 
 function openRepair(project: ProjectView) {

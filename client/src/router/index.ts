@@ -1,7 +1,10 @@
 import { createRouter, createWebHistory, type RouteRecordRaw } from 'vue-router'
 
 const routes: RouteRecordRaw[] = [
-  { path: '/', name: 'Dashboard', component: () => import('../views/Dashboard.vue') },
+  { path: '/', redirect: '/studio' },
+  { path: '/studio/:id?', name: 'DirectorStudio', component: () => import('../views/DirectorStudio.vue'), meta: { fullscreen: true } },
+  { path: '/projects/:id/assets', name: 'AssetWorkbench', component: () => import('../views/AssetWorkbench.vue'), meta: { fullscreen: true } },
+  { path: '/dashboard', name: 'Dashboard', component: () => import('../views/Dashboard.vue') },
   { path: '/projects', name: 'Projects', component: () => import('../views/Projects.vue') },
   { path: '/projects/:id/script', name: 'Script', component: () => import('../views/Script.vue') },
   { path: '/projects/:id/images', name: 'Images', component: () => import('../views/Images.vue') },

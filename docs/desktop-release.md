@@ -24,12 +24,19 @@ npm run prepare:desktop
 npm run electron:preflight
 npm run pack
 npm run dist
+npm run test:electron
 ~~~
 
 - `prepare:desktop` 构建客户端并准备 Electron 匹配的后端；
 - `electron:preflight` 检查安全配置、preload、CSP 和打包白名单；
 - `pack` 生成当前平台 unpacked 预检包；
 - `dist` 生成安装包。
+
+`pack` 会复用 lockfile 安装并核对版本的本地 Electron distribution，避免在离线/弱网预检中二次下载。electron-builder 完成后，脚本会遍历外置 server 与 `app.asar`，发现 TypeScript 源文件、sourcemap 或 Electron `default_app.asar` 即失败。
+
+ad-hoc/离线验收可设置 `AIGC_DISABLE_AUTO_UPDATE=1`（兼容旧名 `DISABLE_AUTO_UPDATE=1`）。当 unpacked 包没有 `app-update.yml` 时，主进程会将其视为“当前构建未配置自动更新”，不会发出更新请求或上报伪故障。
+
+正式发布任务设置 `AIGC_RELEASE_SIGNING_REQUIRED=1` 并先运行 `npm run release:verify-credentials`。该门禁缺少 Developer ID/Windows 证书或 Apple 公证凭据时立即失败；不能用 unsigned/ad-hoc 产物冒充正式发行包。
 
 ## 包内容边界
 
@@ -75,6 +82,7 @@ CI secrets：
 
 ~~~powershell
 Get-AuthenticodeSignature ".\AIGC 视频工作台 Setup.exe"
+signtool verify /pa /v ".\AIGC 视频工作台 Setup.exe"
 ~~~
 
 预期：
@@ -150,16 +158,20 @@ ad-hoc 包只应通过 `codesign --verify`；`spctl` 拒绝属于预期，因为
 
 electron-builder 生成 blockmap 和 `latest*.yml`。`electron-updater` 只在 packaged build 中检查，默认不自动下载，避免在长任务中强制更新。
 
+主进程的 typed update service 明确区分 `disabled / unconfigured / checking / up_to_date / available / downloading / downloaded / error`。发现版本后先请求用户确认下载，下载完成后再次请求确认立即重启；用户选择稍后时只在正常退出后安装。进度和错误码可诊断，但不会把原始下载错误或签名 URL暴露给 renderer。
+
 发布顺序：
 
 1. 创建 Draft Release；
 2. 上传安装包、DMG/ZIP、blockmap 和 YAML；
-3. 校验文件名、版本和校验和；
+3. 运行 `npm run update:verify-artifacts -- dist-electron mac`（Windows 使用 `win32`）校验文件名、版本、sha512、blockmap 和连续版本方向；
 4. 在上一正式版本测试更新检查；
 5. 确认签名、公证和安装；
 6. 再把 Draft 转为正式 release。
 
 不要先发布 YAML 再补安装包，否则客户端可能看到不可用更新。
+
+`electron-updater` 看不到 GitHub Draft Release。Draft 只能用于人工下载验收；必须在签名、公证、干净机安装和上一版本升级测试全部通过后转为非 Draft，才算完成真实自动更新 E2E。
 
 ## 数据迁移、备份与恢复
 
@@ -195,11 +207,13 @@ electron-builder 生成 blockmap 和 `latest*.yml`。`electron-updater` 只在 p
 
 ## GitHub Actions
 
-`.github/workflows/ci.yml` 在 Ubuntu 运行质量和安全门禁，在 Windows/macOS 运行桌面包预检。`release.yml`：
+`.github/workflows/ci.yml` 在 Ubuntu 运行质量和安全门禁，并在 `windows-2022` 与 `macos-15-intel` 构建 x64 安装包。两套干净 runner 都会安装应用、启动隔离无 Key Demo、等待后端健康、导出并校验 MP4、退出；Windows 还执行静默卸载并确认应用可执行文件被清除。`release.yml`：
 
 - 手动触发默认构建 unsigned/ad-hoc 内部预检包；
 - 关闭 `unsigned_preflight` 时要求正式凭据；
 - tag 构建强制检查签名/公证 secrets；
+- 正式 macOS 构建执行 `codesign`、Gatekeeper 和 stapler 验证，Windows 执行 `signtool verify /pa`；
+- 自动检查 `latest.yml` / `latest-mac.yml` 与 blockmap；
 - 成功后创建 GitHub Draft Release；
 - 不自动把未经人工验收的 Draft 发布。
 

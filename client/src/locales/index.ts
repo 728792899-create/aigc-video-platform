@@ -1,6 +1,7 @@
 import { createI18n, type MessageContext, type MessageFunction } from 'vue-i18n'
 
 import audio from './modules/audio'
+import assets from './modules/assets'
 import common from './modules/common'
 import dashboard from './modules/dashboard'
 import files from './modules/files'
@@ -13,6 +14,7 @@ import projects from './modules/projects'
 import script from './modules/script'
 import settings from './modules/settings'
 import skills from './modules/skills'
+import studio from './modules/studio'
 import task from './modules/task'
 import trash from './modules/trash'
 
@@ -32,12 +34,14 @@ const modules: Record<string, LocaleModule> = {
   images,
   preview,
   audio,
+  assets,
   history,
   files,
   library,
   trash,
   task,
   skills,
+  studio,
 }
 
 function build(lang: SupportedLocale): CompiledMessageTree {

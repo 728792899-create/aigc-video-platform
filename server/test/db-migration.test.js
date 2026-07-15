@@ -62,7 +62,14 @@ function runInit(dbPath) {
       const bindingTable = db.prepare("SELECT name FROM sqlite_master WHERE type='table' AND name='storyboard_asset_bindings'").get();
       const assetUnitTable = db.prepare("SELECT name FROM sqlite_master WHERE type='table' AND name='asset_units'").get();
       const assetVariantTable = db.prepare("SELECT name FROM sqlite_master WHERE type='table' AND name='asset_variants'").get();
+      const studioStateTable = db.prepare("SELECT name FROM sqlite_master WHERE type='table' AND name='project_view_states'").get();
+      const promptRevisionTable = db.prepare("SELECT name FROM sqlite_master WHERE type='table' AND name='prompt_revisions'").get();
+      const storyboardRevisionTable = db.prepare("SELECT name FROM sqlite_master WHERE type='table' AND name='storyboard_field_revisions'").get();
       const imageColumns = db.prepare('PRAGMA table_info(images)').all().map((row) => row.name);
+      const storyboardColumns = db.prepare('PRAGMA table_info(storyboards)').all().map((row) => row.name);
+      const artifactColumns = db.prepare('PRAGMA table_info(stage_artifacts)').all().map((row) => row.name);
+      const bindingColumns = db.prepare('PRAGMA table_info(storyboard_asset_bindings)').all().map((row) => row.name);
+      const assetUnitColumns = db.prepare('PRAGMA table_info(asset_units)').all().map((row) => row.name);
       const variantColumns = db.prepare('PRAGMA table_info(character_assets)').all().map((row) => row.name);
       const taskColumns = db.prepare('PRAGMA table_info(tasks)').all().map((row) => row.name);
       const legacyVariants = db.prepare('SELECT id, variant_key, revision, selected, media_reference FROM character_assets ORDER BY id').all();
@@ -73,7 +80,10 @@ function runInit(dbPath) {
       store.saveDb();
       console.log('RESULT:' + JSON.stringify({ version, recordTable: recordTable?.name, artifactTable: artifactTable?.name,
         bindingTable: bindingTable?.name, assetUnitTable: assetUnitTable?.name, assetVariantTable: assetVariantTable?.name,
-        imageColumns, variantColumns, taskColumns, legacyVariants, legacyCandidate, genericUnits, genericVariants,
+        studioStateTable: studioStateTable?.name, promptRevisionTable: promptRevisionTable?.name,
+        storyboardRevisionTable: storyboardRevisionTable?.name,
+        imageColumns, storyboardColumns, artifactColumns, bindingColumns, assetUnitColumns,
+        variantColumns, taskColumns, legacyVariants, legacyCandidate, genericUnits, genericVariants,
         project: project?.name }));
     })().catch((error) => {
       console.error(error.code || error.message);
@@ -86,7 +96,7 @@ function runInit(dbPath) {
   });
 }
 
-test('schema v3 可幂等升级到 v7，并在迁移前保留原数据备份', async (t) => {
+test('schema v3 可幂等升级到 v9，并在迁移前保留原数据备份', async (t) => {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'aigc-db-migration-'));
   t.after(() => fs.rmSync(dir, { recursive: true, force: true }));
   const file = path.join(dir, 'database.sqlite');
@@ -95,15 +105,23 @@ test('schema v3 可幂等升级到 v7，并在迁移前保留原数据备份', a
   const first = runInit(file);
   assert.equal(first.status, 0, first.stderr || first.stdout);
   const result = JSON.parse(first.stdout.split('RESULT:').pop().trim());
-  assert.equal(result.version, 7);
+  assert.equal(result.version, 9);
   assert.equal(result.recordTable, 'idempotency_records');
   assert.equal(result.artifactTable, 'stage_artifacts');
   assert.equal(result.bindingTable, 'storyboard_asset_bindings');
   assert.equal(result.assetUnitTable, 'asset_units');
   assert.equal(result.assetVariantTable, 'asset_variants');
+  assert.equal(result.studioStateTable, 'project_view_states');
+  assert.equal(result.promptRevisionTable, 'prompt_revisions');
+  assert.equal(result.storyboardRevisionTable, 'storyboard_field_revisions');
   assert.equal(result.project, 'legacy-project');
   assert.ok(result.imageColumns.includes('media_reference'));
   assert.ok(result.imageColumns.includes('favorite'));
+  for (const column of ['stale_fields', 'stale_sources']) assert.ok(result.imageColumns.includes(column));
+  for (const column of ['stale_fields', 'stale_sources']) assert.ok(result.storyboardColumns.includes(column));
+  for (const column of ['stale_fields', 'stale_sources']) assert.ok(result.artifactColumns.includes(column));
+  for (const column of ['stale_fields', 'stale_sources']) assert.ok(result.bindingColumns.includes(column));
+  for (const column of ['forked_from_unit_id', 'forked_from_variant_id']) assert.ok(result.assetUnitColumns.includes(column));
   assert.ok(result.variantColumns.includes('variant_key'));
   assert.ok(result.variantColumns.includes('revision'));
   for (const column of ['provider', 'model', 'provider_task_id', 'attempt', 'parent_task_id', 'idempotency_key',
@@ -141,7 +159,7 @@ test('schema v5 角色参考图幂等升级为通用 AssetUnit/Variant，不泄�
   const first = runInit(file);
   assert.equal(first.status, 0, first.stderr || first.stdout);
   const result = JSON.parse(first.stdout.split('RESULT:').pop().trim());
-  assert.equal(result.version, 7);
+  assert.equal(result.version, 9);
   assert.deepEqual(result.legacyVariants.map((row) => row.revision), [1, 2]);
   assert.deepEqual(result.legacyVariants.map((row) => row.selected), [0, 1], '最新旧参考图成为默认 Variant');
   assert.match(result.legacyVariants[0].variant_key, /^legacy-character-31-asset-41$/);

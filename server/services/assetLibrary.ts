@@ -23,6 +23,13 @@ function json(value: unknown, fallback: Record<string, unknown> = {}): Record<st
   } catch { return fallback; }
 }
 
+function stringArray(value: unknown): string[] {
+  try {
+    const parsed: unknown = typeof value === 'string' ? JSON.parse(value) : value
+    return Array.isArray(parsed) ? parsed.map(String).filter(Boolean) : []
+  } catch { return [] }
+}
+
 function entityId(value: unknown): AssetId {
   return typeof value === 'number' ? value : String(value || '')
 }
@@ -48,6 +55,8 @@ function mapUnit(row: SqlRow | undefined): AssetUnitRow | null {
     scope_id: row.scope_id == null ? null : Number(row.scope_id),
     project_id: row.project_id == null ? null : Number(row.project_id),
     series_id: row.series_id == null ? null : Number(row.series_id),
+    forked_from_unit_id: row.forked_from_unit_id == null ? null : entityId(row.forked_from_unit_id),
+    forked_from_variant_id: row.forked_from_variant_id == null ? null : entityId(row.forked_from_variant_id),
     metadata: json(row.metadata, {}),
     status: row.status === 'archived' ? 'archived' : 'active',
     selected_variant_id: row.selected_variant_id ? String(row.selected_variant_id) : null,
@@ -194,18 +203,19 @@ export function databaseRepository(): AssetRepository {
       if (existing) {
         getDb().prepare(`UPDATE storyboard_asset_bindings
           SET project_id=?, asset_type=?, asset_id=?, variant_id=?, asset_unit_id=?, variant_key=?, revision=?,
-              source_scope=?, snapshot=?, updated_at=? WHERE id=?`)
+              source_scope=?, stale_fields=?, stale_sources=?, snapshot=?, updated_at=? WHERE id=?`)
           .run(row.project_id, row.asset_type, row.asset_id, row.variant_id, row.asset_unit_id, row.variant_key,
-            row.revision, row.source_scope, JSON.stringify(row.snapshot), row.updated_at, existing.id);
+            row.revision, row.source_scope, JSON.stringify(row.stale_fields || []), JSON.stringify(row.stale_sources || []),
+            JSON.stringify(row.snapshot), row.updated_at, existing.id);
         return { ...row, id: Number(existing.id) };
       }
       const result = getDb().prepare(`INSERT INTO storyboard_asset_bindings
         (storyboard_id, project_id, asset_type, asset_id, variant_id, revision, source_scope, snapshot,
-         created_at, updated_at, asset_unit_id, variant_key)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`)
+         created_at, updated_at, asset_unit_id, variant_key, stale_fields, stale_sources)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`)
         .run(row.storyboard_id, row.project_id, row.asset_type, row.asset_id, row.variant_id, row.revision,
           row.source_scope, JSON.stringify(row.snapshot), row.created_at, row.updated_at,
-          row.asset_unit_id, row.variant_key);
+          row.asset_unit_id, row.variant_key, JSON.stringify(row.stale_fields || []), JSON.stringify(row.stale_sources || []));
       return { ...row, id: Number(result.lastInsertRowid) };
     },
     bindingsForVariant(variantId) {
@@ -221,9 +231,26 @@ export function databaseRepository(): AssetRepository {
           variant_key: String(row.variant_key || row.variant_id || ''),
           revision: Number(row.revision) || 1,
           source_scope: assetScope(row.source_scope),
+          stale_fields: stringArray(row.stale_fields),
+          stale_sources: stringArray(row.stale_sources),
           snapshot: json(row.snapshot, {}),
           created_at: Number(row.created_at) || 0,
           updated_at: Number(row.updated_at) || 0,
+        }));
+    },
+    bindingsForStoryboards(storyboardIds) {
+      if (!storyboardIds.length) return [];
+      const placeholders = storyboardIds.map(() => '?').join(',');
+      return getDb().prepare(`SELECT * FROM storyboard_asset_bindings WHERE storyboard_id IN (${placeholders})`)
+        .all(...storyboardIds).map((row): AssetBindingRow => ({
+          id: Number(row.id), storyboard_id: Number(row.storyboard_id),
+          project_id: row.project_id == null ? null : Number(row.project_id),
+          asset_type: assetType(row.asset_type), asset_id: entityId(row.asset_id),
+          asset_unit_id: String(row.asset_unit_id || ''), variant_id: entityId(row.variant_id),
+          variant_key: String(row.variant_key || row.variant_id || ''), revision: Number(row.revision) || 1,
+          source_scope: assetScope(row.source_scope), stale_fields: stringArray(row.stale_fields),
+          stale_sources: stringArray(row.stale_sources), snapshot: json(row.snapshot, {}),
+          created_at: Number(row.created_at) || 0, updated_at: Number(row.updated_at) || 0,
         }));
     },
     archiveVariant(id, archivedAt) {
@@ -245,10 +272,12 @@ export function databaseRepository(): AssetRepository {
       const surrogate = Math.min(-1, Number(min?.n || 0) - 1);
       getDb().prepare(`INSERT INTO asset_units
         (id, asset_type, legacy_entity_id, name, scope, scope_id, project_id, series_id, metadata, status,
-         selected_variant_id, created_at, updated_at)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`)
+         selected_variant_id, created_at, updated_at, forked_from_unit_id, forked_from_variant_id)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`)
         .run(String(row.id), row.asset_type, surrogate, row.name, row.scope, row.scope_id, row.project_id,
-          row.series_id, JSON.stringify(row.metadata), row.status, null, row.created_at, row.updated_at);
+          row.series_id, JSON.stringify(row.metadata), row.status, null, row.created_at, row.updated_at,
+          row.forked_from_unit_id == null ? null : String(row.forked_from_unit_id),
+          row.forked_from_variant_id == null ? null : String(row.forked_from_variant_id));
       const created = genericUnit(row.asset_type, row.id);
       if (!created) throw new Error('资产保存后无法读取');
       return created;

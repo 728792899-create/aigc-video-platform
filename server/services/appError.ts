@@ -41,8 +41,11 @@ export function redactDiagnostic(value: unknown): string {
   let text = String(value ?? '')
   for (const pattern of SECRET_PATTERNS) text = text.replace(pattern, '[REDACTED]')
   return text
-    .replace(/\/Users\/[^/\s]+/g, '/Users/[REDACTED]')
-    .replace(/[A-Za-z]:\\Users\\[^\\\s]+/g, 'C:\\Users\\[REDACTED]')
+    // Diagnostic payloads and logs must not disclose a user's name or the
+    // remainder of their private home-directory layout. Preserve a trailing
+    // stack line/column suffix so local debugging remains actionable.
+    .replace(/\/Users\/[^/\s]+(?:\/[^\s:'"),]+)*/g, '[USER_PATH]')
+    .replace(/[A-Za-z]:\\Users\\[^\\\s]+(?:\\[^\s:'"),]+)*/g, '[USER_PATH]')
     .slice(0, 2000)
 }
 

@@ -8,6 +8,9 @@
           <el-icon v-else><CircleCheck /></el-icon>
           <span>{{ $t('task.title') }}</span>
           <span v-if="store.activeCount > 0" class="badge">{{ store.activeCount }}</span>
+          <span class="transport" :title="store.transport === 'socket' ? 'Socket.IO 实时推送' : 'HTTP 轮询降级'">
+            {{ store.transport === 'socket' ? '实时' : '轮询' }}
+          </span>
         </div>
         <el-icon class="collapse-icon">
           <ArrowDown v-if="collapsed" />
@@ -76,7 +79,8 @@ import { useI18n } from 'vue-i18n'
 import {
   Loading, CircleCheck, ArrowUp, ArrowDown, Close,
 } from '@element-plus/icons-vue'
-import { ElMessage, ElMessageBox } from 'element-plus'
+import { ElMessage } from 'element-plus/es/components/message/index'
+import { ElMessageBox } from 'element-plus/es/components/message-box/index'
 import { useTaskStore } from '../stores/tasks'
 import api from '../api'
 import WorkflowRail from './WorkflowRail.vue'
@@ -336,6 +340,14 @@ onUnmounted(() => store.stopPolling())
   padding: 0 7px;
   border-radius: 10px;
   line-height: 18px;
+}
+.transport {
+  padding: 1px 6px;
+  border: 1px solid rgba(125, 211, 252, .25);
+  border-radius: 999px;
+  color: #7dd3fc;
+  font-size: 9px;
+  font-weight: 500;
 }
 .collapse-icon {
   color: #94a3b8;

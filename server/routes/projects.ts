@@ -3,9 +3,21 @@ import { getDb, type SqlRow } from '../db'
 import type { TaskManager } from '../services/taskManager'
 import idempotency = require('../services/idempotency')
 import { list as listStageArtifacts, type StageArtifactRow } from '../services/stageArtifacts'
-import { asRecord, errorDetails, errorMessage, queryText, sqlText, type JsonRecord } from './routeSupport'
+import { readStudioLayout, saveStudioLayout } from '../services/studioLayout'
+import { buildDirectorAdvice } from '../services/directorAdvisor'
+import { asRecord, errorDetails, errorMessage, pathText, queryText, sqlText, type JsonRecord } from './routeSupport'
 const router = express.Router();
 const { safeUnlinkMany } = require('../utils/fileCleanup');
+
+function projectIdParam(value: string | string[] | undefined): number {
+  const id = Number(pathText(value))
+  if (!Number.isSafeInteger(id) || id <= 0) {
+    throw Object.assign(new Error('项目 ID 无效'), {
+      code: 'PROJECT_ID_INVALID', status: 400, retryable: false,
+    })
+  }
+  return id
+}
 const trash = require('../services/trash');
 const opLog = require('../services/opLog');
 const assetHealth = require('../services/assetHealth');
@@ -93,6 +105,17 @@ router.get('/:id/workbench-status', (req, res) => {
   }
 });
 
+// 本地 Director Advisor 只根据已持久化事实生成白名单建议，不执行任意代码、
+// 不自动调用 Provider，也不会绕过现有阶段确认与幂等保护。
+router.get('/:id/director-advice', (req, res, next) => {
+  try {
+    const plan = buildDirectorAdvice(projectIdParam(req.params.id))
+    res.json({ code: 200, data: plan, message: 'success' })
+  } catch (cause) {
+    next(cause)
+  }
+})
+
 // 阶段产物版本历史：供工作台解释当前 revision、stale 来源和依赖快照。
 router.get('/:id/artifacts', (req, res) => {
   try {
@@ -117,6 +140,29 @@ router.get('/:id/artifacts', (req, res) => {
     res.status(500).json({ code: 500, data: null, message: `读取阶段产物失败: ${errorMessage(err)}` });
   }
 });
+
+// Studio 画布是领域工作流的可视化投影；这里只保存节点坐标与视口，不保存业务节点内容。
+router.get('/:id/studio-layout', (req, res, next) => {
+  try {
+    const layout = readStudioLayout(projectIdParam(req.params.id))
+    res.json({ code: 200, data: layout, message: 'success' })
+  } catch (cause) {
+    next(cause)
+  }
+})
+
+router.put('/:id/studio-layout', (req, res, next) => {
+  try {
+    const layout = saveStudioLayout(projectIdParam(req.params.id), req.body)
+    opLog.log('studio.layout.update', 'project', req.params.id, {
+      revision: layout.revision,
+      node_count: Object.keys(layout.positions).length,
+    })
+    res.json({ code: 200, data: layout, message: '布局已保存' })
+  } catch (cause) {
+    next(cause)
+  }
+})
 
 router.post('/:id/workbench/repair', async (req, res) => {
   try {

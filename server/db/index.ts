@@ -1,6 +1,6 @@
 /**
- * 数据库层 - 使用 sql.js (纯JS SQLite实现)
- * 提供与 better-sqlite3 兼容的同步API封装
+ * 数据库层 - 通过统一同步 API 运行 better-sqlite3 或 sql.js。
+ * 发布包默认 better-sqlite3，sql.js 保留为显式兼容驱动。
  *
  * 改进：
  *  1. 节流写盘 — 高频写入合并为一次磁盘 IO，主线程不再被反复阻塞
@@ -12,10 +12,16 @@
 import initSqlJs = require('sql.js')
 import fs from 'node:fs'
 import path from 'node:path'
+import {
+  createBetterSqliteRuntime,
+  createSqlJsRuntime,
+  type RuntimeDatabase,
+  type RuntimeSqlRow,
+  type RuntimeSqlValue,
+} from './runtimeDriver'
 
-export type SqlValue = initSqlJs.SqlValue
-export type SqlRow = Record<string, SqlValue>
-type RuntimeDatabase = initSqlJs.Database & { _txDepth: number }
+export type SqlValue = RuntimeSqlValue
+export type SqlRow = RuntimeSqlRow
 
 export interface DbRunResult {
   lastInsertRowid: SqlValue
@@ -40,7 +46,7 @@ export interface DbClient {
 const DB_PATH = process.env.DB_PATH
   ? path.resolve(process.env.DB_PATH)
   : path.resolve(__dirname, 'database.sqlite');
-const SCHEMA_VERSION = 7;
+const SCHEMA_VERSION = 9;
 
 let db: RuntimeDatabase
 let SQL: initSqlJs.SqlJsStatic | null = null
@@ -64,11 +70,7 @@ function bindValues(params: unknown[]): SqlValue[] {
   return params.map(toSqlValue)
 }
 
-function attachRuntimeState(database: initSqlJs.Database): RuntimeDatabase {
-  return Object.assign(database, { _txDepth: 0 })
-}
-
-function userVersion(database: initSqlJs.Database): number {
+function userVersion(database: RuntimeDatabase): number {
   try { return Number(database.exec('PRAGMA user_version')[0]?.values?.[0]?.[0]) || 0; } catch { return 0; }
 }
 
@@ -95,6 +97,10 @@ function flushDb(): void {
   if (!db || saving) return;
   saving = true;
   try {
+    if (db.driver === 'better-sqlite3') {
+      db.checkpoint();
+      return;
+    }
     const data = db.export();
     const buffer = Buffer.from(data);
     // 先写临时文件再 rename，原子性切换，防止写到一半崩溃损坏原文件
@@ -117,6 +123,7 @@ function flushDb(): void {
  * 高频写入时只触发一次磁盘 IO，避免主线程反复同步阻塞
  */
 function scheduleSave(): void {
+  if (db?.driver === 'better-sqlite3') return;
   if (saveTimer) return; // 已有定时器在等
   saveTimer = setTimeout(() => {
     saveTimer = null;
@@ -159,11 +166,23 @@ export async function initDb(): Promise<RuntimeDatabase> {
   // 确保 DB 所在目录存在（Electron 打包后 DB_PATH 指向用户数据目录，首次启动可能不存在）
   const dbDir = path.dirname(DB_PATH);
   if (!fs.existsSync(dbDir)) fs.mkdirSync(dbDir, { recursive: true });
-  if (fs.existsSync(DB_PATH)) {
-    const fileBuffer = fs.readFileSync(DB_PATH);
-    db = attachRuntimeState(new SQL.Database(fileBuffer));
+  const configuredDriver = String(process.env.DB_DRIVER || 'better-sqlite3').trim().toLowerCase();
+  if (!['better-sqlite3', 'sqljs', 'auto'].includes(configuredDriver)) {
+    throw new Error(`Unsupported DB_DRIVER: ${configuredDriver}`);
+  }
+  const wantsBetterSqlite = configuredDriver !== 'sqljs';
+  if (wantsBetterSqlite) {
+    try {
+      db = createBetterSqliteRuntime(DB_PATH);
+    } catch (error: unknown) {
+      if (configuredDriver === 'better-sqlite3' && process.env.DB_DRIVER) throw error;
+      console.warn('[DB] better-sqlite3 当前运行时不可用，已安全降级到 sql.js');
+      const fileBuffer = fs.existsSync(DB_PATH) ? fs.readFileSync(DB_PATH) : undefined;
+      db = createSqlJsRuntime(new SQL.Database(fileBuffer));
+    }
   } else {
-    db = attachRuntimeState(new SQL.Database());
+    const fileBuffer = fs.existsSync(DB_PATH) ? fs.readFileSync(DB_PATH) : undefined;
+    db = createSqlJsRuntime(new SQL.Database(fileBuffer));
   }
 
   // 用计数器替代布尔标志，支持事务嵌套场景下的 saveDb 决策
@@ -183,6 +202,8 @@ export async function initDb(): Promise<RuntimeDatabase> {
     try { db.close(); } catch {}
     throw error;
   }
+  db.configurePersistentMode();
+  console.log(`[DB] driver=${db.driver}`);
 
   // 创建表
   db.run(`
@@ -905,6 +926,78 @@ export async function initDb(): Promise<RuntimeDatabase> {
     )
   `);
 
+  // v8：可视化 Studio 只持久化视图状态，不把画布 JSON 当作领域事实。
+  // 复合主键允许后续增加时间线、候选评审等独立视图；项目删除时自动级联清理。
+  db.run(`
+    CREATE TABLE IF NOT EXISTS project_view_states (
+      project_id INTEGER NOT NULL,
+      view_key TEXT NOT NULL,
+      payload TEXT NOT NULL,
+      revision INTEGER NOT NULL DEFAULT 1,
+      updated_at INTEGER NOT NULL,
+      PRIMARY KEY (project_id, view_key),
+      FOREIGN KEY (project_id) REFERENCES projects(id) ON DELETE CASCADE
+    )
+  `);
+
+  // v9：Series 资产 fork lineage、字段级 stale 与不可变 Prompt/分镜修订历史。
+  // 全部采用 additive migration；旧字段和旧 API 继续保留。
+  for (const [table, column, definition] of [
+    ['asset_units', 'forked_from_unit_id', 'TEXT'],
+    ['asset_units', 'forked_from_variant_id', 'TEXT'],
+    ['storyboards', 'stale_fields', "TEXT NOT NULL DEFAULT '[]'"],
+    ['storyboards', 'stale_sources', "TEXT NOT NULL DEFAULT '[]'"],
+    ['images', 'stale_fields', "TEXT NOT NULL DEFAULT '[]'"],
+    ['images', 'stale_sources', "TEXT NOT NULL DEFAULT '[]'"],
+    ['images', 'prompt_revision_id', 'TEXT'],
+    ['storyboards', 'prompt_revision_id', 'TEXT'],
+    ['storyboard_asset_bindings', 'stale_fields', "TEXT NOT NULL DEFAULT '[]'"],
+    ['storyboard_asset_bindings', 'stale_sources', "TEXT NOT NULL DEFAULT '[]'"],
+    ['stage_artifacts', 'stale_fields', "TEXT NOT NULL DEFAULT '[]'"],
+    ['stage_artifacts', 'stale_sources', "TEXT NOT NULL DEFAULT '[]'"],
+  ]) {
+    try { db.run(`ALTER TABLE ${table} ADD COLUMN ${column} ${definition}`); } catch {}
+  }
+
+  db.run(`
+    CREATE TABLE IF NOT EXISTS storyboard_field_revisions (
+      id TEXT PRIMARY KEY,
+      storyboard_id INTEGER NOT NULL,
+      project_id INTEGER NOT NULL,
+      revision INTEGER NOT NULL,
+      changed_fields TEXT NOT NULL,
+      field_hashes TEXT NOT NULL,
+      snapshot TEXT NOT NULL,
+      source TEXT NOT NULL DEFAULT 'manual',
+      created_at INTEGER NOT NULL,
+      UNIQUE(storyboard_id, revision),
+      FOREIGN KEY (storyboard_id) REFERENCES storyboards(id) ON DELETE CASCADE,
+      FOREIGN KEY (project_id) REFERENCES projects(id) ON DELETE CASCADE
+    )
+  `);
+
+  db.run(`
+    CREATE TABLE IF NOT EXISTS prompt_revisions (
+      id TEXT PRIMARY KEY,
+      project_id INTEGER NOT NULL,
+      storyboard_id INTEGER,
+      kind TEXT NOT NULL,
+      revision INTEGER NOT NULL,
+      parent_revision_id TEXT,
+      source TEXT NOT NULL,
+      prompt_version TEXT,
+      provider TEXT,
+      model TEXT,
+      content TEXT NOT NULL,
+      negative_content TEXT NOT NULL DEFAULT '',
+      content_hash TEXT NOT NULL,
+      created_at INTEGER NOT NULL,
+      UNIQUE(project_id, storyboard_id, kind, revision),
+      FOREIGN KEY (project_id) REFERENCES projects(id) ON DELETE CASCADE,
+      FOREIGN KEY (storyboard_id) REFERENCES storyboards(id) ON DELETE CASCADE
+    )
+  `);
+
   // 不在数据库初始化时把运行中任务粗暴终结。app 启动完成后由 taskRecovery
   // 根据任务类型和持久化检查点重建 runner；未知类型才会保留为 interrupted 供诊断。
 
@@ -936,6 +1029,9 @@ export async function initDb(): Promise<RuntimeDatabase> {
     'CREATE INDEX IF NOT EXISTS idx_workbench_checks_project_id ON workbench_checks(project_id, created_at DESC)',
     'CREATE INDEX IF NOT EXISTS idx_generation_cache_project_id ON generation_cache(project_id, updated_at DESC)',
     'CREATE INDEX IF NOT EXISTS idx_image_gen_stats_created_at ON image_gen_stats(created_at DESC)',
+    'CREATE INDEX IF NOT EXISTS idx_project_view_states_updated ON project_view_states(project_id, updated_at DESC)',
+    'CREATE INDEX IF NOT EXISTS idx_storyboard_field_revisions ON storyboard_field_revisions(storyboard_id, revision DESC)',
+    'CREATE INDEX IF NOT EXISTS idx_prompt_revisions_scope ON prompt_revisions(project_id, storyboard_id, kind, revision DESC)',
   ];
   for (const sql of indexes) {
     try { db.run(sql); } catch (e: unknown) {
@@ -1022,7 +1118,7 @@ export function getDb(): DbClient {
 // 替换后立刻重申外键并落盘。返回是否成功。
 export function restoreRaw(buffer: Uint8Array): true {
   if (!SQL) throw new Error('SQL.js 未初始化');
-  const fresh = attachRuntimeState(new SQL.Database(new Uint8Array(buffer)));
+  const fresh = createSqlJsRuntime(new SQL.Database(new Uint8Array(buffer)));
   const integrity = fresh.exec('PRAGMA integrity_check')[0]?.values?.[0]?.[0];
   if (integrity !== 'ok') { fresh.close(); throw new Error(`备份数据库完整性校验失败：${integrity || 'unknown'}`); }
   const required = fresh.exec("SELECT name FROM sqlite_master WHERE type='table' AND name IN ('projects','storyboards','tasks')")[0]?.values || [];
@@ -1030,18 +1126,37 @@ export function restoreRaw(buffer: Uint8Array): true {
   const incomingVersion = userVersion(fresh);
   if (incomingVersion > SCHEMA_VERSION) { fresh.close(); throw new Error(`备份 schema v${incomingVersion} 高于当前程序 v${SCHEMA_VERSION}`); }
 
-  // 覆盖前创建本地恢复点；写新文件成功后才切换内存连接。
+  // 覆盖前先把当前连接同步到主文件，再创建可独立恢复的一致性快照。
+  saveDb();
   if (fs.existsSync(DB_PATH)) {
     const backupDir = path.join(path.dirname(DB_PATH), 'backups');
     fs.mkdirSync(backupDir, { recursive: true });
     fs.copyFileSync(DB_PATH, path.join(backupDir, `restore-point-${Date.now()}.sqlite`));
   }
   const tempPath = `${DB_PATH}.restore.tmp`;
-  fs.writeFileSync(tempPath, Buffer.from(fresh.export()));
-  fs.renameSync(tempPath, DB_PATH);
+  const restoredBytes = Buffer.from(fresh.export());
+  const currentDriver = db?.driver || 'sqljs';
   if (db) { try { db.close(); } catch {} }
-  db = fresh;
-  db.run('PRAGMA foreign_keys = ON');
+  try {
+    fs.writeFileSync(tempPath, restoredBytes);
+    fs.renameSync(tempPath, DB_PATH);
+    if (currentDriver === 'better-sqlite3') {
+      fresh.close();
+      db = createBetterSqliteRuntime(DB_PATH);
+    } else {
+      db = fresh;
+    }
+    db.configurePersistentMode();
+  } catch (error) {
+    try { if (fs.existsSync(tempPath)) fs.unlinkSync(tempPath); } catch {}
+    if (currentDriver === 'better-sqlite3') {
+      try {
+        db = createBetterSqliteRuntime(DB_PATH);
+        db.configurePersistentMode();
+      } catch {}
+    }
+    throw error;
+  }
   return true;
 }
 
@@ -1051,4 +1166,9 @@ export function exportRaw(): Buffer {
   const data = db.export();
   db.run('PRAGMA foreign_keys = ON'); // export 会关外键，重申
   return Buffer.from(data);
+}
+
+export function getDatabaseDriver(): RuntimeDatabase['driver'] {
+  if (!db) throw new Error('Database not initialized');
+  return db.driver;
 }

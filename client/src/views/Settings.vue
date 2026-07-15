@@ -367,7 +367,8 @@
 <script setup lang="ts">
 import type { ModelDescriptor } from '@aigc-video/contracts'
 import { ref, reactive, computed, onMounted } from 'vue'
-import { ElMessage, ElMessageBox } from 'element-plus'
+import { ElMessage } from 'element-plus/es/components/message/index'
+import { ElMessageBox } from 'element-plus/es/components/message-box/index'
 import { useI18n } from 'vue-i18n'
 import { persistLocale, type SupportedLocale } from '../locales'
 import { CircleCheck, Warning, CircleClose } from '@element-plus/icons-vue'
@@ -864,7 +865,6 @@ async function checkDirNow() {
     let r = await checkDir(form.uploadDir, false)
     if (!r.ok && r.exists === false) {
       // 目录不存在，询问是否创建
-      const { ElMessageBox } = await import('element-plus')
       try {
         await ElMessageBox.confirm(t('settings.dirNotExist'), t('settings.tip'), { type: 'warning' })
         r = await checkDir(form.uploadDir, true)

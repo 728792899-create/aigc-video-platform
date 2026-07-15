@@ -13,9 +13,11 @@ export interface AssetUnitRow {
   scope_id: number | null
   project_id: number | null
   series_id: number | null
+  forked_from_unit_id?: AssetId | null
+  forked_from_variant_id?: AssetId | null
   metadata: Record<string, unknown>
   status: 'active' | 'archived'
-  selected_variant_id: string | null
+  selected_variant_id: AssetId | null
   created_at: number
   updated_at: number
 }
@@ -53,6 +55,8 @@ export interface AssetBindingRow {
   variant_key: string
   revision: number
   source_scope: AssetScope
+  stale_fields?: string[]
+  stale_sources?: string[]
   snapshot: Record<string, unknown>
   created_at: number
   updated_at: number
@@ -66,6 +70,7 @@ export interface AssetRepository {
   selectVariant(type: AssetType, assetId: AssetId, variantId: AssetId, updatedAt: number): AssetVariantRow
   upsertBinding(row: AssetBindingRow): AssetBindingRow
   bindingsForVariant(variantId: AssetId): AssetBindingRow[]
+  bindingsForStoryboards?(storyboardIds: number[]): AssetBindingRow[]
   archiveVariant(id: AssetId, archivedAt: number): AssetVariantRow
   transaction<T>(operation: () => T): T
   createUnit?(row: AssetUnitRow): AssetUnitRow
@@ -78,6 +83,12 @@ export interface AssetLibraryService {
   addVariant(input?: Record<string, unknown>): AssetVariantRow
   selectVariant(input?: Record<string, unknown>): AssetVariantRow
   bindVariant(input?: Record<string, unknown>): AssetBindingRow
+  batchBindVariant(input?: Record<string, unknown>): {
+    changed_storyboard_ids: number[]
+    skipped_storyboard_ids: number[]
+    conflicts: Array<{ storyboard_id: number; code: string; message: string }>
+  }
+  forkUnit(input?: Record<string, unknown>): { unit: AssetUnitRow; variant: AssetVariantRow }
   archiveVariant(variantId: AssetId): AssetVariantRow
   normalizeMediaReference(input?: Record<string, unknown>): MediaReference
 }
@@ -220,6 +231,8 @@ export function createAssetLibraryService({
       scope_id: scope === 'episode' ? projectId : scope === 'series' ? seriesId : null,
       project_id: projectId,
       series_id: seriesId,
+      forked_from_unit_id: input.forkedFromUnitId ? stableUnitId(input.forkedFromUnitId) : null,
+      forked_from_variant_id: input.forkedFromVariantId ? stableUnitId(input.forkedFromVariantId) : null,
       metadata: record(input.metadata),
       status: 'active',
       selected_variant_id: null,
@@ -296,7 +309,7 @@ export function createAssetLibraryService({
     return repository.transaction(() => repository.selectVariant(type, id, variant.id, Number(now())))
   }
 
-  function bindVariant(input: Record<string, unknown> = {}): AssetBindingRow {
+  function bindingRow(input: Record<string, unknown> = {}): AssetBindingRow {
     const type = assetType(input.assetType || input.asset_type)
     const id = stableUnitId(input.assetId ?? input.asset_id)
     const unit = assertUnit(type, id)
@@ -319,20 +332,91 @@ export function createAssetLibraryService({
       source_scope: unit.scope,
     }
     const timestamp = Number(now())
-    return repository.transaction(() => repository.upsertBinding({
+    return {
       storyboard_id: Number(input.storyboardId ?? input.storyboard_id),
       project_id: numberOrNull(input.projectId ?? input.project_id ?? unit.project_id ?? variant.project_id),
       asset_type: type,
-      asset_id: unit.legacy_entity_id ?? id,
+      // Character 继续使用旧数字 ID 保持 API/唯一键兼容；通用资产使用稳定字符串 ID，
+      // 不把仅用于旧表迁移的负数 surrogate 泄漏到领域绑定。
+      asset_id: type === 'character' ? (unit.legacy_entity_id ?? id) : id,
       asset_unit_id: type === 'character' ? `legacy-character-${id}` : String(unit.id),
       variant_id: variant.id,
       variant_key: variant.variant_key,
       revision: variant.revision,
       source_scope: assetScope(input.sourceScope || input.source_scope, unit.scope),
+      stale_fields: [],
+      stale_sources: [],
       snapshot,
       created_at: timestamp,
       updated_at: timestamp,
-    }))
+    }
+  }
+
+  function bindVariant(input: Record<string, unknown> = {}): AssetBindingRow {
+    const row = bindingRow(input)
+    if (!Number.isInteger(row.storyboard_id) || row.storyboard_id <= 0) {
+      throw domainError('ASSET_BINDING_TARGET_INVALID', '镜头 ID 无效')
+    }
+    return repository.transaction(() => repository.upsertBinding(row))
+  }
+
+  function batchBindVariant(input: Record<string, unknown> = {}) {
+    const rawIds = input.storyboardIds ?? input.storyboard_ids
+    const ids = Array.from(new Set((Array.isArray(rawIds) ? rawIds : []).map(Number)))
+    const conflicts = ids.filter((id) => !Number.isInteger(id) || id <= 0)
+      .map((storyboard_id) => ({ storyboard_id, code: 'ASSET_BINDING_TARGET_INVALID', message: '镜头 ID 无效' }))
+    const validIds = ids.filter((id) => Number.isInteger(id) && id > 0)
+    if (!validIds.length) throw domainError('ASSET_BINDING_TARGET_INVALID', '至少选择一个有效镜头')
+    const base = bindingRow({ ...input, storyboardId: validIds[0] })
+    const existing = repository.bindingsForStoryboards?.(validIds) || []
+    const current = new Map(existing
+      .filter((row) => row.asset_unit_id === base.asset_unit_id)
+      .map((row) => [row.storyboard_id, row]))
+    const changed: number[] = []
+    const skipped: number[] = []
+    repository.transaction(() => {
+      for (const storyboardId of validIds) {
+        const previous = current.get(storyboardId)
+        if (previous?.variant_key === base.variant_key && previous.revision === base.revision) {
+          skipped.push(storyboardId)
+          continue
+        }
+        repository.upsertBinding({ ...base, storyboard_id: storyboardId })
+        changed.push(storyboardId)
+      }
+    })
+    return { changed_storyboard_ids: changed, skipped_storyboard_ids: skipped, conflicts }
+  }
+
+  function forkUnit(input: Record<string, unknown> = {}): { unit: AssetUnitRow; variant: AssetVariantRow } {
+    const type = assetType(input.assetType || input.asset_type)
+    const sourceId = stableUnitId(input.assetId ?? input.asset_id)
+    const source = assertUnit(type, sourceId)
+    if (source.scope !== 'series') throw domainError('ASSET_FORK_SCOPE_INVALID', '只有 Series 资产可以 fork 为 Episode 资产')
+    const projectId = numberOrNull(input.projectId ?? input.project_id)
+    const seriesId = numberOrNull(input.seriesId ?? input.series_id)
+    if (!projectId || !seriesId || source.series_id !== seriesId) {
+      throw domainError('ASSET_FORK_TARGET_INVALID', 'fork 目标项目必须属于来源 Series')
+    }
+    const variants = repository.listVariants(type, sourceId).filter((row) => row.status === 'active')
+    const requested = input.variantId ?? input.variant_id
+    const sourceVariant = requested
+      ? variants.find((row) => String(row.id) === String(requested))
+      : variants.find((row) => row.selected === 1) || variants.at(-1)
+    if (!sourceVariant) throw domainError('ASSET_VARIANT_NOT_FOUND', 'Series 资产没有可 fork 的 Variant')
+    return repository.transaction(() => {
+      const unit = createUnit({
+        assetType: type, name: source.name, scope: 'episode', projectId, seriesId,
+        metadata: { ...source.metadata, lineage: { source_scope: 'series', source_unit_id: source.id } },
+        forkedFromUnitId: source.id, forkedFromVariantId: sourceVariant.id,
+      })
+      const variant = addVariant({
+        assetType: type, assetId: unit.id, projectId, label: sourceVariant.label,
+        provider: sourceVariant.provider, model: sourceVariant.model, prompt: sourceVariant.prompt,
+        contentHash: sourceVariant.content_hash, mediaReference: sourceVariant.media_reference,
+      })
+      return { unit: { ...unit, selected_variant_id: variant.id }, variant }
+    })
   }
 
   function archiveVariant(variantId: AssetId): AssetVariantRow {
@@ -348,5 +432,5 @@ export function createAssetLibraryService({
     return repository.archiveVariant(variant.id, Number(now()))
   }
 
-  return { createUnit, listResolvedProject, addVariant, selectVariant, bindVariant, archiveVariant, normalizeMediaReference }
+  return { createUnit, listResolvedProject, addVariant, selectVariant, bindVariant, batchBindVariant, forkUnit, archiveVariant, normalizeMediaReference }
 }

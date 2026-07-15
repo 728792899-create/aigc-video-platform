@@ -12,7 +12,9 @@ import path from 'node:path'
 import { v4 as uuidv4 } from 'uuid'
 import type {
   ProviderAdapter,
+  ProviderBillingStatus,
   ProviderContext,
+  ProviderOperationCapabilities,
   ProviderReconciliation,
   ProviderSubmission,
 } from '@aigc-video/contracts'
@@ -21,6 +23,7 @@ import * as config from './config'
 import { normalizeAppError } from './appError'
 import { assertSelection } from './modelCatalog'
 import { resolveCredentials, type ProviderCredentials } from './providers'
+import { getProvider, hasCredentials } from './providers'
 import { downloadRemoteMedia } from './remoteMedia'
 
 type JsonObject = Record<string, unknown>
@@ -433,12 +436,49 @@ export async function reconcile(
   return { status: 'unknown' }
 }
 
+/**
+ * Capability declarations are deliberately independent from credential state.
+ * The documented async-video APIs expose task query, but no video-task cancel
+ * or access-key account-balance endpoint. A batch cancel endpoint is not a
+ * video generation cancel endpoint and must never be reused here.
+ */
+export function getCapabilities(provider: string): ProviderOperationCapabilities {
+  const definition = getProvider(provider)
+  if (!definition || definition.kind !== 't2v' || !canHandle(definition.protocol)) {
+    return { reconcile: 'unsupported', cancel: 'unsupported', billing: 'unsupported' }
+  }
+  if (definition.protocol === 'zhipu-video') {
+    return { reconcile: 'supported', cancel: 'unsupported', billing: 'unverified' }
+  }
+  if (definition.protocol === 'kling') {
+    return { reconcile: 'supported', cancel: 'unsupported', billing: 'unverified' }
+  }
+  return { reconcile: 'unsupported', cancel: 'unsupported', billing: 'unsupported' }
+}
+
+export async function getBillingStatus(provider: string): Promise<ProviderBillingStatus> {
+  const capabilities = getCapabilities(provider)
+  return {
+    provider,
+    capability: capabilities.billing,
+    configured: hasCredentials(provider),
+    status: 'unknown',
+    reason_code: capabilities.billing === 'unsupported'
+      ? 'PROVIDER_CAPABILITY_UNSUPPORTED'
+      : 'PROVIDER_BILLING_UNVERIFIED',
+    checked_at: Date.now(),
+    currency: null,
+    balance: null,
+  }
+}
+
 export function getAdapter(provider: string): ProviderAdapter<T2VAdapterInput, T2VResult | ReconciledVideoResult> | undefined {
   const credentials = resolveCredentials(provider)
   if (!credentials || !canHandle(credentials.protocol)) return undefined
   return {
     provider,
     modality: 'video',
+    capabilities: getCapabilities(provider),
     async submit(input: T2VAdapterInput, _context: ProviderContext): Promise<ProviderSubmission<T2VResult>> {
       let submittedId: string | undefined
       const result = await generate({
@@ -454,6 +494,12 @@ export function getAdapter(provider: string): ProviderAdapter<T2VAdapterInput, T
     },
     async reconcile(taskId: string, _context: ProviderContext): Promise<ProviderReconciliation<ReconciledVideoResult>> {
       return reconcile(provider, taskId)
+    },
+    async cancel(_taskId: string, _context: ProviderContext): Promise<'unsupported'> {
+      return 'unsupported'
+    },
+    async getBillingStatus(_context: ProviderContext): Promise<ProviderBillingStatus> {
+      return getBillingStatus(provider)
     },
   }
 }
