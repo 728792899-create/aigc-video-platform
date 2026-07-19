@@ -11,6 +11,7 @@ const stage = resolve(root, '.package-stage/server')
 const stageRoot = resolve(root, '.package-stage')
 const temporaryRoot = mkdtempSync(join(tmpdir(), 'aigc-director-package-'))
 const temporaryStage = resolve(temporaryRoot, 'server')
+const packageManager = process.platform === 'win32' ? 'pnpm.cmd' : 'pnpm'
 mkdirSync(stageRoot, { recursive: true })
 if (existsSync(stage)) renameSync(stage, resolve(stageRoot, `stale-${Date.now()}`))
 
@@ -49,7 +50,7 @@ function compatibleCachedDeployment() {
     }))
 }
 
-const deploy = run('pnpm', ['--filter', '@aigc-director/server', 'deploy', '--prod', '--offline', '--trust-lockfile', temporaryStage], true)
+const deploy = run(packageManager, ['--filter', '@aigc-director/server', 'deploy', '--prod', '--offline', '--trust-lockfile', temporaryStage], true)
 if (deploy.status !== 0) {
   const cached = compatibleCachedDeployment()
   if (!cached) throw new Error(`PACKAGE_STAGE_NO_COMPATIBLE_OFFLINE_CACHE:${deploy.status ?? 'unknown'}`)
@@ -71,10 +72,28 @@ function electronCanLoadSqlite(directory) {
   return probe.status === 0
 }
 
+function hostNodeCanLoadSqlite() {
+  const probe = spawnSync(process.execPath, ['-e', "const p=require.resolve('better-sqlite3',{paths:[process.cwd()]});const DB=require(p);const db=new DB(':memory:');db.exec('select 1');db.close()"], {
+    cwd: resolve(root, 'apps/server'),
+    encoding: 'utf8',
+  })
+  return probe.status === 0
+}
+
 if (!electronCanLoadSqlite(temporaryStage)) {
-  run('pnpm', ['exec', 'electron-rebuild', '-f', '-m', temporaryStage, '-w', 'better-sqlite3', '-v', '40.10.6'])
+  // pnpm deploy can use hard links or copy-on-write clones from its content
+  // store. Rebuilding such a file in place can poison the cached host-Node
+  // ABI for later CI jobs. Replace the native package with an ordinary copy
+  // before electron-rebuild is allowed to mutate it.
+  const nativePackage = realpathSync(resolve(temporaryStage, 'node_modules/better-sqlite3'))
+  const isolatedNativePackage = `${nativePackage}.electron-${Date.now()}`
+  cpSync(nativePackage, isolatedNativePackage, { recursive: true, dereference: true })
+  rmSync(nativePackage, { recursive: true, force: true })
+  renameSync(isolatedNativePackage, nativePackage)
+  run(packageManager, ['exec', 'electron-rebuild', '-f', '-m', temporaryStage, '-w', 'better-sqlite3', '-v', '40.10.6'])
 }
 if (!electronCanLoadSqlite(temporaryStage)) throw new Error('PACKAGE_STAGE_SQLITE_ELECTRON_ABI_INVALID')
+if (!hostNodeCanLoadSqlite()) throw new Error('PACKAGE_STAGE_MUTATED_HOST_SQLITE_ABI')
 
 for (const relative of [
   'src', 'test', 'tsconfig.json', '.director-data', '.env', 'logs', 'uploads', 'media', 'exports', 'runtime',

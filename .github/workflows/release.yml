@@ -50,6 +50,7 @@ jobs:
         shell: pwsh
         run: choco install ffmpeg -y --no-progress
       - run: pnpm install --frozen-lockfile
+      - run: pnpm native:host
       - run: pnpm quality
       - run: pnpm prepare:package
       - run: pnpm electron:preflight

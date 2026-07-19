@@ -33,6 +33,7 @@ jobs:
       - name: Install system FFmpeg
         run: sudo apt-get update && sudo apt-get install -y ffmpeg
       - run: pnpm install --frozen-lockfile
+      - run: pnpm native:host
       - run: pnpm audit --prod --audit-level=high
       - run: pnpm quality
       - run: pnpm prepare:package
@@ -69,6 +70,7 @@ jobs:
         shell: pwsh
         run: choco install ffmpeg -y --no-progress
       - run: pnpm install --frozen-lockfile
+      - run: pnpm native:host
       - run: pnpm build
       - run: pnpm prepare:package
       - run: pnpm electron:preflight

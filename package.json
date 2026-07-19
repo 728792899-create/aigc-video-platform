@@ -21,6 +21,7 @@
     "test:smoke": "cross-env DEMO_MODE=1 PROVIDER_NETWORK_DISABLED=1 pnpm exec vitest run packages/testing/test/smoke.test.ts",
     "test:electron": "pnpm --filter @aigc-director/desktop test",
     "test:ffmpeg": "node scripts/ffmpeg-smoke.mjs",
+    "native:host": "pnpm --filter @aigc-director/server rebuild better-sqlite3",
     "security:scan": "node scripts/security-check.mjs",
     "clean-room:check": "node scripts/clean-room-check.mjs",
     "quality": "pnpm typecheck && pnpm lint && pnpm test && pnpm clean-room:check && pnpm security:scan && pnpm test:ffmpeg && pnpm build && pnpm test:smoke",
