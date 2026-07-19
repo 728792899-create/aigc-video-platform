@@ -1,7 +1,7 @@
 import { createRequire } from 'node:module'
 import { spawnSync } from 'node:child_process'
 import { existsSync, mkdtempSync, readFileSync, readdirSync, realpathSync, rmSync, statSync } from 'node:fs'
-import { extname, join, relative, resolve } from 'node:path'
+import { extname, isAbsolute, join, relative, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { tmpdir } from 'node:os'
 
@@ -27,6 +27,15 @@ function walk(directory, result = []) {
   return result
 }
 
+function isPathContained(parent, candidate) {
+  const candidateRelative = relative(parent, candidate)
+  return candidateRelative === '' || (!candidateRelative.startsWith('..') && !isAbsolute(candidateRelative))
+}
+
+function normalizedPath(path) {
+  return path.replaceAll('\\', '/')
+}
+
 check(pkg.version === '2.0.0' && pkg.build?.appId === 'com.aigc.director.studio', '产品身份为 AIGC 导演工作室 2.0')
 check(pkg.build?.asar === true, 'Electron 主应用使用 ASAR')
 check(pkg.build?.npmRebuild === false, '主 ASAR 不重复重建隔离 Server 的原生依赖')
@@ -47,9 +56,15 @@ check(existsSync(join(stage, 'dist/index.js')), 'Server 生产部署目录存在
 check(existsSync(join(stage, 'dist/prompt-pack/registry/prompts.json')), 'Server 生产部署目录包含固定版本 Prompt Registry')
 
 const stagedFiles = walk(stage)
-const forbiddenStageFiles = stagedFiles.filter(({ absolute, type, target }) => (type === 'symlink' && target !== stage && !target?.startsWith(`${stage}/`)) || /(?:\.d)?\.(?:ts|tsx|map)$/iu.test(absolute) || /(^|\/)(?:uploads|logs)(\/|$)/u.test(absolute) || /\.(?:sqlite|db|log|pem|pfx|key)$/iu.test(absolute))
+const forbiddenStageFiles = stagedFiles.filter(({ absolute, type, target }) => {
+  const normalizedAbsolute = normalizedPath(absolute)
+  return (type === 'symlink' && (!target || !isPathContained(stage, target)))
+    || /(?:\.d)?\.(?:ts|tsx|map)$/iu.test(normalizedAbsolute)
+    || /(^|\/)(?:uploads|logs)(\/|$)/u.test(normalizedAbsolute)
+    || /\.(?:sqlite|db|log|pem|pfx|key)$/iu.test(normalizedAbsolute)
+})
 check(forbiddenStageFiles.length === 0, `生产后端不含源码、sourcemap、外部链接或运行数据（${forbiddenStageFiles.slice(0, 3).map(({ absolute }) => relative(root, absolute)).join(', ') || 'clean'}）`)
-const bundledFfmpeg = stagedFiles.filter(({ absolute }) => /(^|\/)(?:ffmpeg|ffprobe)(?:\.exe)?$/iu.test(absolute))
+const bundledFfmpeg = stagedFiles.filter(({ absolute }) => /(^|\/)(?:ffmpeg|ffprobe)(?:\.exe)?$/iu.test(normalizedPath(absolute)))
 check(bundledFfmpeg.length === 0, '发行资源不携带 FFmpeg 二进制')
 const nativeSqlite = stagedFiles.find(({ absolute }) => extname(absolute) === '.node' && absolute.includes('better-sqlite3'))
 check(Boolean(nativeSqlite), 'better-sqlite3 Electron 原生模块已隔离装入')
