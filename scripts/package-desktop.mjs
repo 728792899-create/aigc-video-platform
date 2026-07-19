@@ -20,15 +20,15 @@ const args = [
   builder,
   '--dir',
   '--projectDir', stage,
-  `-c.electronDist=${electronDist}`,
-  `-c.directories.output=${output}`,
+  `--config.electronDist=${electronDist}`,
+  `--config.directories.output=${output}`,
 ]
 if (process.platform === 'darwin') args.push(
-  '-c.mac.identity=-',
-  '-c.mac.entitlements=resources/entitlements.adhoc.plist',
-  '-c.mac.entitlementsInherit=resources/entitlements.adhoc.plist',
+  '--config.mac.identity=-',
+  '--config.mac.entitlements=resources/entitlements.adhoc.plist',
+  '--config.mac.entitlementsInherit=resources/entitlements.adhoc.plist',
 )
-else if (process.platform === 'win32') args.push('-c.win.signAndEditExecutable=false')
+else if (process.platform === 'win32') args.push('--config.win.signAndEditExecutable=false')
 
 const built = spawnSync(process.execPath, args, {
   cwd: root,

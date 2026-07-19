@@ -71,12 +71,12 @@ jobs:
           CSC_KEY_PASSWORD: ${{ secrets.MAC_CSC_KEY_PASSWORD }}
           APPLE_API_KEY_ID: ${{ secrets.APPLE_API_KEY_ID }}
           APPLE_API_ISSUER: ${{ secrets.APPLE_API_ISSUER }}
-        run: pnpm release:verify-credentials && pnpm exec electron-builder --projectDir .desktop-stage -c.electronDist=../node_modules/electron/dist --mac --${{ matrix.arch }} --publish never
+        run: pnpm release:verify-credentials && pnpm exec electron-builder --projectDir .desktop-stage --config.electronDist=../node_modules/electron/dist --mac --${{ matrix.arch }} --publish never
       - name: Build unsigned macOS preflight
         if: runner.os == 'macOS' && github.event_name == 'workflow_dispatch' && inputs.unsigned_preflight
         env:
           SKIP_NOTARIZE: '1'
-        run: pnpm exec electron-builder --projectDir .desktop-stage -c.electronDist=../node_modules/electron/dist --mac --${{ matrix.arch }} --publish never -c.mac.identity=- -c.mac.entitlements=resources/entitlements.adhoc.plist -c.mac.entitlementsInherit=resources/entitlements.adhoc.plist
+        run: pnpm exec electron-builder --projectDir .desktop-stage --config.electronDist=../node_modules/electron/dist --mac --${{ matrix.arch }} --publish never --config.mac.identity=- --config.mac.entitlements=resources/entitlements.adhoc.plist --config.mac.entitlementsInherit=resources/entitlements.adhoc.plist
       - name: Build Windows package
         if: runner.os == 'Windows'
         shell: pwsh
@@ -86,9 +86,9 @@ jobs:
         run: |
           if ('${{ github.event_name }}' -eq 'push' -or '${{ inputs.unsigned_preflight }}' -eq 'false') {
             pnpm release:verify-credentials
-            pnpm exec electron-builder --projectDir .desktop-stage -c.electronDist=../node_modules/electron/dist --win --x64 --publish never
+            pnpm exec electron-builder --projectDir .desktop-stage --config.electronDist=../node_modules/electron/dist --win --x64 --publish never
           } else {
-            pnpm exec electron-builder --projectDir .desktop-stage -c.electronDist=../node_modules/electron/dist --win --x64 --publish never --config.win.signAndEditExecutable=false
+            pnpm exec electron-builder --projectDir .desktop-stage --config.electronDist=../node_modules/electron/dist --win --x64 --publish never --config.win.signAndEditExecutable=false
           }
       - name: Verify signed macOS package
         if: runner.os == 'macOS' && (github.event_name == 'push' || !inputs.unsigned_preflight)
