@@ -33,7 +33,7 @@
     "desktop:open:demo": "node scripts/open-packaged-desktop.mjs",
     "release:verify-credentials": "node scripts/verify-release-credentials.mjs",
     "pack": "pnpm build && pnpm prepare:package && pnpm electron:preflight && pnpm prepare:desktop-stage && node scripts/package-desktop.mjs",
-    "dist": "pnpm build && pnpm prepare:package && pnpm electron:preflight && pnpm prepare:desktop-stage && pnpm release:verify-credentials && electron-builder --projectDir .desktop-stage -c.electronDist=../node_modules/electron/dist"
+    "dist": "pnpm build && pnpm prepare:package && pnpm electron:preflight && pnpm prepare:desktop-stage && pnpm release:verify-credentials && electron-builder --projectDir .desktop-stage --config.electronDist=../node_modules/electron/dist"
   },
   "devDependencies": {
     "@electron/notarize": "3.1.1",
