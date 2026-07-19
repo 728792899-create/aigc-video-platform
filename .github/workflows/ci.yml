@@ -80,7 +80,8 @@ jobs:
         shell: bash
         run: |
           arch="${{ matrix.target == 'mac-x64' && 'x64' || 'arm64' }}"
-          pnpm exec electron-builder --projectDir .desktop-stage -c.electronDist=../node_modules/electron/dist --mac "$arch" --dir --publish never -c.mac.identity=- -c.mac.entitlements=resources/entitlements.adhoc.plist -c.mac.entitlementsInherit=resources/entitlements.adhoc.plist
+          arch_flag="--${arch}"
+          pnpm exec electron-builder --projectDir .desktop-stage -c.electronDist=../node_modules/electron/dist --mac --dir "$arch_flag" --publish never -c.mac.identity=- -c.mac.entitlements=resources/entitlements.adhoc.plist -c.mac.entitlementsInherit=resources/entitlements.adhoc.plist
           executable="$(find dist-electron -type f -path '*/AIGC 导演工作室.app/Contents/MacOS/AIGC 导演工作室' -print -quit)"
           test -n "$executable"
           AIGC_DIRECTOR_EXECUTABLE="$executable" pnpm desktop:launch-smoke
@@ -88,7 +89,7 @@ jobs:
         if: runner.os == 'Windows'
         shell: pwsh
         run: |
-          pnpm exec electron-builder --projectDir .desktop-stage -c.electronDist=../node_modules/electron/dist --win x64 --dir --publish never --config.win.signAndEditExecutable=false
+          pnpm exec electron-builder --projectDir .desktop-stage -c.electronDist=../node_modules/electron/dist --win --x64 --dir --publish never --config.win.signAndEditExecutable=false
           $executable = Get-ChildItem dist-electron -Recurse -Filter 'AIGC 导演工作室.exe' | Select-Object -First 1
           if (-not $executable) { throw 'packaged executable not found' }
           $env:AIGC_DIRECTOR_EXECUTABLE = $executable.FullName
