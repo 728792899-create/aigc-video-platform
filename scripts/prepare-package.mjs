@@ -11,14 +11,22 @@ const stage = resolve(root, '.package-stage/server')
 const stageRoot = resolve(root, '.package-stage')
 const temporaryRoot = mkdtempSync(join(tmpdir(), 'aigc-director-package-'))
 const temporaryStage = resolve(temporaryRoot, 'server')
-const packageManager = process.platform === 'win32' ? 'pnpm.cmd' : 'pnpm'
+const pnpmCli = process.env.npm_execpath ? resolve(process.env.npm_execpath) : undefined
+if (!pnpmCli || !existsSync(pnpmCli)) throw new Error('PACKAGE_STAGE_PNPM_CLI_MISSING')
 mkdirSync(stageRoot, { recursive: true })
 if (existsSync(stage)) renameSync(stage, resolve(stageRoot, `stale-${Date.now()}`))
 
 function run(command, args, allowFailure = false) {
   const result = spawnSync(command, args, { cwd: root, stdio: 'inherit', env: process.env })
-  if (result.status !== 0 && !allowFailure) throw new Error(`PACKAGE_STAGE_FAILED:${command}:${result.status ?? 'unknown'}`)
+  if (result.status !== 0 && !allowFailure) {
+    const reason = result.error instanceof Error ? result.error.message : String(result.status ?? 'unknown')
+    throw new Error(`PACKAGE_STAGE_FAILED:${command}:${reason}`)
+  }
   return result
+}
+
+function runPnpm(args, allowFailure = false) {
+  return run(process.execPath, [pnpmCli, ...args], allowFailure)
 }
 
 const serverPackage = JSON.parse(readFileSync(resolve(root, 'apps/server/package.json'), 'utf8'))
@@ -50,10 +58,11 @@ function compatibleCachedDeployment() {
     }))
 }
 
-const deploy = run(packageManager, ['--filter', '@aigc-director/server', 'deploy', '--prod', '--offline', '--trust-lockfile', temporaryStage], true)
+const deploy = runPnpm(['--filter', '@aigc-director/server', 'deploy', '--prod', '--offline', '--trust-lockfile', temporaryStage], true)
 if (deploy.status !== 0) {
   const cached = compatibleCachedDeployment()
-  if (!cached) throw new Error(`PACKAGE_STAGE_NO_COMPATIBLE_OFFLINE_CACHE:${deploy.status ?? 'unknown'}`)
+  const reason = deploy.error instanceof Error ? deploy.error.message : String(deploy.status ?? 'unknown')
+  if (!cached) throw new Error(`PACKAGE_STAGE_NO_COMPATIBLE_OFFLINE_CACHE:${reason}`)
   console.warn(`Offline deploy store is incomplete; reusing a direct-dependency-version-compatible prior stage from ${cached}`)
   rmSync(temporaryStage, { recursive: true, force: true })
   mkdirSync(temporaryStage, { recursive: true })
@@ -90,7 +99,7 @@ if (!electronCanLoadSqlite(temporaryStage)) {
   cpSync(nativePackage, isolatedNativePackage, { recursive: true, dereference: true })
   rmSync(nativePackage, { recursive: true, force: true })
   renameSync(isolatedNativePackage, nativePackage)
-  run(packageManager, ['exec', 'electron-rebuild', '-f', '-m', temporaryStage, '-w', 'better-sqlite3', '-v', '40.10.6'])
+  runPnpm(['exec', 'electron-rebuild', '-f', '-m', temporaryStage, '-w', 'better-sqlite3', '-v', '40.10.6'])
 }
 if (!electronCanLoadSqlite(temporaryStage)) throw new Error('PACKAGE_STAGE_SQLITE_ELECTRON_ABI_INVALID')
 if (!hostNodeCanLoadSqlite()) throw new Error('PACKAGE_STAGE_MUTATED_HOST_SQLITE_ABI')
