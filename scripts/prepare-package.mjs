@@ -2,7 +2,7 @@ import { cpSync, rmSync, existsSync, lstatSync, mkdirSync, mkdtempSync, readFile
 import { spawnSync } from 'node:child_process'
 import { createRequire } from 'node:module'
 import { tmpdir } from 'node:os'
-import { join, resolve } from 'node:path'
+import { isAbsolute, join, relative, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
 
 const root = resolve(fileURLToPath(new URL('..', import.meta.url)))
@@ -58,7 +58,12 @@ function compatibleCachedDeployment() {
     }))
 }
 
-const deploy = runPnpm(['--filter', '@aigc-director/server', 'deploy', '--prod', '--offline', '--trust-lockfile', temporaryStage], true)
+// A clean CI runner may have unpacked packages in the pnpm store without the
+// original tarballs that `deploy --offline` requires. Keep the lockfile as the
+// reproducibility boundary and let deploy fetch a missing production tarball.
+// When the machine is actually offline, the compatible-stage fallback below
+// still provides an explicit, version-checked recovery path.
+const deploy = runPnpm(['--filter', '@aigc-director/server', 'deploy', '--prod', '--trust-lockfile', temporaryStage], true)
 if (deploy.status !== 0) {
   const cached = compatibleCachedDeployment()
   const reason = deploy.error instanceof Error ? deploy.error.message : String(deploy.status ?? 'unknown')
@@ -114,7 +119,8 @@ function scrub(directory, packageRoot) {
     const absolute = resolve(directory, entry.name)
     if (entry.isSymbolicLink()) {
       const target = realpathSync(absolute)
-      if (target !== packageRoot && !target.startsWith(`${packageRoot}/`)) throw new Error(`PACKAGE_STAGE_EXTERNAL_SYMLINK:${absolute}`)
+      const targetRelative = relative(packageRoot, target)
+      if (targetRelative.startsWith('..') || isAbsolute(targetRelative)) throw new Error(`PACKAGE_STAGE_EXTERNAL_SYMLINK:${absolute}`)
       continue
     }
     if (entry.isDirectory()) {
@@ -133,8 +139,8 @@ const forbiddenRuntimeName = /(?:^|\/)(?:\.director-data|logs?|uploads?|media|ex
 function assertNoRuntimeData(directory) {
   for (const entry of readdirSync(directory, { withFileTypes: true })) {
     const absolute = resolve(directory, entry.name)
-    const relative = absolute.slice(temporaryStage.length + 1)
-    if (forbiddenRuntimeName.test(relative)) throw new Error(`PACKAGE_STAGE_RUNTIME_DATA:${relative}`)
+    const runtimeRelative = relative(temporaryStage, absolute).replaceAll('\\', '/')
+    if (forbiddenRuntimeName.test(runtimeRelative)) throw new Error(`PACKAGE_STAGE_RUNTIME_DATA:${runtimeRelative}`)
     if (entry.isDirectory()) assertNoRuntimeData(absolute)
   }
 }
