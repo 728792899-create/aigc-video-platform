@@ -1,0 +1,533 @@
+[
+  {
+    "id": "eval.intent-fidelity",
+    "title": "一句话需求事实保真",
+    "promptId": "intent.normalize",
+    "fixture": {
+      "input": "制作30秒竖屏短片：雨夜，快递员归还失主的旧相机。"
+    },
+    "hardAssertions": [
+      "保留30秒、竖屏、雨夜、快递员、旧相机",
+      "新增信息进入assumptions"
+    ],
+    "rubric": [
+      "事实保真",
+      "约束召回"
+    ],
+    "rights": "original-synthetic"
+  },
+  {
+    "id": "eval.story-causality",
+    "title": "故事因果与钩子",
+    "promptId": "story.expand",
+    "fixture": {
+      "input": {
+        "logline": "快递员归还旧相机，却发现照片来自未来。",
+        "durationSec": 60
+      }
+    },
+    "hardAssertions": [
+      "开场钩子在首个节拍",
+      "高潮由前置线索触发"
+    ],
+    "rubric": [
+      "因果",
+      "节奏"
+    ],
+    "rights": "original-synthetic"
+  },
+  {
+    "id": "eval.character-identity",
+    "title": "跨镜人物身份",
+    "promptId": "asset.character_refine",
+    "fixture": {
+      "input": {
+        "name": "林夏",
+        "facts": [
+          "短发",
+          "左眉小痣"
+        ],
+        "variants": [
+          "雨衣",
+          "制服"
+        ]
+      }
+    },
+    "hardAssertions": [
+      "短发和左眉小痣属于identityAnchors",
+      "服装属于variant"
+    ],
+    "rubric": [
+      "身份稳定",
+      "变体合法"
+    ],
+    "rights": "original-synthetic"
+  },
+  {
+    "id": "eval.spatial-lock",
+    "title": "固定房间空间",
+    "promptId": "asset.location_refine",
+    "fixture": {
+      "input": {
+        "room": "咖啡馆",
+        "facts": [
+          "门在画面左侧",
+          "吧台在后方"
+        ]
+      }
+    },
+    "hardAssertions": [
+      "入口和吧台关系被锁定"
+    ],
+    "rubric": [
+      "空间可复建"
+    ],
+    "rights": "original-synthetic"
+  },
+  {
+    "id": "eval.prop-state",
+    "title": "道具左右手交接",
+    "promptId": "asset.prop_refine",
+    "fixture": {
+      "input": {
+        "prop": "旧相机",
+        "timeline": [
+          "A右手持有",
+          "交给B左手"
+        ]
+      }
+    },
+    "hardAssertions": [
+      "左右手和交接顺序完整"
+    ],
+    "rubric": [
+      "道具连续性"
+    ],
+    "rights": "original-synthetic"
+  },
+  {
+    "id": "eval.frame-handoff",
+    "title": "尾帧传下一镜",
+    "promptId": "frame.compose",
+    "fixture": {
+      "input": {
+        "frameRole": "last",
+        "previous": "人物走到门前",
+        "nextIntent": "推门进入"
+      }
+    },
+    "hardAssertions": [
+      "handoffState可作为下一镜进入状态"
+    ],
+    "rubric": [
+      "动作承接"
+    ],
+    "rights": "original-synthetic"
+  },
+  {
+    "id": "eval.multibeat",
+    "title": "八秒四节拍",
+    "promptId": "prompt.video_multibeat",
+    "fixture": {
+      "input": {
+        "durationSec": 8,
+        "beats": [
+          2,
+          2,
+          2,
+          2
+        ]
+      }
+    },
+    "hardAssertions": [
+      "节拍无重叠",
+      "最后endSec等于8"
+    ],
+    "rubric": [
+      "时间精确",
+      "动作容量"
+    ],
+    "rights": "original-synthetic"
+  },
+  {
+    "id": "eval.bilingual-diff",
+    "title": "双语局部反馈",
+    "promptId": "prompt.bilingual_polish",
+    "fixture": {
+      "input": {
+        "prompt": "人物走进暖色房间"
+      },
+      "feedback": [
+        "只把光线改为冷色"
+      ]
+    },
+    "hardAssertions": [
+      "人物动作不变",
+      "中英文语义一致"
+    ],
+    "rubric": [
+      "最小修改",
+      "双语对齐"
+    ],
+    "rights": "original-synthetic"
+  },
+  {
+    "id": "eval.reference-order",
+    "title": "多参考顺序",
+    "promptId": "prompt.image_assemble",
+    "fixture": {
+      "input": {
+        "references": [
+          {
+            "role": "scene",
+            "ordinal": 1
+          },
+          {
+            "role": "character",
+            "ordinal": 2
+          },
+          {
+            "role": "prop",
+            "ordinal": 3
+          }
+        ]
+      }
+    },
+    "hardAssertions": [
+      "referenceSlots顺序为1、2、3"
+    ],
+    "rubric": [
+      "引用顺序"
+    ],
+    "rights": "original-synthetic"
+  },
+  {
+    "id": "eval.provider-capability",
+    "title": "尾帧能力降级",
+    "promptId": "provider.render",
+    "fixture": {
+      "input": {
+        "requires": [
+          "first-frame",
+          "last-frame"
+        ],
+        "providerFeatures": [
+          "first-frame"
+        ]
+      }
+    },
+    "hardAssertions": [
+      "issues包含last-frame缺失",
+      "不静默删除尾帧"
+    ],
+    "rubric": [
+      "能力诚实"
+    ],
+    "rights": "original-synthetic"
+  },
+  {
+    "id": "eval.candidate-all-fail",
+    "title": "候选全部失败",
+    "promptId": "candidate.critic",
+    "fixture": {
+      "input": {
+        "candidates": [
+          {
+            "id": "a",
+            "hardFailure": "wrong-person"
+          },
+          {
+            "id": "b",
+            "hardFailure": "missing-prop"
+          }
+        ]
+      }
+    },
+    "hardAssertions": [
+      "recommendation允许全部不合格",
+      "hardFailures不可被均分抵消"
+    ],
+    "rubric": [
+      "评审可靠性"
+    ],
+    "rights": "original-synthetic"
+  },
+  {
+    "id": "eval.final-gate",
+    "title": "成片发布阻断",
+    "promptId": "qa.final_review",
+    "fixture": {
+      "input": {
+        "rightsRisk": true,
+        "identityMismatch": true
+      }
+    },
+    "hardAssertions": [
+      "releaseDecision不是approve",
+      "requiredFixes包含权利和身份"
+    ],
+    "rubric": [
+      "发布安全"
+    ],
+    "rights": "original-synthetic"
+  },
+  {
+    "id": "eval.import-noise",
+    "title": "导入噪声",
+    "promptId": "script.import_analyze",
+    "fixture": {
+      "input": "第1页\\n页眉：公司内部\\n场景1 咖啡馆 夜"
+    },
+    "hardAssertions": [
+      "页眉不成为剧情"
+    ],
+    "rubric": [
+      "解析保真"
+    ],
+    "rights": "original-synthetic"
+  },
+  {
+    "id": "eval.entity-precision",
+    "title": "实体精确率",
+    "promptId": "entity.extract",
+    "fixture": {
+      "input": "小林拿起祖传相机，走进咖啡馆，桌上有一个普通杯子。"
+    },
+    "hardAssertions": [
+      "提取小林、祖传相机、咖啡馆",
+      "普通杯子不强制资产化"
+    ],
+    "rubric": [
+      "精确率"
+    ],
+    "rights": "original-synthetic"
+  },
+  {
+    "id": "eval.script-schema",
+    "title": "剧本Schema",
+    "promptId": "script.structure",
+    "fixture": {
+      "input": {
+        "outline": "A归还相机",
+        "characters": [
+          "A",
+          "B"
+        ]
+      }
+    },
+    "hardAssertions": [
+      "场景ID唯一",
+      "对白speaker存在"
+    ],
+    "rubric": [
+      "结构化输出"
+    ],
+    "rights": "original-synthetic"
+  },
+  {
+    "id": "eval.shot-duration",
+    "title": "镜头时长",
+    "promptId": "shot.plan",
+    "fixture": {
+      "input": {
+        "sceneDurationSec": 12,
+        "action": "相机交接"
+      }
+    },
+    "hardAssertions": [
+      "镜头总时长为12"
+    ],
+    "rubric": [
+      "时长"
+    ],
+    "rights": "original-synthetic"
+  },
+  {
+    "id": "eval.fact-lock",
+    "title": "影视增强事实锁",
+    "promptId": "shot.cinematic_refine",
+    "fixture": {
+      "input": {
+        "facts": [
+          "A把相机交给B"
+        ],
+        "shot": "中景"
+      }
+    },
+    "hardAssertions": [
+      "不改变交接方向"
+    ],
+    "rubric": [
+      "零漂移"
+    ],
+    "rights": "original-synthetic"
+  },
+  {
+    "id": "eval.continuity",
+    "title": "最小连续性快照",
+    "promptId": "continuity.snapshot",
+    "fixture": {
+      "input": {
+        "previousTail": "A右手递相机",
+        "next": "B左手接"
+      }
+    },
+    "hardAssertions": [
+      "包含右手到左手承接"
+    ],
+    "rubric": [
+      "连续性"
+    ],
+    "rights": "original-synthetic"
+  },
+  {
+    "id": "eval.video-motion",
+    "title": "图生视频运动",
+    "promptId": "prompt.video_i2v",
+    "fixture": {
+      "input": {
+        "durationSec": 6,
+        "start": "人物静立",
+        "end": "人物转身"
+      }
+    },
+    "hardAssertions": [
+      "不重写人物身份",
+      "动作容量适配6秒"
+    ],
+    "rubric": [
+      "运动可执行"
+    ],
+    "rights": "original-synthetic"
+  },
+  {
+    "id": "eval.feedback-scope",
+    "title": "反馈局部失效",
+    "promptId": "feedback.route",
+    "fixture": {
+      "input": {
+        "shotId": "s1",
+        "feedback": "只换表情"
+      }
+    },
+    "hardAssertions": [
+      "不失效剧本或全片"
+    ],
+    "rubric": [
+      "最小重跑"
+    ],
+    "rights": "original-synthetic"
+  },
+  {
+    "id": "eval.next-shot",
+    "title": "下一镜建议",
+    "promptId": "next_shot.suggest",
+    "fixture": {
+      "input": {
+        "exit": "人物看向门外",
+        "goal": "揭示雨夜街道"
+      }
+    },
+    "hardAssertions": [
+      "不超过三个方案",
+      "不提前改剧情"
+    ],
+    "rubric": [
+      "剪辑收益"
+    ],
+    "rights": "original-synthetic"
+  },
+  {
+    "id": "eval.dialogue-lock",
+    "title": "对白事实锁",
+    "promptId": "dialogue.performance",
+    "fixture": {
+      "input": {
+        "speakerId": "c1",
+        "text": "我会回来。"
+      }
+    },
+    "hardAssertions": [
+      "台词文字不被改写"
+    ],
+    "rubric": [
+      "对白保真"
+    ],
+    "rights": "original-synthetic"
+  },
+  {
+    "id": "eval.audio-continuity",
+    "title": "声音连续性",
+    "promptId": "audio.sound_design",
+    "fixture": {
+      "input": {
+        "shots": [
+          "室内雨声",
+          "开门到室外"
+        ]
+      }
+    },
+    "hardAssertions": [
+      "雨声空间变化连续"
+    ],
+    "rubric": [
+      "声音叙事"
+    ],
+    "rights": "original-synthetic"
+  },
+  {
+    "id": "eval.edit-duration",
+    "title": "剪辑时长",
+    "promptId": "edit.compose_plan",
+    "fixture": {
+      "input": {
+        "targetDurationSec": 30,
+        "shots": [
+          10,
+          8,
+          12
+        ]
+      }
+    },
+    "hardAssertions": [
+      "durationCheck为30"
+    ],
+    "rubric": [
+      "合成准确"
+    ],
+    "rights": "original-synthetic"
+  },
+  {
+    "id": "eval.prompt-core",
+    "title": "通用结构化封套",
+    "promptId": "intent.normalize",
+    "fixture": {
+      "input": "测试"
+    },
+    "hardAssertions": [
+      "返回result、zhReview、enPrompt、assumptions、issues"
+    ],
+    "rubric": [
+      "Schema",
+      "安全"
+    ],
+    "rights": "original-synthetic"
+  },
+  {
+    "id": "eval.style-rights",
+    "title": "风格描述权利边界",
+    "promptId": "style.analyze",
+    "fixture": {
+      "input": "生成明亮、几何化、纸张纹理明显的二维动画风格，不模仿具体艺术家。"
+    },
+    "hardAssertions": [
+      "不使用具体在世艺术家姓名作为风格捷径",
+      "rightsFlags明确记录风险"
+    ],
+    "rubric": [
+      "可观察风格",
+      "权利安全"
+    ],
+    "rights": "original-synthetic"
+  }
+]

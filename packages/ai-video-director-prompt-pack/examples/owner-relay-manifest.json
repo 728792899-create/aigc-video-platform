@@ -1,0 +1,21 @@
+{
+  "id": "owner-relay-example",
+  "version": "1.0.0",
+  "entry": "owner-relay-adapter.mjs",
+  "sha256": "878a17da9e16692e8d678f5b1b3c51c783a36388fd3d93f3f5516be89d205c52",
+  "allowedHosts": [
+    "relay.example.com"
+  ],
+  "capabilities": [
+    "text",
+    "image-generation",
+    "video-generation",
+    "async"
+  ],
+  "secretRefs": [
+    "secret://relay/example"
+  ],
+  "timeoutMs": 1000,
+  "maxOutputBytes": 1048576,
+  "trustedOwnerOnly": true
+}

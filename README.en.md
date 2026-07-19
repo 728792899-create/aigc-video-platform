@@ -1,138 +1,50 @@
-# AIGC Video Workbench
+# AIGC Director Studio
 
-> A local-first, recoverable desktop workspace that turns a topic into a real MP4 without requiring a paid model for its Demo Mode.
+A local-first, recoverable AI video production workspace built around domain graphs, evidence-linked story events, reviewable agents, durable tasks, and real MP4 export.
 
-[中文 README](README.md) · [Documentation](docs/README.md) · [Security](SECURITY.md) · [Contributing](CONTRIBUTING.md)
+> An independently implemented AI-director capability superset based on public behavior research and a clean-room process.
 
-![AIGC Video Workbench hero](docs/images/product-hero.jpg)
+Version 2.0 replaces the previous dashboard, phase pages, API, and database. `/studio` is the only product surface. Schema v9 persists exact Prompt/Skill revisions, CandidateBatch lineage, redacted media receipts, durable task evidence, traceable Episode → Series → Global memory, immutable AgentRun memory checkpoints, signed Provider plugin lifecycle state, and revocable Ed25519 publisher trust fingerprints. Checkpoints contain only memory IDs, hashes, source revisions, and retrieval reasons—never copied memory content.
 
-## What it does
+Published Prompt revisions can be pinned to one Event, Scene, or Shot. Event/Scene runs append scoped Artifacts; Shot runs append Candidates without changing the selected result or touching another scene. The task snapshot records both Prompt and target revisions, and conflicting idempotency-key reuse fails closed.
 
-The product organizes AI-assisted video creation into eight explicit stages:
+## Quick start
 
-~~~mermaid
-flowchart LR
-  T["Topic"] --> S["Script"]
-  S --> B["Storyboard"]
-  B --> I["Images"]
-  I --> A["Voice"]
-  A --> C["Subtitles"]
-  C --> L["Timeline"]
-  L --> E["Export"]
-~~~
+Requirements: Node.js 24, pnpm 11, and system `ffmpeg` / `ffprobe`.
 
-Each stage owns its status, checkpoint, attempts, progress, output, and diagnostics. Successful upstream assets survive partial failures. A restarted service scans persisted tasks and resumes supported jobs from the most recent checkpoint.
+```bash
+corepack enable
+pnpm install
+pnpm quality
+pnpm dev
+```
 
-| Capability | User-visible result |
-| --- | --- |
-| Recoverable workflow | Retry one failed stage instead of restarting the project |
-| Partial-success batches | Keep successful images or audio while repairing failed items |
-| Provider contracts | Normalize missing keys, timeouts, rate limits, malformed results, and fallbacks |
-| Local Demo Mode | Complete the full workflow without a paid-model request |
-| Real media export | Produce a playable MP4 with FFmpeg |
-| Desktop security | Store credentials through Electron safeStorage and restrict renderer privileges |
-| Reproducible release | Run CI, package preflight, signing checks, migrations, and recovery validation |
+Open `http://127.0.0.1:5173/studio`. Demo Mode disables provider networking and never submits a paid request.
 
-## Five-minute Demo
+```bash
+pnpm test:smoke
+```
 
-Requirements: Node.js 22+, npm 10+, macOS, Windows, or a common Linux development environment.
+The smoke test creates a project, imports a chapter, extracts an event graph, approves an agent plan, creates shots and candidates, exports a valid MP4, restarts the service, and verifies recovery in a temporary directory.
 
-~~~bash
-git clone https://github.com/728792899-create/aigc-video-platform.git
-cd aigc-video-platform
+Current local acceptance: 148/148 workspace tests, strict type checking, lint, clean-room and security scans, valid FFmpeg output, production build, Electron preflight, package leakage scan, and packaged macOS arm64 launch smoke. Demo paid requests remain zero. Production signing/notarization, Windows clean-machine acceptance, live Provider verification, and online updater E2E remain external gates.
 
-npm ci
-npm --prefix server ci
-npm --prefix client ci
-npm run demo
-~~~
+The project switcher can export a self-contained `.aigcproj` backup and import it as an isolated copy. The package validates its manifest, schema, paths, quotas, and every media SHA-256; credentials, logs, and absolute local paths are excluded.
 
-Open the URL printed by the launcher, normally `http://127.0.0.1:5173`.
+Story Graph accepts pasted text plus `.txt`, `.md`, and `.markdown`. Files are validated as bounded UTF-8, shown as non-executable plaintext in a cancellable quarantine preview, and committed transactionally only after the user confirms the content hash and chapter list.
 
-Demo Mode uses local script templates, original placeholder frames, local placeholder audio, local subtitles, and real FFmpeg composition. It does not call a paid Provider. To verify recovery, stage retry, and playable export in an isolated temporary directory:
+## Stack
 
-~~~bash
-npm run test:smoke
-~~~
+- Vue 3, Pinia, Vue Router, Vue Flow, Reka UI
+- Express 5, Socket.IO, Zod, better-sqlite3
+- Electron 40 with isolated preload and encrypted credential vault
+- TypeScript strict monorepo managed by pnpm
+- Fixed-version clean-room Prompt Pack: 26 prompts, 31 skills, and 2 workflows
+- Deterministic Model Catalog, validated media resolution, batch candidate review, and revision-pinned boundary-frame continuity
+- Traceable scoped memory with source revisions, retrieval reasons, stale history, and a no-network keyword fallback
+- A default-off three-channel Egress Broker with per-hop DNS/IP validation, pinned-address transport, bounded streaming, host/path-hash audit, and host-only credential injection
+- An optional Deno 2.9.2 installer with pinned release assets, size/SHA-256/ZIP/version verification, atomic publication, and explicit confirmation; Deno is not bundled and custom plugins remain disabled
+- Atomic extraction of the last decodable video frame through system FFmpeg
+- System FFmpeg; no bundled nonfree binary
 
-## Product tour
-
-![Web workspace](docs/screenshots/dashboard-overview.jpg)
-
-| Projects | Script and storyboard |
-| --- | --- |
-| ![Projects](docs/screenshots/projects-overview.jpg) | ![Script and storyboard](docs/screenshots/script-storyboard.jpg) |
-
-| Visual assets | Voice and subtitles |
-| --- | --- |
-| ![Visual assets](docs/screenshots/image-workbench.jpg) | ![Voice and subtitles](docs/screenshots/audio-subtitle.jpg) |
-
-| Timeline preview | Provider routing |
-| --- | --- |
-| ![Timeline preview](docs/screenshots/preview-timeline.jpg) | ![Provider routing](docs/screenshots/provider-settings.jpg) |
-
-| Native folder picker | Successful desktop export |
-| --- | --- |
-| ![Native folder picker](docs/screenshots/electron-folder-picker.jpg) | ![Successful desktop export](docs/screenshots/electron-export-success.jpg) |
-
-The screenshots contain Demo data only. Concept art is labeled separately and never presented as a real product screen.
-
-## Architecture
-
-~~~mermaid
-flowchart LR
-  E["Electron main"] --> P["Restricted preload"]
-  P --> V["Vue workspace"]
-  V -->|same-origin REST| A["Express API"]
-  A --> Q["Task manager"]
-  Q --> W["Workflow state machine"]
-  W --> R["Provider contracts"]
-  W --> M["Media and FFmpeg"]
-  W --> D["SQLite checkpoints"]
-  E --> K["OS credential storage"]
-  K -->|runtime only| R
-~~~
-
-The application is currently a single-user desktop product, not a multi-tenant SaaS. Its REST API is an internal compatibility surface for the bundled clients; it is documented for contributors but is not yet versioned as a public SDK.
-
-## Quality gates
-
-~~~bash
-npm run quality
-npm run test:smoke
-npm run security:audit:all
-node scripts/security-check.mjs
-node scripts/ffmpeg-smoke.mjs
-npm run electron:preflight
-~~~
-
-Automated tests clear common Provider credential variables. Provider tests use controlled fakes for no-key, timeout, rate-limit, malformed-response, fallback, placeholder, and partial-success scenarios.
-
-## Desktop release status
-
-| Platform | Build target | Public release requirement |
-| --- | --- | --- |
-| Windows x64 | NSIS | Trusted code-signing certificate and timestamp |
-| macOS arm64/x64 | DMG and ZIP | Developer ID, hardened runtime, notarization, and stapling |
-
-Unsigned or ad-hoc packages are internal preflight artifacts, not public releases. See the [desktop release guide](docs/desktop-release.md) and [release checklist](docs/release-checklist.md).
-
-## Documentation map
-
-- [Product tour](docs/product-tour.md)
-- [Creator guide](docs/user-guide.md)
-- [Architecture](docs/architecture.md)
-- [Workflow recovery](docs/workflow-recovery.md)
-- [Internal API reference](docs/api-reference.md)
-- [Data model](docs/data-model.md)
-- [Provider and Demo guide](docs/provider-guide.md)
-- [Backup and restore](docs/backup-restore.md)
-- [Security and data boundaries](docs/security-and-data.md)
-- [Testing and CI](docs/testing-ci.md)
-- [Troubleshooting](docs/troubleshooting.md)
-
-## Security and license
-
-Never commit Provider keys, databases, upload directories, logs, signing credentials, or user media. Report vulnerabilities through a private GitHub Security Advisory as described in [SECURITY.md](SECURITY.md).
-
-The source code is released under the [MIT License](LICENSE). Inter uses the SIL Open Font License 1.1. Asset provenance and distribution notes are documented in [assets and third-party licenses](docs/assets-and-licenses.md).
+See the [Chinese README](README.md), [documentation center](docs/README.md), [architecture](docs/architecture-v2.md), and [security policy](SECURITY.md).

@@ -1,0 +1,42 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8" />
+  <meta http-equiv="Content-Security-Policy" content="default-src 'self'; style-src 'unsafe-inline'; script-src 'unsafe-inline';" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>旧数据清理确认</title>
+  <style>
+    :root { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", "PingFang SC", sans-serif; color: #eef4fb; background: #080d17; }
+    * { box-sizing: border-box } body { margin: 0; padding: 34px; }
+    .mark { width: 46px; height: 46px; display: grid; place-items: center; border-radius: 14px; color: #07120f; background: #65e6cb; font-size: 24px; }
+    h1 { margin: 22px 0 8px; font-size: 25px; } p { color: #98a7ba; line-height: 1.65; }
+    .warning { padding: 14px; border: 1px solid #64434a; border-radius: 12px; color: #ffc2c9; background: #25151b; font-size: 13px; }
+    .summary { margin: 18px 0; padding: 14px; border: 1px solid #26364e; border-radius: 12px; background: #0d1625; }
+    .location { display: flex; justify-content: space-between; padding: 9px 0; border-bottom: 1px solid #26364e; font-size: 12px; }.location:last-child{border:0}.location span:last-child{color:#8998ad}
+    label { display: block; margin: 18px 0 7px; color: #c9d4e1; font-size: 12px; font-weight: 700; }
+    input { width: 100%; padding: 11px 12px; border: 1px solid #40516d; border-radius: 9px; color: #fff; background: #060b13; }
+    .actions { margin-top: 18px; display: flex; justify-content: flex-end; gap: 9px; }
+    button { padding: 10px 15px; border: 1px solid #40516d; border-radius: 9px; color: #d9e3ee; background: #121d2d; cursor: pointer; font-weight: 700; }
+    button.danger { border-color: #ff7c8b; color: #19070a; background: #ff7c8b; } button:disabled { opacity: .4; cursor: not-allowed; }
+    #error { min-height: 18px; margin: 7px 0 0; color: #ff9ca7; font-size: 11px; }
+  </style>
+</head>
+<body>
+  <div class="mark">✦</div>
+  <h1>开始全新的 2.0 数据空间</h1>
+  <p>新版本不会读取或迁移旧项目。继续后会删除下列旧数据库、媒体和设置；这是普通文件删除，不是安全擦除。</p>
+  <div class="warning">此操作不可撤销。取消将直接退出应用，旧数据不会被加载或修改。</div>
+  <div id="summary" class="summary">正在检查…</div>
+  <label for="confirmation">输入“删除旧数据”确认</label>
+  <input id="confirmation" autocomplete="off" spellcheck="false" />
+  <div id="error"></div>
+  <div class="actions"><button id="cancel">取消并退出</button><button id="confirm" class="danger" disabled>删除旧数据并启动</button></div>
+  <script>
+    const input = document.getElementById('confirmation'); const confirmButton = document.getElementById('confirm'); const error = document.getElementById('error');
+    window.legacyGate.getSummary().then((summary) => { document.getElementById('summary').innerHTML = summary.locations.map((item) => `<div class="location"><span>${item.label}</span><span>${item.files} 个文件 · ${(item.bytes/1024/1024).toFixed(1)} MB</span></div>`).join('') || '没有发现旧数据'; });
+    input.addEventListener('input', () => { confirmButton.disabled = input.value !== '删除旧数据'; error.textContent = ''; });
+    confirmButton.addEventListener('click', async () => { confirmButton.disabled = true; try { await window.legacyGate.confirm(input.value); } catch { error.textContent = '清理未完成。旧数据保持不变，请退出后查看诊断。'; confirmButton.disabled = false; } });
+    document.getElementById('cancel').addEventListener('click', () => window.legacyGate.cancel());
+  </script>
+</body>
+</html>

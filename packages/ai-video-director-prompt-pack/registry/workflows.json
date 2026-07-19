@@ -1,0 +1,444 @@
+[
+  {
+    "id": "workflow.one_click_short_video",
+    "version": "1.0.0",
+    "title": "AI短视频混合检查点工作流",
+    "steps": [
+      {
+        "id": "brief",
+        "promptId": "intent.normalize",
+        "dependsOn": [],
+        "produces": "CreativeBrief"
+      },
+      {
+        "id": "outline",
+        "promptId": "story.expand",
+        "dependsOn": [
+          "brief"
+        ],
+        "produces": "StoryOutline"
+      },
+      {
+        "id": "script",
+        "promptId": "script.structure",
+        "dependsOn": [
+          "outline"
+        ],
+        "produces": "ScriptRevision"
+      },
+      {
+        "id": "entities",
+        "promptId": "entity.extract",
+        "dependsOn": [
+          "script"
+        ],
+        "produces": "EntityCandidates"
+      },
+      {
+        "id": "characters",
+        "promptId": "asset.character_refine",
+        "dependsOn": [
+          "entities"
+        ],
+        "produces": "CharacterVariants"
+      },
+      {
+        "id": "locations",
+        "promptId": "asset.location_refine",
+        "dependsOn": [
+          "entities"
+        ],
+        "produces": "LocationVariants"
+      },
+      {
+        "id": "props",
+        "promptId": "asset.prop_refine",
+        "dependsOn": [
+          "entities"
+        ],
+        "produces": "PropVariants"
+      },
+      {
+        "id": "shots",
+        "promptId": "shot.plan",
+        "dependsOn": [
+          "script",
+          "characters",
+          "locations",
+          "props"
+        ],
+        "produces": "ShotPlan"
+      },
+      {
+        "id": "shot-polish",
+        "promptId": "shot.cinematic_refine",
+        "dependsOn": [
+          "shots"
+        ],
+        "produces": "RefinedShotPlan"
+      },
+      {
+        "id": "continuity",
+        "promptId": "continuity.snapshot",
+        "dependsOn": [
+          "shot-polish"
+        ],
+        "produces": "ContinuitySnapshot"
+      },
+      {
+        "id": "frames",
+        "promptId": "frame.compose",
+        "dependsOn": [
+          "continuity"
+        ],
+        "produces": "FramePlans"
+      },
+      {
+        "id": "image-prompts",
+        "promptId": "prompt.image_assemble",
+        "dependsOn": [
+          "frames"
+        ],
+        "produces": "ImagePromptRuns"
+      },
+      {
+        "id": "image-candidates",
+        "action": "generate-image-candidates",
+        "dependsOn": [
+          "image-prompts"
+        ],
+        "produces": "ImageCandidateSets"
+      },
+      {
+        "id": "image-review",
+        "promptId": "candidate.critic",
+        "dependsOn": [
+          "image-candidates"
+        ],
+        "produces": "ImageReviewDecision"
+      },
+      {
+        "id": "video-prompts",
+        "promptId": "prompt.video_i2v",
+        "dependsOn": [
+          "image-review"
+        ],
+        "produces": "VideoPromptRuns"
+      },
+      {
+        "id": "video-candidates",
+        "action": "generate-video-candidates",
+        "dependsOn": [
+          "video-prompts"
+        ],
+        "produces": "VideoCandidateSets"
+      },
+      {
+        "id": "video-review",
+        "promptId": "candidate.critic",
+        "dependsOn": [
+          "video-candidates"
+        ],
+        "produces": "VideoReviewDecision"
+      },
+      {
+        "id": "dialogue",
+        "promptId": "dialogue.performance",
+        "dependsOn": [
+          "script",
+          "video-review"
+        ],
+        "produces": "DialoguePlan"
+      },
+      {
+        "id": "sound",
+        "promptId": "audio.sound_design",
+        "dependsOn": [
+          "video-review",
+          "dialogue"
+        ],
+        "produces": "SoundPlan"
+      },
+      {
+        "id": "edit",
+        "promptId": "edit.compose_plan",
+        "dependsOn": [
+          "video-review",
+          "sound"
+        ],
+        "produces": "EditPlan"
+      },
+      {
+        "id": "final-review",
+        "promptId": "qa.final_review",
+        "dependsOn": [
+          "edit"
+        ],
+        "produces": "ReleaseDecision"
+      },
+      {
+        "id": "export",
+        "action": "export-approved-artifacts",
+        "dependsOn": [
+          "final-review"
+        ],
+        "produces": "ExportArtifact"
+      }
+    ],
+    "gates": [
+      {
+        "after": "script",
+        "kind": "human-review",
+        "conditions": [
+          "always"
+        ]
+      },
+      {
+        "after": "characters",
+        "kind": "human-review",
+        "conditions": [
+          "new-character-identity",
+          "identity-change"
+        ]
+      },
+      {
+        "after": "shot-polish",
+        "kind": "human-review",
+        "conditions": [
+          "always"
+        ]
+      },
+      {
+        "after": "image-review",
+        "kind": "human-review",
+        "conditions": [
+          "all-candidates-failed",
+          "manual-mode"
+        ]
+      },
+      {
+        "after": "video-prompts",
+        "kind": "policy-review",
+        "conditions": [
+          "paid-generation",
+          "budget-threshold"
+        ]
+      },
+      {
+        "after": "video-review",
+        "kind": "human-review",
+        "conditions": [
+          "always"
+        ]
+      },
+      {
+        "after": "final-review",
+        "kind": "human-review",
+        "conditions": [
+          "always"
+        ]
+      }
+    ],
+    "pauseConditions": [
+      "rights-risk",
+      "capability-downgrade",
+      "budget-exceeded",
+      "all-candidates-failed",
+      "provider-outcome-unknown",
+      "identity-conflict"
+    ]
+  },
+  {
+    "id": "workflow.one_click_comic_drama",
+    "version": "1.0.0",
+    "title": "AI漫剧混合检查点工作流",
+    "steps": [
+      {
+        "id": "brief",
+        "promptId": "intent.normalize",
+        "dependsOn": [],
+        "produces": "CreativeBrief"
+      },
+      {
+        "id": "outline",
+        "promptId": "story.expand",
+        "dependsOn": [
+          "brief"
+        ],
+        "produces": "StoryOutline"
+      },
+      {
+        "id": "script",
+        "promptId": "script.structure",
+        "dependsOn": [
+          "outline"
+        ],
+        "produces": "ScriptRevision"
+      },
+      {
+        "id": "entities",
+        "promptId": "entity.extract",
+        "dependsOn": [
+          "script"
+        ],
+        "produces": "EntityCandidates"
+      },
+      {
+        "id": "characters",
+        "promptId": "asset.character_refine",
+        "dependsOn": [
+          "entities"
+        ],
+        "produces": "CharacterVariants"
+      },
+      {
+        "id": "locations",
+        "promptId": "asset.location_refine",
+        "dependsOn": [
+          "entities"
+        ],
+        "produces": "LocationVariants"
+      },
+      {
+        "id": "props",
+        "promptId": "asset.prop_refine",
+        "dependsOn": [
+          "entities"
+        ],
+        "produces": "PropVariants"
+      },
+      {
+        "id": "shots",
+        "promptId": "shot.plan",
+        "dependsOn": [
+          "script",
+          "characters",
+          "locations",
+          "props"
+        ],
+        "produces": "ShotPlan"
+      },
+      {
+        "id": "continuity",
+        "promptId": "continuity.snapshot",
+        "dependsOn": [
+          "shots"
+        ],
+        "produces": "ContinuitySnapshot"
+      },
+      {
+        "id": "panels",
+        "promptId": "frame.compose",
+        "dependsOn": [
+          "continuity"
+        ],
+        "produces": "PanelPlans"
+      },
+      {
+        "id": "panel-prompts",
+        "promptId": "prompt.image_assemble",
+        "dependsOn": [
+          "panels"
+        ],
+        "produces": "PanelPromptRuns"
+      },
+      {
+        "id": "panel-candidates",
+        "action": "generate-panel-candidates",
+        "dependsOn": [
+          "panel-prompts"
+        ],
+        "produces": "PanelCandidateSets"
+      },
+      {
+        "id": "panel-review",
+        "promptId": "candidate.critic",
+        "dependsOn": [
+          "panel-candidates"
+        ],
+        "produces": "PanelReviewDecision"
+      },
+      {
+        "id": "dialogue",
+        "promptId": "dialogue.performance",
+        "dependsOn": [
+          "script",
+          "panel-review"
+        ],
+        "produces": "DialogueAndCaptionPlan"
+      },
+      {
+        "id": "compose",
+        "promptId": "edit.compose_plan",
+        "dependsOn": [
+          "panel-review",
+          "dialogue"
+        ],
+        "produces": "ComicTimeline"
+      },
+      {
+        "id": "final-review",
+        "promptId": "qa.final_review",
+        "dependsOn": [
+          "compose"
+        ],
+        "produces": "ReleaseDecision"
+      },
+      {
+        "id": "export",
+        "action": "export-approved-artifacts",
+        "dependsOn": [
+          "final-review"
+        ],
+        "produces": "ComicExportArtifact"
+      }
+    ],
+    "gates": [
+      {
+        "after": "script",
+        "kind": "human-review",
+        "conditions": [
+          "always"
+        ]
+      },
+      {
+        "after": "characters",
+        "kind": "human-review",
+        "conditions": [
+          "new-character-identity",
+          "identity-change"
+        ]
+      },
+      {
+        "after": "shots",
+        "kind": "human-review",
+        "conditions": [
+          "always"
+        ]
+      },
+      {
+        "after": "panel-review",
+        "kind": "human-review",
+        "conditions": [
+          "always"
+        ]
+      },
+      {
+        "after": "final-review",
+        "kind": "human-review",
+        "conditions": [
+          "always"
+        ]
+      }
+    ],
+    "pauseConditions": [
+      "rights-risk",
+      "capability-downgrade",
+      "budget-exceeded",
+      "all-candidates-failed",
+      "provider-outcome-unknown",
+      "identity-conflict",
+      "reading-order-conflict"
+    ]
+  }
+]

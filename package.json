@@ -1,134 +1,103 @@
 {
-  "name": "aigc-video-studio",
-  "version": "1.0.3",
-  "description": "AIGC 视频工作台 - 本地优先、可恢复的桌面视频创作应用",
-  "author": "王从天降",
+  "name": "aigc-director-studio",
+  "version": "2.0.0",
+  "private": true,
+  "description": "AIGC 导演工作室 - clean-room、本地优先、可恢复的 AI 视频生产工作台",
+  "author": "AIGC Director Studio Contributors",
   "license": "MIT",
-  "main": "electron/dist/main.js",
+  "packageManager": "pnpm@11.9.0",
+  "engines": {
+    "node": ">=24.0.0"
+  },
+  "main": "apps/desktop/dist/main.cjs",
   "scripts": {
-    "install:all": "npm install && npm --prefix packages/contracts install && npm --prefix server install && npm --prefix client install",
-    "dev": "node scripts/dev.mjs",
-    "demo": "node scripts/dev.mjs --demo",
-    "test:smoke": "node scripts/run-smoke.mjs && node scripts/demo-acceptance.mjs",
-    "test:demo": "npm --prefix server run build && node scripts/demo-acceptance.mjs",
-    "build:client": "cd client && npm run build",
-    "check:server": "npm --prefix server run preflight && npm run test:smoke",
-    "check:client": "npm --prefix client test && npm --prefix client run build",
-    "security:audit": "npm audit --omit=dev && npm --prefix packages/contracts audit --omit=dev && npm --prefix server audit --omit=dev && npm --prefix client audit --omit=dev",
-    "security:audit:all": "npm audit && npm --prefix packages/contracts audit && npm --prefix server audit && npm --prefix client audit",
-    "build:contracts": "npm --prefix packages/contracts run build",
-    "test:contracts": "npm --prefix packages/contracts test",
-    "build:server": "npm --prefix server run build",
-    "build:electron": "tsc -p electron/tsconfig.build.json",
-    "test:electron": "npm run build:electron && node --test electron/test/*.test.js",
-    "typecheck:electron": "tsc -p electron/tsconfig.json --noEmit",
-    "typecheck": "npm run build:contracts && npm --prefix server run typecheck && npm --prefix client run typecheck && npm run typecheck:electron",
-    "lint": "eslint packages/contracts/src/**/*.ts client/src/**/*.{ts,vue} server/**/*.ts electron/**/*.ts --no-error-on-unmatched-pattern --max-warnings=0",
-    "type-coverage": "node scripts/check-typescript-coverage.mjs",
-    "quality": "npm run typecheck && npm run lint && npm run type-coverage && npm run test:contracts && npm run test:electron && npm run check:server && npm run check:client",
-    "electron:dev": "npm run build:contracts && npm run build:server && npm run build:client && npm run build:electron && electron .",
-    "prepare:desktop": "node scripts/prepare-desktop.mjs",
+    "build:packages": "pnpm --filter @local/ai-video-director-prompt-pack build && pnpm --filter @aigc-director/contracts build && pnpm --filter @aigc-director/model-catalog build && pnpm --filter @aigc-director/domain build && pnpm --filter @aigc-director/agents build && pnpm --filter @aigc-director/providers build && pnpm --filter @aigc-director/media build",
+    "build": "pnpm build:packages && pnpm --filter @aigc-director/server build && pnpm --filter @aigc-director/studio build && pnpm --filter @aigc-director/desktop build",
+    "dev": "pnpm build:packages && node scripts/dev-v2.mjs",
+    "demo": "pnpm dev",
+    "typecheck": "pnpm build:packages && pnpm -r --if-present typecheck",
+    "lint": "eslint apps packages scripts --max-warnings=0",
+    "test": "cross-env DEMO_MODE=1 PROVIDER_NETWORK_DISABLED=1 pnpm -r --if-present test",
+    "test:smoke": "cross-env DEMO_MODE=1 PROVIDER_NETWORK_DISABLED=1 pnpm exec vitest run packages/testing/test/smoke.test.ts",
+    "test:electron": "pnpm --filter @aigc-director/desktop test",
+    "test:ffmpeg": "node scripts/ffmpeg-smoke.mjs",
+    "native:host": "pnpm --filter @aigc-director/server rebuild better-sqlite3",
+    "security:scan": "node scripts/security-check.mjs",
+    "clean-room:check": "node scripts/clean-room-check.mjs",
+    "quality": "pnpm typecheck && pnpm lint && pnpm test && pnpm clean-room:check && pnpm security:scan && pnpm test:ffmpeg && pnpm build && pnpm test:smoke",
+    "electron:dev": "pnpm build && cross-env AIGC_DIRECTOR_SKIP_LEGACY_PURGE=1 electron .",
+    "prepare:package": "node scripts/prepare-package.mjs",
+    "prepare:desktop-stage": "node scripts/prepare-desktop-stage.mjs",
     "electron:preflight": "node scripts/electron-preflight.mjs",
+    "desktop:launch-smoke": "node scripts/desktop-launch-smoke.mjs",
+    "desktop:open:demo": "node scripts/open-packaged-desktop.mjs",
     "release:verify-credentials": "node scripts/verify-release-credentials.mjs",
-    "desktop:install-smoke": "node scripts/desktop-install-smoke.mjs",
-    "update:verify-artifacts": "node scripts/verify-update-artifacts.mjs",
-    "pack": "npm run prepare:desktop && npm run electron:preflight && node scripts/package-preflight.mjs",
-    "dist": "npm run prepare:desktop && npm run electron:preflight && electron-builder",
-    "build:secure": "bash scripts/secure-build.sh"
+    "pack": "pnpm build && pnpm prepare:package && pnpm electron:preflight && pnpm prepare:desktop-stage && node scripts/package-desktop.mjs",
+    "dist": "pnpm build && pnpm prepare:package && pnpm electron:preflight && pnpm prepare:desktop-stage && pnpm release:verify-credentials && electron-builder --projectDir .desktop-stage --config.electronDist=../node_modules/electron/dist"
+  },
+  "devDependencies": {
+    "@electron/notarize": "3.1.1",
+    "@electron/rebuild": "4.2.0",
+    "@types/node": "^24.0.0",
+    "concurrently": "^9.2.1",
+    "cross-env": "^10.0.0",
+    "electron": "40.10.6",
+    "electron-builder": "26.15.3",
+    "eslint": "10.7.0",
+    "eslint-plugin-vue": "10.9.2",
+    "tsx": "4.23.1",
+    "tsup": "8.5.1",
+    "typescript": "5.9.3",
+    "typescript-eslint": "8.64.0",
+    "vitest": "4.1.10",
+    "vue-eslint-parser": "10.4.1"
   },
   "build": {
-    "appId": "com.aigcvideo.studio",
-    "productName": "AIGC 视频工作台",
-    "artifactName": "AIGC-Video-Studio-${version}-${os}-${arch}.${ext}",
+    "appId": "com.aigc.director.studio",
+    "productName": "AIGC 导演工作室",
+    "artifactName": "AIGC-Director-Studio-${version}-${os}-${arch}.${ext}",
     "asar": true,
-    "asarUnpack": [
-      "node_modules/ffmpeg-static/**/*",
-      "node_modules/better-sqlite3/**/*"
-    ],
+    "npmRebuild": false,
     "directories": {
       "output": "dist-electron",
       "buildResources": "resources"
     },
     "files": [
-      "electron/dist/**/*",
-      "node_modules/**/*",
-      "!node_modules/**/*.ts",
-      "!node_modules/**/*.tsx",
-      "!node_modules/**/*.mts",
-      "!node_modules/**/*.cts",
-      "!node_modules/**/*.map",
-      "!node_modules/**/*.tsbuildinfo",
+      "apps/desktop/dist/**/*",
       "package.json"
     ],
     "extraResources": [
-      {
-        "from": "dist-server-jsc",
-        "to": "server",
-        "filter": [
-          "**/*",
-          "!db/*.sqlite",
-          "!db/*.sqlite.tmp",
-          "!db/settings.json",
-          "!uploads/**",
-          "!logs/**",
-          "!test/**",
-          "!**/*.ts",
-          "!**/*.tsx",
-          "!**/*.mts",
-          "!**/*.cts",
-          "!**/*.map",
-          "!**/*.tsbuildinfo",
-          "!**/_backup_*/**"
-        ]
-      },
-      {
-        "from": "client/dist",
-        "to": "client/dist"
-      }
+      { "from": ".package-stage/server", "to": "server" },
+      { "from": "apps/studio/dist", "to": "studio" },
+      { "from": "LICENSE", "to": "LICENSE" },
+      { "from": "THIRD_PARTY_NOTICES.md", "to": "THIRD_PARTY_NOTICES.md" }
     ],
-    "win": {
-      "icon": "resources/icon.ico",
-      "target": [
-        {
-          "target": "nsis",
-          "arch": [
-            "x64"
-          ]
-        }
-      ],
-      "requestedExecutionLevel": "asInvoker"
-    },
+    "afterPack": "scripts/after-pack.mjs",
+    "afterSign": "scripts/notarize.mjs",
+    "publish": [{ "provider": "github", "owner": "728792899-create", "repo": "aigc-video-platform", "releaseType": "draft" }],
     "mac": {
-      "icon": "resources/icon.icns",
-      "target": [
-        {
-          "target": "dmg",
-          "arch": [
-            "x64",
-            "arm64"
-          ]
-        },
-        {
-          "target": "zip",
-          "arch": [
-            "x64",
-            "arm64"
-          ]
-        }
-      ],
+      "target": [{ "target": "dmg", "arch": ["x64", "arm64"] }, { "target": "zip", "arch": ["x64", "arm64"] }],
       "category": "public.app-category.video",
       "hardenedRuntime": true,
-      "gatekeeperAssess": false,
+      "extendInfo": {
+        "NSAppTransportSecurity": {
+          "NSAllowsArbitraryLoads": false,
+          "NSAllowsLocalNetworking": true,
+          "NSExceptionDomains": {
+            "127.0.0.1": {
+              "NSIncludesSubdomains": false,
+              "NSTemporaryExceptionAllowsInsecureHTTPLoads": true
+            }
+          }
+        }
+      },
       "entitlements": "resources/entitlements.mac.plist",
       "entitlementsInherit": "resources/entitlements.mac.plist"
     },
-    "afterSign": "scripts/notarize.js",
-    "afterPack": "scripts/after-pack.js",
-    "publish": {
-      "provider": "github",
-      "owner": "728792899-create",
-      "repo": "aigc-video-platform",
-      "releaseType": "draft"
+    "win": {
+      "target": [{ "target": "nsis", "arch": ["x64"] }],
+      "requestedExecutionLevel": "asInvoker",
+      "signtoolOptions": { "rfc3161TimeStampServer": "http://timestamp.digicert.com" }
     },
     "nsis": {
       "oneClick": false,
@@ -136,32 +105,8 @@
       "allowToChangeInstallationDirectory": true,
       "createDesktopShortcut": true,
       "createStartMenuShortcut": true,
-      "shortcutName": "AIGC 视频工作台",
+      "shortcutName": "AIGC 导演工作室",
       "deleteAppDataOnUninstall": false
     }
-  },
-  "devDependencies": {
-    "@electron/notarize": "3.1.1",
-    "@types/node": "22.20.1",
-    "bytenode": "^1.5.7",
-    "electron": "40.10.6",
-    "electron-builder": "26.15.3",
-    "eslint": "10.7.0",
-    "eslint-plugin-vue": "10.9.2",
-    "javascript-obfuscator": "^5.4.3",
-    "typescript": "5.9.3",
-    "typescript-eslint": "8.64.0",
-    "vue-eslint-parser": "10.4.1"
-  },
-  "dependencies": {
-    "@aigc-video/contracts": "file:packages/contracts",
-    "@sentry/electron": "7.15.0",
-    "better-sqlite3": "12.9.0",
-    "electron-updater": "6.8.9",
-    "ffmpeg-static": "5.3.0",
-    "knex": "3.2.5"
-  },
-  "overrides": {
-    "esbuild": "0.28.1"
   }
 }
