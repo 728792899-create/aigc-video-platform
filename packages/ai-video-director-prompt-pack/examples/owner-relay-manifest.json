@@ -2,7 +2,7 @@
   "id": "owner-relay-example",
   "version": "1.0.0",
   "entry": "owner-relay-adapter.mjs",
-  "sha256": "6d7b22617851d7832326286c4bdf6b049f4d1cec7ff27e69558f07e8b8b4aa85",
+  "sha256": "878a17da9e16692e8d678f5b1b3c51c783a36388fd3d93f3f5516be89d205c52",
   "allowedHosts": [
     "relay.example.com"
   ],

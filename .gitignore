@@ -29,6 +29,15 @@ dist-server-jsc/
 logs/
 uploads/
 media/
+# Keep the first-party media workspace package in source control. The rule
+# above only targets runtime media directories.
+!packages/media/
+!packages/media/package.json
+!packages/media/tsconfig.json
+!packages/media/src/
+!packages/media/src/**
+!packages/media/test/
+!packages/media/test/**
 exports/
 runtime/
 
