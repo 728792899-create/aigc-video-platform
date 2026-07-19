@@ -1,0 +1,64 @@
+{
+  "schemaVersion": "1.0.0",
+  "projectId": "example-short-video",
+  "title": "雨夜旧相机",
+  "workflow": {
+    "id": "workflow.one_click_short_video",
+    "version": "1.0.0"
+  },
+  "input": {
+    "rawIntent": "制作一支45秒竖屏短片：雨夜，快递员归还一台旧相机，却发现相机里的照片来自明天。",
+    "targetDurationSec": 45,
+    "aspectRatio": "9:16",
+    "locale": "zh-CN"
+  },
+  "skills": [
+    {
+      "id": "story.genre.mystery",
+      "version": "1.0.0"
+    },
+    {
+      "id": "art.style.cinematic-realism",
+      "version": "1.0.0"
+    },
+    {
+      "id": "production.vertical-short",
+      "version": "1.0.0"
+    },
+    {
+      "id": "production.character-consistency",
+      "version": "1.0.0"
+    }
+  ],
+  "policy": {
+    "safetyRules": [
+      "不得生成未授权真实人物肖像。"
+    ],
+    "identityLocks": [],
+    "continuityLocks": [],
+    "approvedFacts": [
+      "时长45秒",
+      "竖屏",
+      "雨夜",
+      "旧相机照片来自明天"
+    ],
+    "userRequirements": [
+      "前三秒建立悬念",
+      "结尾留可理解的反转"
+    ],
+    "maxCompiledChars": 30000
+  },
+  "providerSelection": {
+    "image": [
+      "google-gemini",
+      "openai",
+      "volcengine-ark"
+    ],
+    "video": [
+      "google-gemini",
+      "alibaba-model-studio",
+      "minimax"
+    ],
+    "allowCapabilityDowngrade": false
+  }
+}

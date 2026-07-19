@@ -1,0 +1,13 @@
+{
+  "name": "@aigc-director/testing",
+  "version": "2.0.0",
+  "private": true,
+  "type": "module",
+  "scripts": { "typecheck": "tsc --noEmit" },
+  "dependencies": {
+    "@aigc-director/contracts": "workspace:*",
+    "@aigc-director/domain": "workspace:*",
+    "@aigc-director/media": "workspace:*"
+  },
+  "devDependencies": { "tsx": "4.23.1", "typescript": "5.9.3" }
+}

@@ -1,0 +1,25 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1024 1024" role="img" aria-label="AIGC 导演工作室原创应用图标">
+  <defs>
+    <linearGradient id="bg" x1="96" y1="64" x2="928" y2="960" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#111b31"/>
+      <stop offset="1" stop-color="#071019"/>
+    </linearGradient>
+    <linearGradient id="line" x1="238" y1="230" x2="802" y2="808" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#65e6cb"/>
+      <stop offset="1" stop-color="#5aa8ff"/>
+    </linearGradient>
+  </defs>
+  <rect x="48" y="48" width="928" height="928" rx="232" fill="url(#bg)"/>
+  <path d="M286 316 516 218 758 356 710 666 448 810 248 624Z" fill="none" stroke="url(#line)" stroke-width="54" stroke-linecap="round" stroke-linejoin="round"/>
+  <path d="m516 218-68 592M286 316l424 350M758 356 248 624" fill="none" stroke="#8df2dc" stroke-opacity=".42" stroke-width="28" stroke-linecap="round"/>
+  <g fill="#f6fbff" stroke="#65e6cb" stroke-width="24">
+    <circle cx="516" cy="218" r="72"/>
+    <circle cx="286" cy="316" r="72"/>
+    <circle cx="758" cy="356" r="72"/>
+    <circle cx="710" cy="666" r="72"/>
+    <circle cx="448" cy="810" r="72"/>
+    <circle cx="248" cy="624" r="72"/>
+  </g>
+  <circle cx="500" cy="516" r="116" fill="#0b1627" stroke="#5aa8ff" stroke-width="32"/>
+  <path d="m467 449 106 67-106 67Z" fill="#65e6cb"/>
+</svg>

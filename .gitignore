@@ -1,106 +1,59 @@
-# ===== 依赖 =====
 node_modules/
-*/node_modules/
 **/node_modules/
 
-# ===== 构建产物 =====
-dist/
+# Retired 1.x trees may still contain local runtime copies. They are never
+# part of the 2.0 monorepo or a public commit.
+/client/
+/server/
+/electron/
+
+# Build and packaging output
+**/dist/
 dist-electron/
+.package-stage/
+.desktop-stage/
 dist-server-jsc/
-build/
-client/dist/
+*.tgz
+*.dmg
+*.pkg
 *.exe
+*.msi
 *.blockmap
 
-# ===== 数据库 & 运行时数据（含密钥，绝不入库）=====
+# Local runtime and user data
 *.sqlite
+*.sqlite3
 *.sqlite-journal
-server/db/database.sqlite
-server/db/settings.json
-uploads/
-server/uploads/
-**/uploads/
-logs/
+*.db
 *.log
+logs/
+uploads/
+media/
+exports/
+runtime/
 
-# ===== 密钥 / 环境变量 =====
-.env
-.env.*
-*.pem
-*.key
-secrets.json
-
-# ===== 历史备份 / 沙箱 / 临时目录（根除"备份目录留痕"）=====
-_backup_*/
-**/_backup_*/
-_sandbox_*/
-**/_sandbox_*/
-_ui-demo/
-_backup_*.tar.gz
-**/_backup_*.tar.gz
-*.tar.gz
-
-# ===== 编辑器 / 系统 =====
-.DS_Store
-Thumbs.db
-.idea/
-.vscode/
-*.swp
-*.tmp
-
-# ===== 缓存 =====
-.cache/
-.vite/
-*.tsbuildinfo
-# --- Codex workspace safety rules ---
-# Dependencies
-node_modules/
-.venv/
-venv/
-__pycache__/
-*.pyc
-
-# Build outputs
-dist/
-build/
-release/
-dist-electron/
-.nuxt/
-.output/
-frontend-dist/
-
-# Environment / secrets
+# Secrets and signing material
 .env
 .env.*
 !.env.example
-!.env.local-example
-!.env.production.example
+*.pem
+*.key
 *.pfx
 *.cer
-*.key
-*.pem
+secrets.json
 
-# Runtime/user data
-*.sqlite
-*.sqlite3
-*.db
-logs/
-uploads/
-runtime/browser-profile*/
+# Preserved local duplicate files; never stage these automatically.
+* 2
+* 2.*
 
-# Packages / installers
-*.zip
-*.tar.gz
-*.tgz
-*.7z
-*.rar
-*.exe
-*.dmg
-*.pkg
-*.msi
-
-# OS/editor
+# Tool and OS state
 .DS_Store
 Thumbs.db
-.vscode/
 .idea/
+.vscode/
+.cache/
+.vite/
+coverage/
+*.tsbuildinfo
+*.tmp
+*.swp

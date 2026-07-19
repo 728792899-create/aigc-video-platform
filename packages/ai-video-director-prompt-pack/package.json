@@ -1,0 +1,40 @@
+{
+  "name": "@local/ai-video-director-prompt-pack",
+  "version": "0.1.0",
+  "description": "Clean-room prompt, skill, workflow and provider runtime for AI short video and comic-drama production.",
+  "type": "module",
+  "private": true,
+  "license": "UNLICENSED",
+  "engines": {
+    "node": ">=22.13.0"
+  },
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js"
+    }
+  },
+  "files": [
+    "dist",
+    "registry",
+    "examples",
+    "README.md",
+    "PROVENANCE.md"
+  ],
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "check": "tsc -p tsconfig.json --noEmit",
+    "typecheck": "tsc -p tsconfig.json --noEmit",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "validate:pack": "vitest run tests/registry.test.ts"
+  },
+  "dependencies": {
+    "ajv": "8.20.0"
+  },
+  "devDependencies": {
+    "@types/node": "^24.0.0",
+    "typescript": "5.9.3",
+    "vitest": "4.1.10"
+  }
+}

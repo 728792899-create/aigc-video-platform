@@ -1,0 +1,28 @@
+{
+  "id": "relay.example.openai-compatible",
+  "version": "1.0.0",
+  "profileId": "openai-compatible",
+  "baseUrl": "https://relay.example.com/v1",
+  "secretRef": "secret://relay/example",
+  "allowedHosts": [
+    "relay.example.com"
+  ],
+  "models": [
+    {
+      "modelId": "configured-text-model",
+      "modalities": [
+        "text"
+      ],
+      "features": [
+        "text",
+        "structured-output",
+        "bilingual"
+      ],
+      "snapshotVersion": "2026-07-17"
+    }
+  ],
+  "notes": [
+    "普通用户配置；不允许脚本。",
+    "图像和视频能力必须由单独模型Profile显式声明。"
+  ]
+}

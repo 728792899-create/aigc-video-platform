@@ -1,0 +1,2385 @@
+[
+  {
+    "id": "story.genre.urban-emotion",
+    "version": "1.0.0",
+    "title": "都市情感",
+    "family": "story.genre",
+    "purpose": "以现实关系与选择推进冲突，避免只靠误会拖延。",
+    "stages": [
+      "outline",
+      "script",
+      "shot",
+      "review"
+    ],
+    "triggers": [
+      "都市情感"
+    ],
+    "trustLevel": "builtin",
+    "compatiblePromptIds": [
+      "*"
+    ],
+    "policyPatch": {
+      "instructions": [
+        "以现实关系与选择推进冲突，避免只靠误会拖延。",
+        "类型规则只能增强表达，不得改变已批准剧情事实。",
+        "把类型节拍转成可观察动作、对白或镜头。"
+      ],
+      "rubric": [
+        "人物动机可信",
+        "关系变化有因果",
+        "情绪落点可表演"
+      ],
+      "preferredModules": [
+        "story.expand",
+        "script.structure",
+        "shot.plan"
+      ]
+    },
+    "forbiddenOverrides": [
+      "system-safety",
+      "output-schema",
+      "identity-locks",
+      "continuity-locks",
+      "approved-facts",
+      "tool-permissions",
+      "network-policy"
+    ],
+    "provenance": [
+      {
+        "mode": "original",
+        "project": "unified-clean-room-prompt-pack",
+        "license": "Private original work; no upstream text copied",
+        "evidence": "verified",
+        "copied": false,
+        "note": "本Skill为本包独立撰写。"
+      },
+      {
+        "mode": "behavioral-reference",
+        "project": "Toonflow",
+        "commit": "bc61ec7a1b5df31293b286981a5f4ad4635464ee",
+        "license": "License-review-required",
+        "evidence": "verified",
+        "copied": false,
+        "note": "Skill分类与渐进激活行为"
+      },
+      {
+        "mode": "behavioral-reference",
+        "project": "openOii",
+        "commit": "79e652c23cd1c4807611c6aad7254a68cc9da092",
+        "license": "Unlicensed",
+        "evidence": "verified",
+        "copied": false,
+        "note": "Skill policy、评审与路由行为"
+      }
+    ]
+  },
+  {
+    "id": "story.genre.sweet-romance",
+    "version": "1.0.0",
+    "title": "甜宠",
+    "family": "story.genre",
+    "purpose": "建立双向吸引、边界尊重与递进互动，甜点必须推动关系。",
+    "stages": [
+      "outline",
+      "script",
+      "shot",
+      "review"
+    ],
+    "triggers": [
+      "甜宠"
+    ],
+    "trustLevel": "builtin",
+    "compatiblePromptIds": [
+      "*"
+    ],
+    "policyPatch": {
+      "instructions": [
+        "建立双向吸引、边界尊重与递进互动，甜点必须推动关系。",
+        "类型规则只能增强表达，不得改变已批准剧情事实。",
+        "把类型节拍转成可观察动作、对白或镜头。"
+      ],
+      "rubric": [
+        "互动有来有回",
+        "冲突不伤害人格",
+        "高甜节点可视化"
+      ],
+      "preferredModules": [
+        "story.expand",
+        "script.structure",
+        "shot.plan"
+      ]
+    },
+    "forbiddenOverrides": [
+      "system-safety",
+      "output-schema",
+      "identity-locks",
+      "continuity-locks",
+      "approved-facts",
+      "tool-permissions",
+      "network-policy"
+    ],
+    "provenance": [
+      {
+        "mode": "original",
+        "project": "unified-clean-room-prompt-pack",
+        "license": "Private original work; no upstream text copied",
+        "evidence": "verified",
+        "copied": false,
+        "note": "本Skill为本包独立撰写。"
+      },
+      {
+        "mode": "behavioral-reference",
+        "project": "Toonflow",
+        "commit": "bc61ec7a1b5df31293b286981a5f4ad4635464ee",
+        "license": "License-review-required",
+        "evidence": "verified",
+        "copied": false,
+        "note": "Skill分类与渐进激活行为"
+      },
+      {
+        "mode": "behavioral-reference",
+        "project": "openOii",
+        "commit": "79e652c23cd1c4807611c6aad7254a68cc9da092",
+        "license": "Unlicensed",
+        "evidence": "verified",
+        "copied": false,
+        "note": "Skill policy、评审与路由行为"
+      }
+    ]
+  },
+  {
+    "id": "story.genre.comeback",
+    "version": "1.0.0",
+    "title": "逆袭",
+    "family": "story.genre",
+    "purpose": "用能力、选择与代价构成逆转，提前埋设可回收证据。",
+    "stages": [
+      "outline",
+      "script",
+      "shot",
+      "review"
+    ],
+    "triggers": [
+      "逆袭"
+    ],
+    "trustLevel": "builtin",
+    "compatiblePromptIds": [
+      "*"
+    ],
+    "policyPatch": {
+      "instructions": [
+        "用能力、选择与代价构成逆转，提前埋设可回收证据。",
+        "类型规则只能增强表达，不得改变已批准剧情事实。",
+        "把类型节拍转成可观察动作、对白或镜头。"
+      ],
+      "rubric": [
+        "逆转有铺垫",
+        "代价真实",
+        "爽点不依赖降智"
+      ],
+      "preferredModules": [
+        "story.expand",
+        "script.structure",
+        "shot.plan"
+      ]
+    },
+    "forbiddenOverrides": [
+      "system-safety",
+      "output-schema",
+      "identity-locks",
+      "continuity-locks",
+      "approved-facts",
+      "tool-permissions",
+      "network-policy"
+    ],
+    "provenance": [
+      {
+        "mode": "original",
+        "project": "unified-clean-room-prompt-pack",
+        "license": "Private original work; no upstream text copied",
+        "evidence": "verified",
+        "copied": false,
+        "note": "本Skill为本包独立撰写。"
+      },
+      {
+        "mode": "behavioral-reference",
+        "project": "Toonflow",
+        "commit": "bc61ec7a1b5df31293b286981a5f4ad4635464ee",
+        "license": "License-review-required",
+        "evidence": "verified",
+        "copied": false,
+        "note": "Skill分类与渐进激活行为"
+      },
+      {
+        "mode": "behavioral-reference",
+        "project": "openOii",
+        "commit": "79e652c23cd1c4807611c6aad7254a68cc9da092",
+        "license": "Unlicensed",
+        "evidence": "verified",
+        "copied": false,
+        "note": "Skill policy、评审与路由行为"
+      }
+    ]
+  },
+  {
+    "id": "story.genre.mystery",
+    "version": "1.0.0",
+    "title": "悬疑",
+    "family": "story.genre",
+    "purpose": "控制信息披露、线索公平性与误导边界，答案必须可回溯。",
+    "stages": [
+      "outline",
+      "script",
+      "shot",
+      "review"
+    ],
+    "triggers": [
+      "悬疑"
+    ],
+    "trustLevel": "builtin",
+    "compatiblePromptIds": [
+      "*"
+    ],
+    "policyPatch": {
+      "instructions": [
+        "控制信息披露、线索公平性与误导边界，答案必须可回溯。",
+        "类型规则只能增强表达，不得改变已批准剧情事实。",
+        "把类型节拍转成可观察动作、对白或镜头。"
+      ],
+      "rubric": [
+        "线索可验证",
+        "悬念逐级升级",
+        "揭晓解释前文"
+      ],
+      "preferredModules": [
+        "story.expand",
+        "script.structure",
+        "shot.plan"
+      ]
+    },
+    "forbiddenOverrides": [
+      "system-safety",
+      "output-schema",
+      "identity-locks",
+      "continuity-locks",
+      "approved-facts",
+      "tool-permissions",
+      "network-policy"
+    ],
+    "provenance": [
+      {
+        "mode": "original",
+        "project": "unified-clean-room-prompt-pack",
+        "license": "Private original work; no upstream text copied",
+        "evidence": "verified",
+        "copied": false,
+        "note": "本Skill为本包独立撰写。"
+      },
+      {
+        "mode": "behavioral-reference",
+        "project": "Toonflow",
+        "commit": "bc61ec7a1b5df31293b286981a5f4ad4635464ee",
+        "license": "License-review-required",
+        "evidence": "verified",
+        "copied": false,
+        "note": "Skill分类与渐进激活行为"
+      },
+      {
+        "mode": "behavioral-reference",
+        "project": "openOii",
+        "commit": "79e652c23cd1c4807611c6aad7254a68cc9da092",
+        "license": "Unlicensed",
+        "evidence": "verified",
+        "copied": false,
+        "note": "Skill policy、评审与路由行为"
+      }
+    ]
+  },
+  {
+    "id": "story.genre.thriller",
+    "version": "1.0.0",
+    "title": "惊悚",
+    "family": "story.genre",
+    "purpose": "通过空间、声音、时间压力和未知风险制造紧张，避免无意义血腥。",
+    "stages": [
+      "outline",
+      "script",
+      "shot",
+      "review"
+    ],
+    "triggers": [
+      "惊悚"
+    ],
+    "trustLevel": "builtin",
+    "compatiblePromptIds": [
+      "*"
+    ],
+    "policyPatch": {
+      "instructions": [
+        "通过空间、声音、时间压力和未知风险制造紧张，避免无意义血腥。",
+        "类型规则只能增强表达，不得改变已批准剧情事实。",
+        "把类型节拍转成可观察动作、对白或镜头。"
+      ],
+      "rubric": [
+        "威胁逐步显现",
+        "空间关系清楚",
+        "安全政策通过"
+      ],
+      "preferredModules": [
+        "story.expand",
+        "script.structure",
+        "shot.plan"
+      ]
+    },
+    "forbiddenOverrides": [
+      "system-safety",
+      "output-schema",
+      "identity-locks",
+      "continuity-locks",
+      "approved-facts",
+      "tool-permissions",
+      "network-policy"
+    ],
+    "provenance": [
+      {
+        "mode": "original",
+        "project": "unified-clean-room-prompt-pack",
+        "license": "Private original work; no upstream text copied",
+        "evidence": "verified",
+        "copied": false,
+        "note": "本Skill为本包独立撰写。"
+      },
+      {
+        "mode": "behavioral-reference",
+        "project": "Toonflow",
+        "commit": "bc61ec7a1b5df31293b286981a5f4ad4635464ee",
+        "license": "License-review-required",
+        "evidence": "verified",
+        "copied": false,
+        "note": "Skill分类与渐进激活行为"
+      },
+      {
+        "mode": "behavioral-reference",
+        "project": "openOii",
+        "commit": "79e652c23cd1c4807611c6aad7254a68cc9da092",
+        "license": "Unlicensed",
+        "evidence": "verified",
+        "copied": false,
+        "note": "Skill policy、评审与路由行为"
+      }
+    ]
+  },
+  {
+    "id": "story.genre.comedy",
+    "version": "1.0.0",
+    "title": "喜剧",
+    "family": "story.genre",
+    "purpose": "以人物目标、错位和节奏形成笑点，避免弱势群体刻板化。",
+    "stages": [
+      "outline",
+      "script",
+      "shot",
+      "review"
+    ],
+    "triggers": [
+      "喜剧"
+    ],
+    "trustLevel": "builtin",
+    "compatiblePromptIds": [
+      "*"
+    ],
+    "policyPatch": {
+      "instructions": [
+        "以人物目标、错位和节奏形成笑点，避免弱势群体刻板化。",
+        "类型规则只能增强表达，不得改变已批准剧情事实。",
+        "把类型节拍转成可观察动作、对白或镜头。"
+      ],
+      "rubric": [
+        "笑点服务人物",
+        "铺垫与回收明确",
+        "节奏有停顿"
+      ],
+      "preferredModules": [
+        "story.expand",
+        "script.structure",
+        "shot.plan"
+      ]
+    },
+    "forbiddenOverrides": [
+      "system-safety",
+      "output-schema",
+      "identity-locks",
+      "continuity-locks",
+      "approved-facts",
+      "tool-permissions",
+      "network-policy"
+    ],
+    "provenance": [
+      {
+        "mode": "original",
+        "project": "unified-clean-room-prompt-pack",
+        "license": "Private original work; no upstream text copied",
+        "evidence": "verified",
+        "copied": false,
+        "note": "本Skill为本包独立撰写。"
+      },
+      {
+        "mode": "behavioral-reference",
+        "project": "Toonflow",
+        "commit": "bc61ec7a1b5df31293b286981a5f4ad4635464ee",
+        "license": "License-review-required",
+        "evidence": "verified",
+        "copied": false,
+        "note": "Skill分类与渐进激活行为"
+      },
+      {
+        "mode": "behavioral-reference",
+        "project": "openOii",
+        "commit": "79e652c23cd1c4807611c6aad7254a68cc9da092",
+        "license": "Unlicensed",
+        "evidence": "verified",
+        "copied": false,
+        "note": "Skill policy、评审与路由行为"
+      }
+    ]
+  },
+  {
+    "id": "story.genre.family",
+    "version": "1.0.0",
+    "title": "家庭伦理",
+    "family": "story.genre",
+    "purpose": "呈现代际需求、责任和边界，不把复杂关系简化为单方恶人。",
+    "stages": [
+      "outline",
+      "script",
+      "shot",
+      "review"
+    ],
+    "triggers": [
+      "家庭伦理"
+    ],
+    "trustLevel": "builtin",
+    "compatiblePromptIds": [
+      "*"
+    ],
+    "policyPatch": {
+      "instructions": [
+        "呈现代际需求、责任和边界，不把复杂关系简化为单方恶人。",
+        "类型规则只能增强表达，不得改变已批准剧情事实。",
+        "把类型节拍转成可观察动作、对白或镜头。"
+      ],
+      "rubric": [
+        "各方诉求可理解",
+        "冲突可表演",
+        "结局回应核心选择"
+      ],
+      "preferredModules": [
+        "story.expand",
+        "script.structure",
+        "shot.plan"
+      ]
+    },
+    "forbiddenOverrides": [
+      "system-safety",
+      "output-schema",
+      "identity-locks",
+      "continuity-locks",
+      "approved-facts",
+      "tool-permissions",
+      "network-policy"
+    ],
+    "provenance": [
+      {
+        "mode": "original",
+        "project": "unified-clean-room-prompt-pack",
+        "license": "Private original work; no upstream text copied",
+        "evidence": "verified",
+        "copied": false,
+        "note": "本Skill为本包独立撰写。"
+      },
+      {
+        "mode": "behavioral-reference",
+        "project": "Toonflow",
+        "commit": "bc61ec7a1b5df31293b286981a5f4ad4635464ee",
+        "license": "License-review-required",
+        "evidence": "verified",
+        "copied": false,
+        "note": "Skill分类与渐进激活行为"
+      },
+      {
+        "mode": "behavioral-reference",
+        "project": "openOii",
+        "commit": "79e652c23cd1c4807611c6aad7254a68cc9da092",
+        "license": "Unlicensed",
+        "evidence": "verified",
+        "copied": false,
+        "note": "Skill policy、评审与路由行为"
+      }
+    ]
+  },
+  {
+    "id": "story.genre.workplace",
+    "version": "1.0.0",
+    "title": "职场",
+    "family": "story.genre",
+    "purpose": "以任务、权责、资源和职业选择推动戏剧，避免虚假专业细节。",
+    "stages": [
+      "outline",
+      "script",
+      "shot",
+      "review"
+    ],
+    "triggers": [
+      "职场"
+    ],
+    "trustLevel": "builtin",
+    "compatiblePromptIds": [
+      "*"
+    ],
+    "policyPatch": {
+      "instructions": [
+        "以任务、权责、资源和职业选择推动戏剧，避免虚假专业细节。",
+        "类型规则只能增强表达，不得改变已批准剧情事实。",
+        "把类型节拍转成可观察动作、对白或镜头。"
+      ],
+      "rubric": [
+        "权责明确",
+        "专业信息可核验",
+        "成长有行动证据"
+      ],
+      "preferredModules": [
+        "story.expand",
+        "script.structure",
+        "shot.plan"
+      ]
+    },
+    "forbiddenOverrides": [
+      "system-safety",
+      "output-schema",
+      "identity-locks",
+      "continuity-locks",
+      "approved-facts",
+      "tool-permissions",
+      "network-policy"
+    ],
+    "provenance": [
+      {
+        "mode": "original",
+        "project": "unified-clean-room-prompt-pack",
+        "license": "Private original work; no upstream text copied",
+        "evidence": "verified",
+        "copied": false,
+        "note": "本Skill为本包独立撰写。"
+      },
+      {
+        "mode": "behavioral-reference",
+        "project": "Toonflow",
+        "commit": "bc61ec7a1b5df31293b286981a5f4ad4635464ee",
+        "license": "License-review-required",
+        "evidence": "verified",
+        "copied": false,
+        "note": "Skill分类与渐进激活行为"
+      },
+      {
+        "mode": "behavioral-reference",
+        "project": "openOii",
+        "commit": "79e652c23cd1c4807611c6aad7254a68cc9da092",
+        "license": "Unlicensed",
+        "evidence": "verified",
+        "copied": false,
+        "note": "Skill policy、评审与路由行为"
+      }
+    ]
+  },
+  {
+    "id": "story.genre.costume",
+    "version": "1.0.0",
+    "title": "古装",
+    "family": "story.genre",
+    "purpose": "统一时代语汇、礼制、服装和空间逻辑；架空设定也要内部一致。",
+    "stages": [
+      "outline",
+      "script",
+      "shot",
+      "review"
+    ],
+    "triggers": [
+      "古装"
+    ],
+    "trustLevel": "builtin",
+    "compatiblePromptIds": [
+      "*"
+    ],
+    "policyPatch": {
+      "instructions": [
+        "统一时代语汇、礼制、服装和空间逻辑；架空设定也要内部一致。",
+        "类型规则只能增强表达，不得改变已批准剧情事实。",
+        "把类型节拍转成可观察动作、对白或镜头。"
+      ],
+      "rubric": [
+        "时代约束一致",
+        "称谓稳定",
+        "道具与礼制不穿帮"
+      ],
+      "preferredModules": [
+        "story.expand",
+        "script.structure",
+        "shot.plan"
+      ]
+    },
+    "forbiddenOverrides": [
+      "system-safety",
+      "output-schema",
+      "identity-locks",
+      "continuity-locks",
+      "approved-facts",
+      "tool-permissions",
+      "network-policy"
+    ],
+    "provenance": [
+      {
+        "mode": "original",
+        "project": "unified-clean-room-prompt-pack",
+        "license": "Private original work; no upstream text copied",
+        "evidence": "verified",
+        "copied": false,
+        "note": "本Skill为本包独立撰写。"
+      },
+      {
+        "mode": "behavioral-reference",
+        "project": "Toonflow",
+        "commit": "bc61ec7a1b5df31293b286981a5f4ad4635464ee",
+        "license": "License-review-required",
+        "evidence": "verified",
+        "copied": false,
+        "note": "Skill分类与渐进激活行为"
+      },
+      {
+        "mode": "behavioral-reference",
+        "project": "openOii",
+        "commit": "79e652c23cd1c4807611c6aad7254a68cc9da092",
+        "license": "Unlicensed",
+        "evidence": "verified",
+        "copied": false,
+        "note": "Skill policy、评审与路由行为"
+      }
+    ]
+  },
+  {
+    "id": "story.genre.wuxia-xianxia",
+    "version": "1.0.0",
+    "title": "武侠仙侠",
+    "family": "story.genre",
+    "purpose": "定义力量规则、招式代价和空间调度，动作服务人物选择。",
+    "stages": [
+      "outline",
+      "script",
+      "shot",
+      "review"
+    ],
+    "triggers": [
+      "武侠仙侠"
+    ],
+    "trustLevel": "builtin",
+    "compatiblePromptIds": [
+      "*"
+    ],
+    "policyPatch": {
+      "instructions": [
+        "定义力量规则、招式代价和空间调度，动作服务人物选择。",
+        "类型规则只能增强表达，不得改变已批准剧情事实。",
+        "把类型节拍转成可观察动作、对白或镜头。"
+      ],
+      "rubric": [
+        "力量体系不漂移",
+        "动作可分镜",
+        "升级有代价"
+      ],
+      "preferredModules": [
+        "story.expand",
+        "script.structure",
+        "shot.plan"
+      ]
+    },
+    "forbiddenOverrides": [
+      "system-safety",
+      "output-schema",
+      "identity-locks",
+      "continuity-locks",
+      "approved-facts",
+      "tool-permissions",
+      "network-policy"
+    ],
+    "provenance": [
+      {
+        "mode": "original",
+        "project": "unified-clean-room-prompt-pack",
+        "license": "Private original work; no upstream text copied",
+        "evidence": "verified",
+        "copied": false,
+        "note": "本Skill为本包独立撰写。"
+      },
+      {
+        "mode": "behavioral-reference",
+        "project": "Toonflow",
+        "commit": "bc61ec7a1b5df31293b286981a5f4ad4635464ee",
+        "license": "License-review-required",
+        "evidence": "verified",
+        "copied": false,
+        "note": "Skill分类与渐进激活行为"
+      },
+      {
+        "mode": "behavioral-reference",
+        "project": "openOii",
+        "commit": "79e652c23cd1c4807611c6aad7254a68cc9da092",
+        "license": "Unlicensed",
+        "evidence": "verified",
+        "copied": false,
+        "note": "Skill policy、评审与路由行为"
+      }
+    ]
+  },
+  {
+    "id": "story.genre.science-fiction",
+    "version": "1.0.0",
+    "title": "科幻",
+    "family": "story.genre",
+    "purpose": "先定义技术规则、限制和社会影响，再让人物选择检验设定。",
+    "stages": [
+      "outline",
+      "script",
+      "shot",
+      "review"
+    ],
+    "triggers": [
+      "科幻"
+    ],
+    "trustLevel": "builtin",
+    "compatiblePromptIds": [
+      "*"
+    ],
+    "policyPatch": {
+      "instructions": [
+        "先定义技术规则、限制和社会影响，再让人物选择检验设定。",
+        "类型规则只能增强表达，不得改变已批准剧情事实。",
+        "把类型节拍转成可观察动作、对白或镜头。"
+      ],
+      "rubric": [
+        "规则自洽",
+        "科技不万能",
+        "视觉奇观服务主题"
+      ],
+      "preferredModules": [
+        "story.expand",
+        "script.structure",
+        "shot.plan"
+      ]
+    },
+    "forbiddenOverrides": [
+      "system-safety",
+      "output-schema",
+      "identity-locks",
+      "continuity-locks",
+      "approved-facts",
+      "tool-permissions",
+      "network-policy"
+    ],
+    "provenance": [
+      {
+        "mode": "original",
+        "project": "unified-clean-room-prompt-pack",
+        "license": "Private original work; no upstream text copied",
+        "evidence": "verified",
+        "copied": false,
+        "note": "本Skill为本包独立撰写。"
+      },
+      {
+        "mode": "behavioral-reference",
+        "project": "Toonflow",
+        "commit": "bc61ec7a1b5df31293b286981a5f4ad4635464ee",
+        "license": "License-review-required",
+        "evidence": "verified",
+        "copied": false,
+        "note": "Skill分类与渐进激活行为"
+      },
+      {
+        "mode": "behavioral-reference",
+        "project": "openOii",
+        "commit": "79e652c23cd1c4807611c6aad7254a68cc9da092",
+        "license": "Unlicensed",
+        "evidence": "verified",
+        "copied": false,
+        "note": "Skill policy、评审与路由行为"
+      }
+    ]
+  },
+  {
+    "id": "story.genre.healing-growth",
+    "version": "1.0.0",
+    "title": "治愈成长",
+    "family": "story.genre",
+    "purpose": "用小行动、关系支持和可观察变化呈现成长，避免口号式说教。",
+    "stages": [
+      "outline",
+      "script",
+      "shot",
+      "review"
+    ],
+    "triggers": [
+      "治愈成长"
+    ],
+    "trustLevel": "builtin",
+    "compatiblePromptIds": [
+      "*"
+    ],
+    "policyPatch": {
+      "instructions": [
+        "用小行动、关系支持和可观察变化呈现成长，避免口号式说教。",
+        "类型规则只能增强表达，不得改变已批准剧情事实。",
+        "把类型节拍转成可观察动作、对白或镜头。"
+      ],
+      "rubric": [
+        "变化渐进",
+        "情绪留白有效",
+        "收束不虚假完美"
+      ],
+      "preferredModules": [
+        "story.expand",
+        "script.structure",
+        "shot.plan"
+      ]
+    },
+    "forbiddenOverrides": [
+      "system-safety",
+      "output-schema",
+      "identity-locks",
+      "continuity-locks",
+      "approved-facts",
+      "tool-permissions",
+      "network-policy"
+    ],
+    "provenance": [
+      {
+        "mode": "original",
+        "project": "unified-clean-room-prompt-pack",
+        "license": "Private original work; no upstream text copied",
+        "evidence": "verified",
+        "copied": false,
+        "note": "本Skill为本包独立撰写。"
+      },
+      {
+        "mode": "behavioral-reference",
+        "project": "Toonflow",
+        "commit": "bc61ec7a1b5df31293b286981a5f4ad4635464ee",
+        "license": "License-review-required",
+        "evidence": "verified",
+        "copied": false,
+        "note": "Skill分类与渐进激活行为"
+      },
+      {
+        "mode": "behavioral-reference",
+        "project": "openOii",
+        "commit": "79e652c23cd1c4807611c6aad7254a68cc9da092",
+        "license": "Unlicensed",
+        "evidence": "verified",
+        "copied": false,
+        "note": "Skill policy、评审与路由行为"
+      }
+    ]
+  },
+  {
+    "id": "art.style.cinematic-realism",
+    "version": "1.0.0",
+    "title": "电影写实",
+    "family": "art.style",
+    "purpose": "使用可信材质、物理光线、镜头景深和克制调色；保持人物真实比例。",
+    "stages": [
+      "style",
+      "assets",
+      "frame",
+      "render",
+      "review"
+    ],
+    "triggers": [
+      "电影写实"
+    ],
+    "trustLevel": "builtin",
+    "compatiblePromptIds": [
+      "*"
+    ],
+    "policyPatch": {
+      "instructions": [
+        "使用可信材质、物理光线、镜头景深和克制调色；保持人物真实比例。",
+        "只描述可观察视觉特征，不模仿具体在世艺术家。",
+        "人物身份、资产版本和连续性优先于风格变化。"
+      ],
+      "rubric": [
+        "材质可信",
+        "光源有依据",
+        "不过度磨皮或塑料感"
+      ],
+      "preferredModules": [
+        "style.analyze",
+        "frame.compose",
+        "prompt.image_assemble"
+      ]
+    },
+    "forbiddenOverrides": [
+      "system-safety",
+      "output-schema",
+      "identity-locks",
+      "continuity-locks",
+      "approved-facts",
+      "tool-permissions",
+      "network-policy"
+    ],
+    "provenance": [
+      {
+        "mode": "original",
+        "project": "unified-clean-room-prompt-pack",
+        "license": "Private original work; no upstream text copied",
+        "evidence": "verified",
+        "copied": false,
+        "note": "本Skill为本包独立撰写。"
+      },
+      {
+        "mode": "behavioral-reference",
+        "project": "Toonflow",
+        "commit": "bc61ec7a1b5df31293b286981a5f4ad4635464ee",
+        "license": "License-review-required",
+        "evidence": "verified",
+        "copied": false,
+        "note": "Skill分类与渐进激活行为"
+      },
+      {
+        "mode": "behavioral-reference",
+        "project": "LumenX Studio",
+        "commit": "743683387384fb1d9fff72038933e7249d416076",
+        "license": "MIT",
+        "evidence": "verified",
+        "copied": false,
+        "note": "分层资产、连续性与Prompt润色行为"
+      },
+      {
+        "mode": "behavioral-reference",
+        "project": "LocalMiniDrama",
+        "commit": "92c66dd75688d83aac3ccc31bb51378613122cbc",
+        "license": "MIT",
+        "evidence": "verified",
+        "copied": false,
+        "note": "多节拍、身份锚点与连续性行为"
+      }
+    ]
+  },
+  {
+    "id": "art.style.commercial",
+    "version": "1.0.0",
+    "title": "商业广告",
+    "family": "art.style",
+    "purpose": "突出单一卖点、清晰产品层级、干净构图与品牌安全留白。",
+    "stages": [
+      "style",
+      "assets",
+      "frame",
+      "render",
+      "review"
+    ],
+    "triggers": [
+      "商业广告"
+    ],
+    "trustLevel": "builtin",
+    "compatiblePromptIds": [
+      "*"
+    ],
+    "policyPatch": {
+      "instructions": [
+        "突出单一卖点、清晰产品层级、干净构图与品牌安全留白。",
+        "只描述可观察视觉特征，不模仿具体在世艺术家。",
+        "人物身份、资产版本和连续性优先于风格变化。"
+      ],
+      "rubric": [
+        "主体一眼可读",
+        "卖点不被特效遮挡",
+        "文字安全区充足"
+      ],
+      "preferredModules": [
+        "style.analyze",
+        "frame.compose",
+        "prompt.image_assemble"
+      ]
+    },
+    "forbiddenOverrides": [
+      "system-safety",
+      "output-schema",
+      "identity-locks",
+      "continuity-locks",
+      "approved-facts",
+      "tool-permissions",
+      "network-policy"
+    ],
+    "provenance": [
+      {
+        "mode": "original",
+        "project": "unified-clean-room-prompt-pack",
+        "license": "Private original work; no upstream text copied",
+        "evidence": "verified",
+        "copied": false,
+        "note": "本Skill为本包独立撰写。"
+      },
+      {
+        "mode": "behavioral-reference",
+        "project": "Toonflow",
+        "commit": "bc61ec7a1b5df31293b286981a5f4ad4635464ee",
+        "license": "License-review-required",
+        "evidence": "verified",
+        "copied": false,
+        "note": "Skill分类与渐进激活行为"
+      },
+      {
+        "mode": "behavioral-reference",
+        "project": "LumenX Studio",
+        "commit": "743683387384fb1d9fff72038933e7249d416076",
+        "license": "MIT",
+        "evidence": "verified",
+        "copied": false,
+        "note": "分层资产、连续性与Prompt润色行为"
+      },
+      {
+        "mode": "behavioral-reference",
+        "project": "LocalMiniDrama",
+        "commit": "92c66dd75688d83aac3ccc31bb51378613122cbc",
+        "license": "MIT",
+        "evidence": "verified",
+        "copied": false,
+        "note": "多节拍、身份锚点与连续性行为"
+      }
+    ]
+  },
+  {
+    "id": "art.style.japanese-2d",
+    "version": "1.0.0",
+    "title": "日系二维动画",
+    "family": "art.style",
+    "purpose": "使用二维线条、分层色块、明确轮廓和动画化表演，不模仿具体艺术家。",
+    "stages": [
+      "style",
+      "assets",
+      "frame",
+      "render",
+      "review"
+    ],
+    "triggers": [
+      "日系二维动画"
+    ],
+    "trustLevel": "builtin",
+    "compatiblePromptIds": [
+      "*"
+    ],
+    "policyPatch": {
+      "instructions": [
+        "使用二维线条、分层色块、明确轮廓和动画化表演，不模仿具体艺术家。",
+        "只描述可观察视觉特征，不模仿具体在世艺术家。",
+        "人物身份、资产版本和连续性优先于风格变化。"
+      ],
+      "rubric": [
+        "轮廓稳定",
+        "色块干净",
+        "角色表情可持续"
+      ],
+      "preferredModules": [
+        "style.analyze",
+        "frame.compose",
+        "prompt.image_assemble"
+      ]
+    },
+    "forbiddenOverrides": [
+      "system-safety",
+      "output-schema",
+      "identity-locks",
+      "continuity-locks",
+      "approved-facts",
+      "tool-permissions",
+      "network-policy"
+    ],
+    "provenance": [
+      {
+        "mode": "original",
+        "project": "unified-clean-room-prompt-pack",
+        "license": "Private original work; no upstream text copied",
+        "evidence": "verified",
+        "copied": false,
+        "note": "本Skill为本包独立撰写。"
+      },
+      {
+        "mode": "behavioral-reference",
+        "project": "Toonflow",
+        "commit": "bc61ec7a1b5df31293b286981a5f4ad4635464ee",
+        "license": "License-review-required",
+        "evidence": "verified",
+        "copied": false,
+        "note": "Skill分类与渐进激活行为"
+      },
+      {
+        "mode": "behavioral-reference",
+        "project": "LumenX Studio",
+        "commit": "743683387384fb1d9fff72038933e7249d416076",
+        "license": "MIT",
+        "evidence": "verified",
+        "copied": false,
+        "note": "分层资产、连续性与Prompt润色行为"
+      },
+      {
+        "mode": "behavioral-reference",
+        "project": "LocalMiniDrama",
+        "commit": "92c66dd75688d83aac3ccc31bb51378613122cbc",
+        "license": "MIT",
+        "evidence": "verified",
+        "copied": false,
+        "note": "多节拍、身份锚点与连续性行为"
+      }
+    ]
+  },
+  {
+    "id": "art.style.chinese-2d",
+    "version": "1.0.0",
+    "title": "国风二维动画",
+    "family": "art.style",
+    "purpose": "结合中国视觉元素、克制线色与空间意境，避免无依据符号堆砌。",
+    "stages": [
+      "style",
+      "assets",
+      "frame",
+      "render",
+      "review"
+    ],
+    "triggers": [
+      "国风二维动画"
+    ],
+    "trustLevel": "builtin",
+    "compatiblePromptIds": [
+      "*"
+    ],
+    "policyPatch": {
+      "instructions": [
+        "结合中国视觉元素、克制线色与空间意境，避免无依据符号堆砌。",
+        "只描述可观察视觉特征，不模仿具体在世艺术家。",
+        "人物身份、资产版本和连续性优先于风格变化。"
+      ],
+      "rubric": [
+        "文化元素有语境",
+        "留白服务叙事",
+        "服饰道具统一"
+      ],
+      "preferredModules": [
+        "style.analyze",
+        "frame.compose",
+        "prompt.image_assemble"
+      ]
+    },
+    "forbiddenOverrides": [
+      "system-safety",
+      "output-schema",
+      "identity-locks",
+      "continuity-locks",
+      "approved-facts",
+      "tool-permissions",
+      "network-policy"
+    ],
+    "provenance": [
+      {
+        "mode": "original",
+        "project": "unified-clean-room-prompt-pack",
+        "license": "Private original work; no upstream text copied",
+        "evidence": "verified",
+        "copied": false,
+        "note": "本Skill为本包独立撰写。"
+      },
+      {
+        "mode": "behavioral-reference",
+        "project": "Toonflow",
+        "commit": "bc61ec7a1b5df31293b286981a5f4ad4635464ee",
+        "license": "License-review-required",
+        "evidence": "verified",
+        "copied": false,
+        "note": "Skill分类与渐进激活行为"
+      },
+      {
+        "mode": "behavioral-reference",
+        "project": "LumenX Studio",
+        "commit": "743683387384fb1d9fff72038933e7249d416076",
+        "license": "MIT",
+        "evidence": "verified",
+        "copied": false,
+        "note": "分层资产、连续性与Prompt润色行为"
+      },
+      {
+        "mode": "behavioral-reference",
+        "project": "LocalMiniDrama",
+        "commit": "92c66dd75688d83aac3ccc31bb51378613122cbc",
+        "license": "MIT",
+        "evidence": "verified",
+        "copied": false,
+        "note": "多节拍、身份锚点与连续性行为"
+      }
+    ]
+  },
+  {
+    "id": "art.style.3d-animation",
+    "version": "1.0.0",
+    "title": "三维动画",
+    "family": "art.style",
+    "purpose": "统一建模比例、材质响应、灯光和镜头尺度，保持角色拓扑视觉稳定。",
+    "stages": [
+      "style",
+      "assets",
+      "frame",
+      "render",
+      "review"
+    ],
+    "triggers": [
+      "三维动画"
+    ],
+    "trustLevel": "builtin",
+    "compatiblePromptIds": [
+      "*"
+    ],
+    "policyPatch": {
+      "instructions": [
+        "统一建模比例、材质响应、灯光和镜头尺度，保持角色拓扑视觉稳定。",
+        "只描述可观察视觉特征，不模仿具体在世艺术家。",
+        "人物身份、资产版本和连续性优先于风格变化。"
+      ],
+      "rubric": [
+        "模型比例稳定",
+        "材质与光照一致",
+        "运动有重量"
+      ],
+      "preferredModules": [
+        "style.analyze",
+        "frame.compose",
+        "prompt.image_assemble"
+      ]
+    },
+    "forbiddenOverrides": [
+      "system-safety",
+      "output-schema",
+      "identity-locks",
+      "continuity-locks",
+      "approved-facts",
+      "tool-permissions",
+      "network-policy"
+    ],
+    "provenance": [
+      {
+        "mode": "original",
+        "project": "unified-clean-room-prompt-pack",
+        "license": "Private original work; no upstream text copied",
+        "evidence": "verified",
+        "copied": false,
+        "note": "本Skill为本包独立撰写。"
+      },
+      {
+        "mode": "behavioral-reference",
+        "project": "Toonflow",
+        "commit": "bc61ec7a1b5df31293b286981a5f4ad4635464ee",
+        "license": "License-review-required",
+        "evidence": "verified",
+        "copied": false,
+        "note": "Skill分类与渐进激活行为"
+      },
+      {
+        "mode": "behavioral-reference",
+        "project": "LumenX Studio",
+        "commit": "743683387384fb1d9fff72038933e7249d416076",
+        "license": "MIT",
+        "evidence": "verified",
+        "copied": false,
+        "note": "分层资产、连续性与Prompt润色行为"
+      },
+      {
+        "mode": "behavioral-reference",
+        "project": "LocalMiniDrama",
+        "commit": "92c66dd75688d83aac3ccc31bb51378613122cbc",
+        "license": "MIT",
+        "evidence": "verified",
+        "copied": false,
+        "note": "多节拍、身份锚点与连续性行为"
+      }
+    ]
+  },
+  {
+    "id": "art.style.cel-shaded",
+    "version": "1.0.0",
+    "title": "赛璐璐",
+    "family": "art.style",
+    "purpose": "使用清晰色阶、受控阴影边界和统一描边，避免写实噪声破坏风格。",
+    "stages": [
+      "style",
+      "assets",
+      "frame",
+      "render",
+      "review"
+    ],
+    "triggers": [
+      "赛璐璐"
+    ],
+    "trustLevel": "builtin",
+    "compatiblePromptIds": [
+      "*"
+    ],
+    "policyPatch": {
+      "instructions": [
+        "使用清晰色阶、受控阴影边界和统一描边，避免写实噪声破坏风格。",
+        "只描述可观察视觉特征，不模仿具体在世艺术家。",
+        "人物身份、资产版本和连续性优先于风格变化。"
+      ],
+      "rubric": [
+        "色阶数量稳定",
+        "描边一致",
+        "阴影方向统一"
+      ],
+      "preferredModules": [
+        "style.analyze",
+        "frame.compose",
+        "prompt.image_assemble"
+      ]
+    },
+    "forbiddenOverrides": [
+      "system-safety",
+      "output-schema",
+      "identity-locks",
+      "continuity-locks",
+      "approved-facts",
+      "tool-permissions",
+      "network-policy"
+    ],
+    "provenance": [
+      {
+        "mode": "original",
+        "project": "unified-clean-room-prompt-pack",
+        "license": "Private original work; no upstream text copied",
+        "evidence": "verified",
+        "copied": false,
+        "note": "本Skill为本包独立撰写。"
+      },
+      {
+        "mode": "behavioral-reference",
+        "project": "Toonflow",
+        "commit": "bc61ec7a1b5df31293b286981a5f4ad4635464ee",
+        "license": "License-review-required",
+        "evidence": "verified",
+        "copied": false,
+        "note": "Skill分类与渐进激活行为"
+      },
+      {
+        "mode": "behavioral-reference",
+        "project": "LumenX Studio",
+        "commit": "743683387384fb1d9fff72038933e7249d416076",
+        "license": "MIT",
+        "evidence": "verified",
+        "copied": false,
+        "note": "分层资产、连续性与Prompt润色行为"
+      },
+      {
+        "mode": "behavioral-reference",
+        "project": "LocalMiniDrama",
+        "commit": "92c66dd75688d83aac3ccc31bb51378613122cbc",
+        "license": "MIT",
+        "evidence": "verified",
+        "copied": false,
+        "note": "多节拍、身份锚点与连续性行为"
+      }
+    ]
+  },
+  {
+    "id": "art.style.manga-ink",
+    "version": "1.0.0",
+    "title": "漫画墨线",
+    "family": "art.style",
+    "purpose": "使用黑白或有限色、线条粗细、网点和分格节奏，保证阅读方向。",
+    "stages": [
+      "style",
+      "assets",
+      "frame",
+      "render",
+      "review"
+    ],
+    "triggers": [
+      "漫画墨线"
+    ],
+    "trustLevel": "builtin",
+    "compatiblePromptIds": [
+      "*"
+    ],
+    "policyPatch": {
+      "instructions": [
+        "使用黑白或有限色、线条粗细、网点和分格节奏，保证阅读方向。",
+        "只描述可观察视觉特征，不模仿具体在世艺术家。",
+        "人物身份、资产版本和连续性优先于风格变化。"
+      ],
+      "rubric": [
+        "线条层级清楚",
+        "网点不过载",
+        "分格视线连续"
+      ],
+      "preferredModules": [
+        "style.analyze",
+        "frame.compose",
+        "prompt.image_assemble"
+      ]
+    },
+    "forbiddenOverrides": [
+      "system-safety",
+      "output-schema",
+      "identity-locks",
+      "continuity-locks",
+      "approved-facts",
+      "tool-permissions",
+      "network-policy"
+    ],
+    "provenance": [
+      {
+        "mode": "original",
+        "project": "unified-clean-room-prompt-pack",
+        "license": "Private original work; no upstream text copied",
+        "evidence": "verified",
+        "copied": false,
+        "note": "本Skill为本包独立撰写。"
+      },
+      {
+        "mode": "behavioral-reference",
+        "project": "Toonflow",
+        "commit": "bc61ec7a1b5df31293b286981a5f4ad4635464ee",
+        "license": "License-review-required",
+        "evidence": "verified",
+        "copied": false,
+        "note": "Skill分类与渐进激活行为"
+      },
+      {
+        "mode": "behavioral-reference",
+        "project": "LumenX Studio",
+        "commit": "743683387384fb1d9fff72038933e7249d416076",
+        "license": "MIT",
+        "evidence": "verified",
+        "copied": false,
+        "note": "分层资产、连续性与Prompt润色行为"
+      },
+      {
+        "mode": "behavioral-reference",
+        "project": "LocalMiniDrama",
+        "commit": "92c66dd75688d83aac3ccc31bb51378613122cbc",
+        "license": "MIT",
+        "evidence": "verified",
+        "copied": false,
+        "note": "多节拍、身份锚点与连续性行为"
+      }
+    ]
+  },
+  {
+    "id": "art.style.watercolor",
+    "version": "1.0.0",
+    "title": "水彩绘本",
+    "family": "art.style",
+    "purpose": "使用透明叠色、纸张纹理、柔和边缘和保留高光，同时锁定角色轮廓。",
+    "stages": [
+      "style",
+      "assets",
+      "frame",
+      "render",
+      "review"
+    ],
+    "triggers": [
+      "水彩绘本"
+    ],
+    "trustLevel": "builtin",
+    "compatiblePromptIds": [
+      "*"
+    ],
+    "policyPatch": {
+      "instructions": [
+        "使用透明叠色、纸张纹理、柔和边缘和保留高光，同时锁定角色轮廓。",
+        "只描述可观察视觉特征，不模仿具体在世艺术家。",
+        "人物身份、资产版本和连续性优先于风格变化。"
+      ],
+      "rubric": [
+        "水色自然扩散",
+        "主体仍可识别",
+        "色彩不脏"
+      ],
+      "preferredModules": [
+        "style.analyze",
+        "frame.compose",
+        "prompt.image_assemble"
+      ]
+    },
+    "forbiddenOverrides": [
+      "system-safety",
+      "output-schema",
+      "identity-locks",
+      "continuity-locks",
+      "approved-facts",
+      "tool-permissions",
+      "network-policy"
+    ],
+    "provenance": [
+      {
+        "mode": "original",
+        "project": "unified-clean-room-prompt-pack",
+        "license": "Private original work; no upstream text copied",
+        "evidence": "verified",
+        "copied": false,
+        "note": "本Skill为本包独立撰写。"
+      },
+      {
+        "mode": "behavioral-reference",
+        "project": "Toonflow",
+        "commit": "bc61ec7a1b5df31293b286981a5f4ad4635464ee",
+        "license": "License-review-required",
+        "evidence": "verified",
+        "copied": false,
+        "note": "Skill分类与渐进激活行为"
+      },
+      {
+        "mode": "behavioral-reference",
+        "project": "LumenX Studio",
+        "commit": "743683387384fb1d9fff72038933e7249d416076",
+        "license": "MIT",
+        "evidence": "verified",
+        "copied": false,
+        "note": "分层资产、连续性与Prompt润色行为"
+      },
+      {
+        "mode": "behavioral-reference",
+        "project": "LocalMiniDrama",
+        "commit": "92c66dd75688d83aac3ccc31bb51378613122cbc",
+        "license": "MIT",
+        "evidence": "verified",
+        "copied": false,
+        "note": "多节拍、身份锚点与连续性行为"
+      }
+    ]
+  },
+  {
+    "id": "art.style.ink-wash",
+    "version": "1.0.0",
+    "title": "水墨",
+    "family": "art.style",
+    "purpose": "使用墨色层次、虚实、气韵与留白，人物和关键道具仍保持可辨身份。",
+    "stages": [
+      "style",
+      "assets",
+      "frame",
+      "render",
+      "review"
+    ],
+    "triggers": [
+      "水墨"
+    ],
+    "trustLevel": "builtin",
+    "compatiblePromptIds": [
+      "*"
+    ],
+    "policyPatch": {
+      "instructions": [
+        "使用墨色层次、虚实、气韵与留白，人物和关键道具仍保持可辨身份。",
+        "只描述可观察视觉特征，不模仿具体在世艺术家。",
+        "人物身份、资产版本和连续性优先于风格变化。"
+      ],
+      "rubric": [
+        "墨色层次明确",
+        "留白有功能",
+        "身份锚点不丢失"
+      ],
+      "preferredModules": [
+        "style.analyze",
+        "frame.compose",
+        "prompt.image_assemble"
+      ]
+    },
+    "forbiddenOverrides": [
+      "system-safety",
+      "output-schema",
+      "identity-locks",
+      "continuity-locks",
+      "approved-facts",
+      "tool-permissions",
+      "network-policy"
+    ],
+    "provenance": [
+      {
+        "mode": "original",
+        "project": "unified-clean-room-prompt-pack",
+        "license": "Private original work; no upstream text copied",
+        "evidence": "verified",
+        "copied": false,
+        "note": "本Skill为本包独立撰写。"
+      },
+      {
+        "mode": "behavioral-reference",
+        "project": "Toonflow",
+        "commit": "bc61ec7a1b5df31293b286981a5f4ad4635464ee",
+        "license": "License-review-required",
+        "evidence": "verified",
+        "copied": false,
+        "note": "Skill分类与渐进激活行为"
+      },
+      {
+        "mode": "behavioral-reference",
+        "project": "LumenX Studio",
+        "commit": "743683387384fb1d9fff72038933e7249d416076",
+        "license": "MIT",
+        "evidence": "verified",
+        "copied": false,
+        "note": "分层资产、连续性与Prompt润色行为"
+      },
+      {
+        "mode": "behavioral-reference",
+        "project": "LocalMiniDrama",
+        "commit": "92c66dd75688d83aac3ccc31bb51378613122cbc",
+        "license": "MIT",
+        "evidence": "verified",
+        "copied": false,
+        "note": "多节拍、身份锚点与连续性行为"
+      }
+    ]
+  },
+  {
+    "id": "art.style.clay-stop-motion",
+    "version": "1.0.0",
+    "title": "黏土定格",
+    "family": "art.style",
+    "purpose": "表现手工材质、微小指纹、分帧运动和实体布景尺度。",
+    "stages": [
+      "style",
+      "assets",
+      "frame",
+      "render",
+      "review"
+    ],
+    "triggers": [
+      "黏土定格"
+    ],
+    "trustLevel": "builtin",
+    "compatiblePromptIds": [
+      "*"
+    ],
+    "policyPatch": {
+      "instructions": [
+        "表现手工材质、微小指纹、分帧运动和实体布景尺度。",
+        "只描述可观察视觉特征，不模仿具体在世艺术家。",
+        "人物身份、资产版本和连续性优先于风格变化。"
+      ],
+      "rubric": [
+        "材质统一",
+        "运动有定格节奏",
+        "布景尺度可信"
+      ],
+      "preferredModules": [
+        "style.analyze",
+        "frame.compose",
+        "prompt.image_assemble"
+      ]
+    },
+    "forbiddenOverrides": [
+      "system-safety",
+      "output-schema",
+      "identity-locks",
+      "continuity-locks",
+      "approved-facts",
+      "tool-permissions",
+      "network-policy"
+    ],
+    "provenance": [
+      {
+        "mode": "original",
+        "project": "unified-clean-room-prompt-pack",
+        "license": "Private original work; no upstream text copied",
+        "evidence": "verified",
+        "copied": false,
+        "note": "本Skill为本包独立撰写。"
+      },
+      {
+        "mode": "behavioral-reference",
+        "project": "Toonflow",
+        "commit": "bc61ec7a1b5df31293b286981a5f4ad4635464ee",
+        "license": "License-review-required",
+        "evidence": "verified",
+        "copied": false,
+        "note": "Skill分类与渐进激活行为"
+      },
+      {
+        "mode": "behavioral-reference",
+        "project": "LumenX Studio",
+        "commit": "743683387384fb1d9fff72038933e7249d416076",
+        "license": "MIT",
+        "evidence": "verified",
+        "copied": false,
+        "note": "分层资产、连续性与Prompt润色行为"
+      },
+      {
+        "mode": "behavioral-reference",
+        "project": "LocalMiniDrama",
+        "commit": "92c66dd75688d83aac3ccc31bb51378613122cbc",
+        "license": "MIT",
+        "evidence": "verified",
+        "copied": false,
+        "note": "多节拍、身份锚点与连续性行为"
+      }
+    ]
+  },
+  {
+    "id": "art.style.cyber-neon",
+    "version": "1.0.0",
+    "title": "赛博霓虹",
+    "family": "art.style",
+    "purpose": "使用受控霓虹、湿地反射、技术界面和高低明度层级，避免视觉信息过载。",
+    "stages": [
+      "style",
+      "assets",
+      "frame",
+      "render",
+      "review"
+    ],
+    "triggers": [
+      "赛博霓虹"
+    ],
+    "trustLevel": "builtin",
+    "compatiblePromptIds": [
+      "*"
+    ],
+    "policyPatch": {
+      "instructions": [
+        "使用受控霓虹、湿地反射、技术界面和高低明度层级，避免视觉信息过载。",
+        "只描述可观察视觉特征，不模仿具体在世艺术家。",
+        "人物身份、资产版本和连续性优先于风格变化。"
+      ],
+      "rubric": [
+        "主体从霓虹中分离",
+        "界面不抢叙事",
+        "色彩层级清楚"
+      ],
+      "preferredModules": [
+        "style.analyze",
+        "frame.compose",
+        "prompt.image_assemble"
+      ]
+    },
+    "forbiddenOverrides": [
+      "system-safety",
+      "output-schema",
+      "identity-locks",
+      "continuity-locks",
+      "approved-facts",
+      "tool-permissions",
+      "network-policy"
+    ],
+    "provenance": [
+      {
+        "mode": "original",
+        "project": "unified-clean-room-prompt-pack",
+        "license": "Private original work; no upstream text copied",
+        "evidence": "verified",
+        "copied": false,
+        "note": "本Skill为本包独立撰写。"
+      },
+      {
+        "mode": "behavioral-reference",
+        "project": "Toonflow",
+        "commit": "bc61ec7a1b5df31293b286981a5f4ad4635464ee",
+        "license": "License-review-required",
+        "evidence": "verified",
+        "copied": false,
+        "note": "Skill分类与渐进激活行为"
+      },
+      {
+        "mode": "behavioral-reference",
+        "project": "LumenX Studio",
+        "commit": "743683387384fb1d9fff72038933e7249d416076",
+        "license": "MIT",
+        "evidence": "verified",
+        "copied": false,
+        "note": "分层资产、连续性与Prompt润色行为"
+      },
+      {
+        "mode": "behavioral-reference",
+        "project": "LocalMiniDrama",
+        "commit": "92c66dd75688d83aac3ccc31bb51378613122cbc",
+        "license": "MIT",
+        "evidence": "verified",
+        "copied": false,
+        "note": "多节拍、身份锚点与连续性行为"
+      }
+    ]
+  },
+  {
+    "id": "production.vertical-short",
+    "version": "1.0.0",
+    "title": "竖屏短视频",
+    "family": "production",
+    "purpose": "以9:16安全区、前三秒钩子、近中景主体和移动端字幕可读性组织镜头。",
+    "stages": [
+      "brief",
+      "outline",
+      "script",
+      "shot",
+      "frame",
+      "render",
+      "compose",
+      "review"
+    ],
+    "triggers": [
+      "竖屏短视频"
+    ],
+    "trustLevel": "builtin",
+    "compatiblePromptIds": [
+      "*"
+    ],
+    "policyPatch": {
+      "instructions": [
+        "以9:16安全区、前三秒钩子、近中景主体和移动端字幕可读性组织镜头。",
+        "只追加生产策略和评测标准，不直接写数据库或批准产物。",
+        "任何能力降级、权利风险或身份冲突都必须暂停。"
+      ],
+      "rubric": [
+        "开场三秒有信息增量",
+        "人物面部与字幕不冲突",
+        "节奏适配目标时长"
+      ],
+      "preferredModules": []
+    },
+    "forbiddenOverrides": [
+      "system-safety",
+      "output-schema",
+      "identity-locks",
+      "continuity-locks",
+      "approved-facts",
+      "tool-permissions",
+      "network-policy"
+    ],
+    "provenance": [
+      {
+        "mode": "original",
+        "project": "unified-clean-room-prompt-pack",
+        "license": "Private original work; no upstream text copied",
+        "evidence": "verified",
+        "copied": false,
+        "note": "本Skill为本包独立撰写。"
+      },
+      {
+        "mode": "behavioral-reference",
+        "project": "Toonflow",
+        "commit": "bc61ec7a1b5df31293b286981a5f4ad4635464ee",
+        "license": "License-review-required",
+        "evidence": "verified",
+        "copied": false,
+        "note": "Skill分类与渐进激活行为"
+      },
+      {
+        "mode": "behavioral-reference",
+        "project": "LocalMiniDrama",
+        "commit": "92c66dd75688d83aac3ccc31bb51378613122cbc",
+        "license": "MIT",
+        "evidence": "verified",
+        "copied": false,
+        "note": "多节拍、身份锚点与连续性行为"
+      }
+    ]
+  },
+  {
+    "id": "production.horizontal-film",
+    "version": "1.0.0",
+    "title": "横屏短片",
+    "family": "production",
+    "purpose": "以16:9空间调度、环境关系和更长呼吸组织镜头，避免把竖屏构图直接拉宽。",
+    "stages": [
+      "brief",
+      "outline",
+      "script",
+      "shot",
+      "frame",
+      "render",
+      "compose",
+      "review"
+    ],
+    "triggers": [
+      "横屏短片"
+    ],
+    "trustLevel": "builtin",
+    "compatiblePromptIds": [
+      "*"
+    ],
+    "policyPatch": {
+      "instructions": [
+        "以16:9空间调度、环境关系和更长呼吸组织镜头，避免把竖屏构图直接拉宽。",
+        "只追加生产策略和评测标准，不直接写数据库或批准产物。",
+        "任何能力降级、权利风险或身份冲突都必须暂停。"
+      ],
+      "rubric": [
+        "空间建立充分",
+        "景别变化有目的",
+        "画面边缘有叙事信息"
+      ],
+      "preferredModules": []
+    },
+    "forbiddenOverrides": [
+      "system-safety",
+      "output-schema",
+      "identity-locks",
+      "continuity-locks",
+      "approved-facts",
+      "tool-permissions",
+      "network-policy"
+    ],
+    "provenance": [
+      {
+        "mode": "original",
+        "project": "unified-clean-room-prompt-pack",
+        "license": "Private original work; no upstream text copied",
+        "evidence": "verified",
+        "copied": false,
+        "note": "本Skill为本包独立撰写。"
+      },
+      {
+        "mode": "behavioral-reference",
+        "project": "LumenX Studio",
+        "commit": "743683387384fb1d9fff72038933e7249d416076",
+        "license": "MIT",
+        "evidence": "verified",
+        "copied": false,
+        "note": "分层资产、连续性与Prompt润色行为"
+      },
+      {
+        "mode": "behavioral-reference",
+        "project": "LocalMiniDrama",
+        "commit": "92c66dd75688d83aac3ccc31bb51378613122cbc",
+        "license": "MIT",
+        "evidence": "verified",
+        "copied": false,
+        "note": "多节拍、身份锚点与连续性行为"
+      }
+    ]
+  },
+  {
+    "id": "production.comic-panels",
+    "version": "1.0.0",
+    "title": "漫剧分格",
+    "family": "production",
+    "purpose": "按阅读顺序、视线、对白气泡安全区和分格节奏设计画面，保持角色朝向。",
+    "stages": [
+      "shot",
+      "frame",
+      "render",
+      "compose",
+      "review"
+    ],
+    "triggers": [
+      "漫剧分格"
+    ],
+    "trustLevel": "builtin",
+    "compatiblePromptIds": [
+      "*"
+    ],
+    "policyPatch": {
+      "instructions": [
+        "按阅读顺序、视线、对白气泡安全区和分格节奏设计画面，保持角色朝向。",
+        "只追加生产策略和评测标准，不直接写数据库或批准产物。",
+        "任何能力降级、权利风险或身份冲突都必须暂停。"
+      ],
+      "rubric": [
+        "阅读顺序无歧义",
+        "对白与主体不遮挡",
+        "分格间动作承接"
+      ],
+      "preferredModules": []
+    },
+    "forbiddenOverrides": [
+      "system-safety",
+      "output-schema",
+      "identity-locks",
+      "continuity-locks",
+      "approved-facts",
+      "tool-permissions",
+      "network-policy"
+    ],
+    "provenance": [
+      {
+        "mode": "original",
+        "project": "unified-clean-room-prompt-pack",
+        "license": "Private original work; no upstream text copied",
+        "evidence": "verified",
+        "copied": false,
+        "note": "本Skill为本包独立撰写。"
+      },
+      {
+        "mode": "behavioral-reference",
+        "project": "Toonflow",
+        "commit": "bc61ec7a1b5df31293b286981a5f4ad4635464ee",
+        "license": "License-review-required",
+        "evidence": "verified",
+        "copied": false,
+        "note": "Skill分类与渐进激活行为"
+      },
+      {
+        "mode": "behavioral-reference",
+        "project": "LocalMiniDrama",
+        "commit": "92c66dd75688d83aac3ccc31bb51378613122cbc",
+        "license": "MIT",
+        "evidence": "verified",
+        "copied": false,
+        "note": "多节拍、身份锚点与连续性行为"
+      }
+    ]
+  },
+  {
+    "id": "production.novel-adaptation",
+    "version": "1.0.0",
+    "title": "小说改编",
+    "family": "production",
+    "purpose": "保留来源跨度和核心因果，把内心叙述转换为动作、对白、声音或可见选择。",
+    "stages": [
+      "import",
+      "outline",
+      "script",
+      "shot"
+    ],
+    "triggers": [
+      "小说改编"
+    ],
+    "trustLevel": "builtin",
+    "compatiblePromptIds": [
+      "*"
+    ],
+    "policyPatch": {
+      "instructions": [
+        "保留来源跨度和核心因果，把内心叙述转换为动作、对白、声音或可见选择。",
+        "只追加生产策略和评测标准，不直接写数据库或批准产物。",
+        "任何能力降级、权利风险或身份冲突都必须暂停。"
+      ],
+      "rubric": [
+        "来源映射完整",
+        "不擅自改核心结局",
+        "内心信息完成视听转译"
+      ],
+      "preferredModules": []
+    },
+    "forbiddenOverrides": [
+      "system-safety",
+      "output-schema",
+      "identity-locks",
+      "continuity-locks",
+      "approved-facts",
+      "tool-permissions",
+      "network-policy"
+    ],
+    "provenance": [
+      {
+        "mode": "original",
+        "project": "unified-clean-room-prompt-pack",
+        "license": "Private original work; no upstream text copied",
+        "evidence": "verified",
+        "copied": false,
+        "note": "本Skill为本包独立撰写。"
+      },
+      {
+        "mode": "behavioral-reference",
+        "project": "Director AI",
+        "commit": "dd812c756f0ee0533cd7d36042a16144ab1b1202",
+        "license": "Unlicensed",
+        "evidence": "verified",
+        "copied": false,
+        "note": "小说导入、导演规划行为"
+      },
+      {
+        "mode": "behavioral-reference",
+        "project": "openOii",
+        "commit": "79e652c23cd1c4807611c6aad7254a68cc9da092",
+        "license": "Unlicensed",
+        "evidence": "verified",
+        "copied": false,
+        "note": "Skill policy、评审与路由行为"
+      }
+    ]
+  },
+  {
+    "id": "production.character-consistency",
+    "version": "1.0.0",
+    "title": "角色一致性",
+    "family": "production",
+    "purpose": "强制注入角色版本、身份锚点、允许变体和禁改项；候选必须逐项检查。",
+    "stages": [
+      "assets",
+      "continuity",
+      "frame",
+      "render",
+      "review"
+    ],
+    "triggers": [
+      "角色一致性"
+    ],
+    "trustLevel": "builtin",
+    "compatiblePromptIds": [
+      "*"
+    ],
+    "policyPatch": {
+      "instructions": [
+        "强制注入角色版本、身份锚点、允许变体和禁改项；候选必须逐项检查。",
+        "只追加生产策略和评测标准，不直接写数据库或批准产物。",
+        "任何能力降级、权利风险或身份冲突都必须暂停。"
+      ],
+      "rubric": [
+        "面孔与年龄稳定",
+        "服装变化有版本",
+        "引用角色不混淆"
+      ],
+      "preferredModules": []
+    },
+    "forbiddenOverrides": [
+      "system-safety",
+      "output-schema",
+      "identity-locks",
+      "continuity-locks",
+      "approved-facts",
+      "tool-permissions",
+      "network-policy"
+    ],
+    "provenance": [
+      {
+        "mode": "original",
+        "project": "unified-clean-room-prompt-pack",
+        "license": "Private original work; no upstream text copied",
+        "evidence": "verified",
+        "copied": false,
+        "note": "本Skill为本包独立撰写。"
+      },
+      {
+        "mode": "behavioral-reference",
+        "project": "LumenX Studio",
+        "commit": "743683387384fb1d9fff72038933e7249d416076",
+        "license": "MIT",
+        "evidence": "verified",
+        "copied": false,
+        "note": "分层资产、连续性与Prompt润色行为"
+      },
+      {
+        "mode": "behavioral-reference",
+        "project": "LocalMiniDrama",
+        "commit": "92c66dd75688d83aac3ccc31bb51378613122cbc",
+        "license": "MIT",
+        "evidence": "verified",
+        "copied": false,
+        "note": "多节拍、身份锚点与连续性行为"
+      }
+    ]
+  },
+  {
+    "id": "production.spatial-continuity",
+    "version": "1.0.0",
+    "title": "空间连续性",
+    "family": "production",
+    "purpose": "锁定入口、光源、屏幕方向、角色站位和场景关键地标。",
+    "stages": [
+      "assets",
+      "continuity",
+      "shot",
+      "frame",
+      "render",
+      "review"
+    ],
+    "triggers": [
+      "空间连续性"
+    ],
+    "trustLevel": "builtin",
+    "compatiblePromptIds": [
+      "*"
+    ],
+    "policyPatch": {
+      "instructions": [
+        "锁定入口、光源、屏幕方向、角色站位和场景关键地标。",
+        "只追加生产策略和评测标准，不直接写数据库或批准产物。",
+        "任何能力降级、权利风险或身份冲突都必须暂停。"
+      ],
+      "rubric": [
+        "轴线可解释",
+        "入口出口一致",
+        "光源方向连续"
+      ],
+      "preferredModules": []
+    },
+    "forbiddenOverrides": [
+      "system-safety",
+      "output-schema",
+      "identity-locks",
+      "continuity-locks",
+      "approved-facts",
+      "tool-permissions",
+      "network-policy"
+    ],
+    "provenance": [
+      {
+        "mode": "original",
+        "project": "unified-clean-room-prompt-pack",
+        "license": "Private original work; no upstream text copied",
+        "evidence": "verified",
+        "copied": false,
+        "note": "本Skill为本包独立撰写。"
+      },
+      {
+        "mode": "behavioral-reference",
+        "project": "LumenX Studio",
+        "commit": "743683387384fb1d9fff72038933e7249d416076",
+        "license": "MIT",
+        "evidence": "verified",
+        "copied": false,
+        "note": "分层资产、连续性与Prompt润色行为"
+      },
+      {
+        "mode": "behavioral-reference",
+        "project": "LocalMiniDrama",
+        "commit": "92c66dd75688d83aac3ccc31bb51378613122cbc",
+        "license": "MIT",
+        "evidence": "verified",
+        "copied": false,
+        "note": "多节拍、身份锚点与连续性行为"
+      }
+    ]
+  },
+  {
+    "id": "production.prop-continuity",
+    "version": "1.0.0",
+    "title": "道具状态连续性",
+    "family": "production",
+    "purpose": "锁定道具版本、比例、持有者、左右手、损耗与交接状态。",
+    "stages": [
+      "assets",
+      "continuity",
+      "shot",
+      "frame",
+      "render",
+      "review"
+    ],
+    "triggers": [
+      "道具状态连续性"
+    ],
+    "trustLevel": "builtin",
+    "compatiblePromptIds": [
+      "*"
+    ],
+    "policyPatch": {
+      "instructions": [
+        "锁定道具版本、比例、持有者、左右手、损耗与交接状态。",
+        "只追加生产策略和评测标准，不直接写数据库或批准产物。",
+        "任何能力降级、权利风险或身份冲突都必须暂停。"
+      ],
+      "rubric": [
+        "道具不消失",
+        "左右手与位置承接",
+        "状态变化有事件依据"
+      ],
+      "preferredModules": []
+    },
+    "forbiddenOverrides": [
+      "system-safety",
+      "output-schema",
+      "identity-locks",
+      "continuity-locks",
+      "approved-facts",
+      "tool-permissions",
+      "network-policy"
+    ],
+    "provenance": [
+      {
+        "mode": "original",
+        "project": "unified-clean-room-prompt-pack",
+        "license": "Private original work; no upstream text copied",
+        "evidence": "verified",
+        "copied": false,
+        "note": "本Skill为本包独立撰写。"
+      },
+      {
+        "mode": "behavioral-reference",
+        "project": "LumenX Studio",
+        "commit": "743683387384fb1d9fff72038933e7249d416076",
+        "license": "MIT",
+        "evidence": "verified",
+        "copied": false,
+        "note": "分层资产、连续性与Prompt润色行为"
+      },
+      {
+        "mode": "behavioral-reference",
+        "project": "LocalMiniDrama",
+        "commit": "92c66dd75688d83aac3ccc31bb51378613122cbc",
+        "license": "MIT",
+        "evidence": "verified",
+        "copied": false,
+        "note": "多节拍、身份锚点与连续性行为"
+      }
+    ]
+  },
+  {
+    "id": "production.candidate-supervision",
+    "version": "1.0.0",
+    "title": "候选质量监督",
+    "family": "production",
+    "purpose": "先独立评分再排序；硬失败单列，允许全部不合格并建议最小重做范围。",
+    "stages": [
+      "review"
+    ],
+    "triggers": [
+      "候选质量监督"
+    ],
+    "trustLevel": "builtin",
+    "compatiblePromptIds": [
+      "*"
+    ],
+    "policyPatch": {
+      "instructions": [
+        "先独立评分再排序；硬失败单列，允许全部不合格并建议最小重做范围。",
+        "只追加生产策略和评测标准，不直接写数据库或批准产物。",
+        "任何能力降级、权利风险或身份冲突都必须暂停。"
+      ],
+      "rubric": [
+        "评分有可观察证据",
+        "不受候选顺序影响",
+        "硬失败不被平均分掩盖"
+      ],
+      "preferredModules": []
+    },
+    "forbiddenOverrides": [
+      "system-safety",
+      "output-schema",
+      "identity-locks",
+      "continuity-locks",
+      "approved-facts",
+      "tool-permissions",
+      "network-policy"
+    ],
+    "provenance": [
+      {
+        "mode": "original",
+        "project": "unified-clean-room-prompt-pack",
+        "license": "Private original work; no upstream text copied",
+        "evidence": "verified",
+        "copied": false,
+        "note": "本Skill为本包独立撰写。"
+      },
+      {
+        "mode": "behavioral-reference",
+        "project": "openOii",
+        "commit": "79e652c23cd1c4807611c6aad7254a68cc9da092",
+        "license": "Unlicensed",
+        "evidence": "verified",
+        "copied": false,
+        "note": "Skill policy、评审与路由行为"
+      },
+      {
+        "mode": "behavioral-reference",
+        "project": "Toonflow",
+        "commit": "bc61ec7a1b5df31293b286981a5f4ad4635464ee",
+        "license": "License-review-required",
+        "evidence": "verified",
+        "copied": false,
+        "note": "Skill分类与渐进激活行为"
+      }
+    ]
+  }
+]

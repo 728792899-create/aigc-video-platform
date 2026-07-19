@@ -1,0 +1,61 @@
+{
+  "schemaVersion": "1.0.0",
+  "projectId": "example-comic-drama",
+  "title": "纸鹤来信",
+  "workflow": {
+    "id": "workflow.one_click_comic_drama",
+    "version": "1.0.0"
+  },
+  "input": {
+    "rawIntent": "制作6格国风治愈漫剧：女孩收到童年自己折的纸鹤。",
+    "panelCount": 6,
+    "readingDirection": "left-to-right",
+    "locale": "zh-CN"
+  },
+  "skills": [
+    {
+      "id": "story.genre.healing-growth",
+      "version": "1.0.0"
+    },
+    {
+      "id": "art.style.chinese-2d",
+      "version": "1.0.0"
+    },
+    {
+      "id": "production.comic-panels",
+      "version": "1.0.0"
+    },
+    {
+      "id": "production.prop-continuity",
+      "version": "1.0.0"
+    }
+  ],
+  "policy": {
+    "safetyRules": [
+      "不得模仿具体在世艺术家。"
+    ],
+    "identityLocks": [
+      "女孩身份锚点跨6格不变"
+    ],
+    "continuityLocks": [
+      "纸鹤折痕和颜色保持一致"
+    ],
+    "approvedFacts": [
+      "共6格",
+      "纸鹤由童年自己折叠"
+    ],
+    "userRequirements": [
+      "对白简短",
+      "结尾温暖但不过度说教"
+    ],
+    "maxCompiledChars": 30000
+  },
+  "providerSelection": {
+    "image": [
+      "alibaba-model-studio",
+      "google-gemini",
+      "openai"
+    ],
+    "allowCapabilityDowngrade": false
+  }
+}

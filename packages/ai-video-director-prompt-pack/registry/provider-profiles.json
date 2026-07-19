@@ -1,0 +1,524 @@
+[
+  {
+    "id": "openai",
+    "version": "1.0.0",
+    "title": "OpenAI",
+    "family": "openai",
+    "transport": "native",
+    "baseUrl": "https://api.openai.com",
+    "auth": {
+      "scheme": "bearer",
+      "header": "Authorization",
+      "secretRefRequired": true
+    },
+    "modalities": [
+      "text",
+      "image",
+      "video"
+    ],
+    "features": [
+      "text",
+      "structured-output",
+      "bilingual",
+      "image-generation",
+      "video-generation",
+      "first-frame",
+      "reference-images",
+      "async"
+    ],
+    "async": true,
+    "supportsCancel": false,
+    "supportsReconcile": true,
+    "prompt": {
+      "languages": [
+        "zh",
+        "en"
+      ],
+      "negativePrompt": "field",
+      "referenceSyntax": "api-field"
+    },
+    "notes": [
+      "视频、图像和文本端点按能力配置；模型ID由项目能力目录提供。"
+    ]
+  },
+  {
+    "id": "google-gemini",
+    "version": "1.0.0",
+    "title": "Google Gemini / Veo",
+    "family": "google-gemini",
+    "transport": "native",
+    "baseUrl": "https://generativelanguage.googleapis.com",
+    "auth": {
+      "scheme": "api-key",
+      "header": "x-goog-api-key",
+      "secretRefRequired": true
+    },
+    "modalities": [
+      "text",
+      "image",
+      "video"
+    ],
+    "features": [
+      "text",
+      "structured-output",
+      "bilingual",
+      "image-generation",
+      "video-generation",
+      "first-frame",
+      "last-frame",
+      "reference-images",
+      "async"
+    ],
+    "async": true,
+    "supportsCancel": false,
+    "supportsReconcile": true,
+    "prompt": {
+      "languages": [
+        "zh",
+        "en"
+      ],
+      "negativePrompt": "inline",
+      "referenceSyntax": "api-field"
+    },
+    "notes": [
+      "长任务按operation name轮询；具体模型与区域保存在能力快照。"
+    ]
+  },
+  {
+    "id": "anthropic",
+    "version": "1.0.0",
+    "title": "Anthropic",
+    "family": "anthropic",
+    "transport": "native",
+    "baseUrl": "https://api.anthropic.com",
+    "auth": {
+      "scheme": "api-key",
+      "header": "x-api-key",
+      "secretRefRequired": true
+    },
+    "modalities": [
+      "text"
+    ],
+    "features": [
+      "text",
+      "structured-output",
+      "bilingual",
+      "vision-optional"
+    ],
+    "async": false,
+    "supportsCancel": false,
+    "supportsReconcile": false,
+    "prompt": {
+      "languages": [
+        "zh",
+        "en"
+      ],
+      "negativePrompt": "unsupported",
+      "referenceSyntax": "api-field"
+    },
+    "notes": [
+      "仅承担剧本、计划、润色和评审等文本任务。"
+    ]
+  },
+  {
+    "id": "runway",
+    "version": "1.0.0",
+    "title": "Runway",
+    "family": "runway",
+    "transport": "native",
+    "baseUrl": "https://api.dev.runwayml.com",
+    "auth": {
+      "scheme": "bearer",
+      "header": "Authorization",
+      "secretRefRequired": true
+    },
+    "modalities": [
+      "image",
+      "video",
+      "audio"
+    ],
+    "features": [
+      "image-generation",
+      "video-generation",
+      "first-frame",
+      "reference-images",
+      "async"
+    ],
+    "async": true,
+    "supportsCancel": true,
+    "supportsReconcile": true,
+    "prompt": {
+      "languages": [
+        "zh",
+        "en"
+      ],
+      "negativePrompt": "field",
+      "referenceSyntax": "api-field"
+    },
+    "notes": [
+      "统一为异步任务；模型能力由项目配置。"
+    ]
+  },
+  {
+    "id": "volcengine-ark",
+    "version": "1.0.0",
+    "title": "火山方舟",
+    "family": "volcengine-ark",
+    "transport": "native",
+    "baseUrl": "https://ark.cn-beijing.volces.com",
+    "auth": {
+      "scheme": "bearer",
+      "header": "Authorization",
+      "secretRefRequired": true
+    },
+    "modalities": [
+      "text",
+      "image",
+      "video"
+    ],
+    "features": [
+      "text",
+      "structured-output",
+      "bilingual",
+      "image-generation",
+      "video-generation",
+      "first-frame",
+      "reference-images",
+      "async"
+    ],
+    "async": true,
+    "supportsCancel": false,
+    "supportsReconcile": true,
+    "prompt": {
+      "languages": [
+        "zh",
+        "en"
+      ],
+      "negativePrompt": "field",
+      "referenceSyntax": "api-field"
+    },
+    "notes": [
+      "endpoint、region和模型ID必须同属项目配置。"
+    ]
+  },
+  {
+    "id": "alibaba-model-studio",
+    "version": "1.0.0",
+    "title": "阿里云百炼 / 万相",
+    "family": "alibaba-model-studio",
+    "transport": "native",
+    "baseUrl": "https://dashscope.aliyuncs.com",
+    "auth": {
+      "scheme": "bearer",
+      "header": "Authorization",
+      "secretRefRequired": true
+    },
+    "modalities": [
+      "text",
+      "image",
+      "video",
+      "audio"
+    ],
+    "features": [
+      "text",
+      "structured-output",
+      "bilingual",
+      "image-generation",
+      "video-generation",
+      "first-frame",
+      "last-frame",
+      "reference-images",
+      "multi-beat",
+      "audio",
+      "async"
+    ],
+    "async": true,
+    "supportsCancel": false,
+    "supportsReconcile": true,
+    "prompt": {
+      "languages": [
+        "zh",
+        "en"
+      ],
+      "negativePrompt": "field",
+      "referenceSyntax": "api-field"
+    },
+    "notes": [
+      "区域、workspace endpoint与API key必须匹配。"
+    ]
+  },
+  {
+    "id": "kling",
+    "version": "1.0.0",
+    "title": "可灵开放平台",
+    "family": "kling",
+    "transport": "native",
+    "baseUrl": "https://api-singapore.klingai.com",
+    "auth": {
+      "scheme": "bearer",
+      "header": "Authorization",
+      "secretRefRequired": true
+    },
+    "modalities": [
+      "image",
+      "video"
+    ],
+    "features": [
+      "image-generation",
+      "video-generation",
+      "first-frame",
+      "reference-images",
+      "async"
+    ],
+    "async": true,
+    "supportsCancel": false,
+    "supportsReconcile": true,
+    "prompt": {
+      "languages": [
+        "zh",
+        "en"
+      ],
+      "negativePrompt": "field",
+      "referenceSyntax": "api-field"
+    },
+    "notes": [
+      "只开放配置模型明确声明的能力；不根据网页功能推断API。"
+    ]
+  },
+  {
+    "id": "minimax",
+    "version": "1.0.0",
+    "title": "MiniMax",
+    "family": "minimax",
+    "transport": "native",
+    "baseUrl": "https://api.minimaxi.com",
+    "auth": {
+      "scheme": "bearer",
+      "header": "Authorization",
+      "secretRefRequired": true
+    },
+    "modalities": [
+      "text",
+      "image",
+      "video",
+      "audio"
+    ],
+    "features": [
+      "text",
+      "structured-output",
+      "bilingual",
+      "image-generation",
+      "video-generation",
+      "first-frame",
+      "last-frame",
+      "reference-images",
+      "subject-reference",
+      "audio",
+      "async"
+    ],
+    "async": true,
+    "supportsCancel": false,
+    "supportsReconcile": true,
+    "prompt": {
+      "languages": [
+        "zh",
+        "en"
+      ],
+      "negativePrompt": "inline",
+      "referenceSyntax": "api-field"
+    },
+    "notes": [
+      "视频创建、状态查询和文件下载是分离阶段。"
+    ]
+  },
+  {
+    "id": "tencent-hunyuan",
+    "version": "1.0.0",
+    "title": "腾讯混元",
+    "family": "tencent-hunyuan",
+    "transport": "native",
+    "baseUrl": "https://hunyuan.tencentcloudapi.com",
+    "auth": {
+      "scheme": "custom",
+      "header": "Authorization",
+      "secretRefRequired": true
+    },
+    "modalities": [
+      "text",
+      "image"
+    ],
+    "features": [
+      "text",
+      "structured-output",
+      "bilingual",
+      "image-generation",
+      "vision-optional"
+    ],
+    "async": false,
+    "supportsCancel": false,
+    "supportsReconcile": false,
+    "prompt": {
+      "languages": [
+        "zh",
+        "en"
+      ],
+      "negativePrompt": "field",
+      "referenceSyntax": "api-field"
+    },
+    "notes": [
+      "首版不默认声明视频生成；仅按确认的项目能力Profile开放。"
+    ]
+  },
+  {
+    "id": "fal-ai",
+    "version": "1.0.0",
+    "title": "fal.ai",
+    "family": "fal-ai",
+    "transport": "native",
+    "baseUrl": "https://queue.fal.run",
+    "auth": {
+      "scheme": "api-key",
+      "header": "Authorization",
+      "secretRefRequired": true
+    },
+    "modalities": [
+      "image",
+      "video",
+      "audio"
+    ],
+    "features": [
+      "image-generation",
+      "video-generation",
+      "first-frame",
+      "reference-images",
+      "audio",
+      "async"
+    ],
+    "async": true,
+    "supportsCancel": true,
+    "supportsReconcile": true,
+    "prompt": {
+      "languages": [
+        "zh",
+        "en"
+      ],
+      "negativePrompt": "field",
+      "referenceSyntax": "api-field"
+    },
+    "notes": [
+      "模型输出Schema可能不同，必须由每个模型Profile声明。"
+    ]
+  },
+  {
+    "id": "openai-compatible",
+    "version": "1.0.0",
+    "title": "OpenAI兼容中转",
+    "family": "openai-compatible",
+    "transport": "openai-compatible",
+    "auth": {
+      "scheme": "bearer",
+      "header": "Authorization",
+      "secretRefRequired": true
+    },
+    "modalities": [
+      "text",
+      "image",
+      "video"
+    ],
+    "features": [
+      "text",
+      "structured-output",
+      "bilingual"
+    ],
+    "async": false,
+    "supportsCancel": false,
+    "supportsReconcile": false,
+    "prompt": {
+      "languages": [
+        "zh",
+        "en"
+      ],
+      "negativePrompt": "field",
+      "referenceSyntax": "api-field"
+    },
+    "notes": [
+      "普通用户可配置base URL；媒体与异步能力必须显式声明。"
+    ]
+  },
+  {
+    "id": "declarative-http",
+    "version": "1.0.0",
+    "title": "声明式HTTP中转",
+    "family": "declarative-http",
+    "transport": "declarative-http",
+    "auth": {
+      "scheme": "custom",
+      "header": "Authorization",
+      "secretRefRequired": true
+    },
+    "modalities": [
+      "text",
+      "image",
+      "video",
+      "audio"
+    ],
+    "features": [
+      "text",
+      "structured-output",
+      "bilingual",
+      "async"
+    ],
+    "async": true,
+    "supportsCancel": true,
+    "supportsReconcile": true,
+    "prompt": {
+      "languages": [
+        "zh",
+        "en"
+      ],
+      "negativePrompt": "field",
+      "referenceSyntax": "api-field"
+    },
+    "notes": [
+      "通过JSON声明endpoint、模板、JSON Pointer、状态映射和轮询。"
+    ]
+  },
+  {
+    "id": "owner-script",
+    "version": "1.0.0",
+    "title": "所有者脚本中转",
+    "family": "owner-script",
+    "transport": "owner-script",
+    "auth": {
+      "scheme": "custom",
+      "header": "Authorization",
+      "secretRefRequired": true
+    },
+    "modalities": [
+      "text",
+      "image",
+      "video",
+      "audio"
+    ],
+    "features": [
+      "text",
+      "structured-output",
+      "bilingual",
+      "async"
+    ],
+    "async": true,
+    "supportsCancel": true,
+    "supportsReconcile": true,
+    "prompt": {
+      "languages": [
+        "zh",
+        "en"
+      ],
+      "negativePrompt": "field",
+      "referenceSyntax": "api-field"
+    },
+    "notes": [
+      "只允许所有者可信transform脚本；网络和密钥由宿主执行。"
+    ]
+  }
+]

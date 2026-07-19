@@ -1,0 +1,25 @@
+packages:
+  - apps/*
+  - packages/*
+
+injectWorkspacePackages: true
+
+overrides:
+  "app-builder-lib>@electron/get": 5.0.0
+  ignore: 7.0.5
+  ini: 1.3.8
+
+onlyBuiltDependencies:
+  - better-sqlite3
+  - electron
+  - esbuild
+  - sharp
+  - vue-demi
+
+allowBuilds:
+  better-sqlite3: true
+  electron: true
+  electron-winstaller: false
+  esbuild: true
+  sharp: true
+  vue-demi: true

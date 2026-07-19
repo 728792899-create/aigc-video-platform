@@ -1,0 +1,12 @@
+{
+  "name": "@aigc-director/desktop",
+  "version": "2.0.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "build": "tsup src/main.ts src/preload.ts --format cjs --platform node --external electron --clean --out-dir dist && node scripts/copy-static.mjs",
+    "typecheck": "tsc --noEmit",
+    "test": "vitest run"
+  },
+  "devDependencies": { "@types/node": "^24.0.0", "electron": "40.10.6", "tsup": "8.5.1", "typescript": "5.9.3", "vitest": "4.1.10", "zod": "4.4.3" }
+}

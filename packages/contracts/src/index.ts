@@ -1,503 +1,1333 @@
 import { z } from 'zod'
 
-const JsonRecordSchema = z.record(z.string(), z.unknown())
+export const IdSchema = z.string().uuid()
+export const IsoDateSchema = z.string().datetime()
+export const JsonObjectSchema = z.record(z.string(), z.unknown())
+export type JsonObject = z.infer<typeof JsonObjectSchema>
 
-export const AppErrorPayloadSchema = z.object({
+export const AppErrorSchema = z.object({
   code: z.string().min(1),
   userMessage: z.string().min(1),
   technicalMessage: z.string().optional(),
   retryable: z.boolean(),
-  taskId: z.string().optional(),
-  correlationId: z.string().optional(),
-  details: JsonRecordSchema.optional(),
-  timestamp: z.union([z.string(), z.number()]),
+  correlationId: z.string().min(1),
+  taskId: IdSchema.optional(),
+  details: JsonObjectSchema.optional(),
+  timestamp: IsoDateSchema,
 })
-export type AppErrorPayload = z.infer<typeof AppErrorPayloadSchema>
+export type AppErrorPayload = z.infer<typeof AppErrorSchema>
 
-export interface ApiEnvelope<T> {
-  code: number
-  data: T
-  message: string
-  request_id?: string
-  error?: AppErrorPayload
-}
-
-export function apiEnvelopeSchema<T extends z.ZodType>(dataSchema: T) {
-  return z.object({
-    code: z.number(),
-    data: dataSchema,
-    message: z.string(),
-    request_id: z.string().optional(),
-    error: AppErrorPayloadSchema.optional(),
-  })
-}
+export const apiSuccess = <T extends z.ZodType>(schema: T) => z.object({
+  ok: z.literal(true),
+  data: schema,
+  correlationId: z.string().min(1),
+})
+export const ApiFailureSchema = z.object({ ok: z.literal(false), error: AppErrorSchema })
+export type ApiEnvelope<T> = { ok: true; data: T; correlationId: string } | { ok: false; error: AppErrorPayload }
 
 export const ProjectSchema = z.object({
-  id: z.number().int().positive(),
-  name: z.string().min(1),
-  theme: z.string().nullish(),
-  style: z.string().nullish(),
-  status: z.string().nullish(),
-  series_id: z.number().int().positive().nullish(),
-  episode_index: z.number().int().positive().nullish(),
-  parent_project_id: z.number().int().positive().nullish(),
-  ratio: z.string().nullish(),
-  visual_anchor: z.string().nullish(),
-  duration_min: z.number().nullish(),
-  duration_max: z.number().nullish(),
-  long_video_mode: z.union([z.number(), z.boolean()]).nullish(),
-  created_at: z.union([z.number(), z.string()]).nullish(),
-  updated_at: z.union([z.number(), z.string()]).nullish(),
-}).passthrough()
+  id: IdSchema,
+  name: z.string().trim().min(1).max(120),
+  description: z.string().max(2_000).default(''),
+  status: z.enum(['active', 'archived']).default('active'),
+  graphRevision: z.number().int().nonnegative().default(0),
+  createdAt: IsoDateSchema,
+  updatedAt: IsoDateSchema,
+})
 export type Project = z.infer<typeof ProjectSchema>
 
-export const SeriesSchema = z.object({
-  id: z.number().int().positive(),
-  title: z.string().min(1),
-  description: z.string().nullish(),
-  style: z.string().nullish(),
-}).passthrough()
-export type Series = z.infer<typeof SeriesSchema>
+export const SourceDocumentSchema = z.object({
+  id: IdSchema,
+  projectId: IdSchema,
+  title: z.string().trim().min(1).max(200),
+  content: z.string().min(1).max(2_000_000),
+  language: z.string().min(2).max(16).default('zh-CN'),
+  contentHash: z.string().length(64),
+  revision: z.number().int().positive(),
+  createdAt: IsoDateSchema,
+  updatedAt: IsoDateSchema,
+})
+export type SourceDocument = z.infer<typeof SourceDocumentSchema>
 
-export type Episode = Project & { series_id: number; episode_index: number }
+export const SourceImportFormatSchema = z.enum(['text', 'markdown'])
+export type SourceImportFormat = z.infer<typeof SourceImportFormatSchema>
 
-export const ShotSchema = z.object({
-  id: z.union([z.string(), z.number()]),
-  scene_id: z.union([z.string(), z.number()]).nullish(),
-  shot_number: z.number().int().nonnegative().optional(),
-  description: z.string().default(''),
-  dialogue: z.string().default(''),
-  narration: z.string().default(''),
-  action: z.string().default(''),
-  duration: z.number().nonnegative().optional(),
-  image_prompt: z.string().default(''),
-  video_prompt: z.string().default(''),
-  negative_prompt: z.string().default(''),
-}).passthrough()
-export type Shot = z.infer<typeof ShotSchema>
+export const SourceImportPreviewSchema = z.object({
+  id: IdSchema,
+  projectId: IdSchema,
+  originalFileName: z.string().min(1).max(255).regex(/^[^\u0000-\u001F\u007F/\\]+$/u),
+  format: SourceImportFormatSchema,
+  encoding: z.literal('utf-8'),
+  byteSize: z.number().int().min(4).max(6 * 1024 * 1024),
+  characterCount: z.number().int().min(4).max(2_000_000),
+  contentHash: z.string().length(64),
+  suggestedTitle: z.string().trim().min(1).max(200),
+  previewText: z.string().min(1).max(20_000),
+  previewTruncated: z.boolean(),
+  chapterTitles: z.array(z.string().trim().min(1).max(200)).max(100),
+  warnings: z.array(z.string().max(500)).max(20),
+  expiresAt: IsoDateSchema,
+})
+export type SourceImportPreview = z.infer<typeof SourceImportPreviewSchema>
+
+export const SourceImportCommitSchema = z.object({
+  title: z.string().trim().min(1).max(200),
+  language: z.string().min(2).max(16).default('zh-CN'),
+  expectedContentHash: z.string().length(64),
+})
+export type SourceImportCommit = z.infer<typeof SourceImportCommitSchema>
+
+export const SourceImportCancelReportSchema = z.object({ id: IdSchema, status: z.literal('cancelled') })
+export type SourceImportCancelReport = z.infer<typeof SourceImportCancelReportSchema>
+
+export const ChapterSchema = z.object({
+  id: IdSchema,
+  projectId: IdSchema,
+  sourceId: IdSchema,
+  title: z.string().trim().min(1).max(200),
+  ordinal: z.number().int().nonnegative(),
+  sourceStart: z.number().int().nonnegative(),
+  sourceEnd: z.number().int().positive(),
+  summary: z.string().max(4_000),
+  createdAt: IsoDateSchema,
+  updatedAt: IsoDateSchema,
+})
+export type Chapter = z.infer<typeof ChapterSchema>
+
+export const StoryEventTypeSchema = z.enum([
+  'setup', 'inciting_incident', 'action', 'dialogue', 'revelation', 'turning_point',
+  'climax', 'resolution', 'foreshadowing', 'chapter_summary',
+])
+export const StoryEventSchema = z.object({
+  id: IdSchema,
+  projectId: IdSchema,
+  chapterId: IdSchema,
+  type: StoryEventTypeSchema,
+  title: z.string().trim().min(1).max(200),
+  summary: z.string().trim().min(1).max(4_000),
+  sourceStart: z.number().int().nonnegative(),
+  sourceEnd: z.number().int().positive(),
+  narrativeOrder: z.number().int().nonnegative(),
+  chronologicalOrder: z.number().int().nonnegative(),
+  characterStateBefore: JsonObjectSchema.default({}),
+  characterStateAfter: JsonObjectSchema.default({}),
+  lockedFacts: z.array(z.string().max(500)).default([]),
+  revision: z.number().int().positive(),
+  contentHash: z.string().length(64),
+  createdAt: IsoDateSchema,
+  updatedAt: IsoDateSchema,
+})
+export type StoryEvent = z.infer<typeof StoryEventSchema>
+
+export const StoryEventEdgeTypeSchema = z.enum([
+  'follows', 'causes', 'depends_on', 'foreshadows', 'resolves', 'contradicts', 'parallel',
+])
+export const StoryEventEdgeSchema = z.object({
+  id: IdSchema,
+  projectId: IdSchema,
+  sourceEventId: IdSchema,
+  targetEventId: IdSchema,
+  type: StoryEventEdgeTypeSchema,
+  createdAt: IsoDateSchema,
+}).refine((edge) => edge.sourceEventId !== edge.targetEventId, { message: '事件不能连接自身' })
+export type StoryEventEdge = z.infer<typeof StoryEventEdgeSchema>
 
 export const SceneSchema = z.object({
-  id: z.union([z.string(), z.number()]),
-  title: z.string().default(''),
-  description: z.string().default(''),
-  shots: z.array(ShotSchema).default([]),
-}).passthrough()
+  id: IdSchema,
+  projectId: IdSchema,
+  eventId: IdSchema.optional(),
+  title: z.string().trim().min(1).max(200),
+  synopsis: z.string().max(4_000),
+  ordinal: z.number().int().nonnegative(),
+  revision: z.number().int().positive(),
+  staleFields: z.array(z.string()).default([]),
+  createdAt: IsoDateSchema,
+  updatedAt: IsoDateSchema,
+})
 export type Scene = z.infer<typeof SceneSchema>
 
-export const SemanticVersionSchema = z.string().regex(/^\d+\.\d+\.\d+$/, '必须是语义版本字符串')
-
-export const ScriptDocumentSchema = z.object({
-  schema_version: SemanticVersionSchema,
-  title: z.string().min(1),
-  summary: z.string().default(''),
-  language: z.string().default('zh-CN'),
-  style: z.string().default(''),
-  scenes: z.array(SceneSchema).min(1),
-  prompt_version: z.string().min(1),
-  provider: z.string().default(''),
-  model: z.string().default(''),
-}).passthrough()
-export type ScriptDocument = z.infer<typeof ScriptDocumentSchema>
-
-export const PromptKindSchema = z.enum(['script', 'image', 'video', 'voice', 'negative'])
-export type PromptKind = z.infer<typeof PromptKindSchema>
-export const PromptSourceSchema = z.enum(['manual', 'polish', 'provider', 'compiled', 'restore', 'migration'])
-export const PromptRevisionCreateSchema = z.object({
-  storyboard_id: z.number().int().positive().nullable().optional(),
-  kind: PromptKindSchema,
-  content: z.string().max(24000),
-  negative_content: z.string().max(12000).default(''),
-  source: PromptSourceSchema.default('manual'),
-  prompt_version: z.string().trim().max(160).default(''),
-  provider: z.string().trim().max(80).default(''),
-  model: z.string().trim().max(160).default(''),
-  parent_revision_id: z.string().uuid().nullable().optional(),
+export const ShotBeatSchema = z.object({
+  id: IdSchema,
+  ordinal: z.number().int().nonnegative(),
+  startMs: z.number().int().nonnegative(),
+  durationMs: z.number().int().min(100).max(120_000),
+  action: z.string().trim().min(1).max(2_000),
+  camera: z.string().trim().min(1).max(1_000),
+  dialogue: z.string().max(2_000).default(''),
+  referenceIds: z.array(IdSchema).max(20).default([]),
 })
-export type PromptRevisionCreate = z.infer<typeof PromptRevisionCreateSchema>
+export type ShotBeat = z.infer<typeof ShotBeatSchema>
 
-export const PromptRevisionSchema = PromptRevisionCreateSchema.extend({
-  id: z.string().uuid(),
-  project_id: z.number().int().positive(),
+export const BoundaryFrameSchema = z.object({
+  id: IdSchema,
+  role: z.enum(['start', 'end']),
+  mediaId: IdSchema,
+  mediaSha256: z.string().length(64),
+  sourceShotId: IdSchema,
+  sourceCandidateId: IdSchema.optional(),
+  sourceBoundaryFrameId: IdSchema.optional(),
+  sourceRevision: z.number().int().positive(),
+  provenance: z.enum(['generated_candidate', 'linked_previous_end', 'selected_existing', 'extracted_video']),
+  createdAt: IsoDateSchema,
+})
+export type BoundaryFrame = z.infer<typeof BoundaryFrameSchema>
+
+export const ShotSchema = z.object({
+  id: IdSchema,
+  projectId: IdSchema,
+  sceneId: IdSchema,
+  title: z.string().trim().min(1).max(200),
+  description: z.string().trim().min(1).max(4_000),
+  dialogue: z.string().max(2_000).default(''),
+  visualPrompt: z.string().max(8_000).default(''),
+  videoPrompt: z.string().max(8_000).default(''),
+  negativePrompt: z.string().max(4_000).default(''),
+  durationMs: z.number().int().min(500).max(120_000),
+  beats: z.array(ShotBeatSchema).max(16).default([]),
+  boundaryFrames: z.array(BoundaryFrameSchema).max(2).default([]),
+  ordinal: z.number().int().nonnegative(),
   revision: z.number().int().positive(),
-  content_hash: z.string().regex(/^[a-f0-9]{64}$/),
-  created_at: z.number().int().nonnegative(),
+  staleFields: z.array(z.string()).default([]),
+  selectedCandidateId: IdSchema.optional(),
+  createdAt: IsoDateSchema,
+  updatedAt: IsoDateSchema,
+}).superRefine((shot, context) => {
+  if (shot.beats.length > 0) {
+    let cursor = 0
+    for (const [index, beat] of shot.beats.entries()) {
+      if (beat.ordinal !== index) context.addIssue({ code: 'custom', path: ['beats', index, 'ordinal'], message: 'Beat ordinal 必须连续' })
+      if (beat.startMs !== cursor) context.addIssue({ code: 'custom', path: ['beats', index, 'startMs'], message: 'Beat 必须首尾连续' })
+      cursor += beat.durationMs
+    }
+    if (cursor !== shot.durationMs) context.addIssue({ code: 'custom', path: ['beats'], message: 'Beat 时长之和必须等于镜头总时长' })
+  }
+  if (new Set(shot.boundaryFrames.map((frame) => frame.role)).size !== shot.boundaryFrames.length) {
+    context.addIssue({ code: 'custom', path: ['boundaryFrames'], message: '每个镜头只能有一个首帧和一个尾帧' })
+  }
 })
-export type PromptRevision = z.infer<typeof PromptRevisionSchema>
+export type Shot = z.infer<typeof ShotSchema>
 
-export const SceneRegenerationSchema = z.object({
-  stages: z.array(z.enum(['image', 'voice', 'video'])).min(1).max(3),
-  prompt_revision_id: z.string().uuid().optional(),
-  model: z.string().trim().max(160).optional(),
-  provider: z.string().trim().max(80).optional(),
-  confirm_cost: z.boolean().default(false),
-  idempotencyKey: z.string().trim().max(200).optional(),
-})
-export type SceneRegeneration = z.infer<typeof SceneRegenerationSchema>
+export const AssetTypeSchema = z.enum(['character', 'scene', 'prop', 'style', 'voice', 'music'])
+export const AssetScopeSchema = z.enum(['global', 'series', 'episode', 'project'])
 
-export const StageArtifactSchema = z.object({
-  id: z.union([z.string(), z.number()]),
-  project_id: z.number().int().positive(),
-  stage: z.string().min(1),
+export const SeriesSchema = z.object({
+  id: IdSchema,
+  workspaceId: IdSchema,
+  name: z.string().trim().min(1).max(160),
+  description: z.string().max(4_000).default(''),
+  artDirection: z.string().max(8_000).default(''),
+  defaults: JsonObjectSchema.default({}),
   revision: z.number().int().positive(),
-  status: z.enum(['current', 'stale', 'failed', 'partial', 'archived']),
-  input_hash: z.string().min(1),
-  payload: z.unknown(),
-  upstream_revisions: JsonRecordSchema.default({}),
-}).passthrough()
-export type StageArtifact = z.infer<typeof StageArtifactSchema>
+  archived: z.boolean().default(false),
+  createdAt: IsoDateSchema,
+  updatedAt: IsoDateSchema,
+})
+export type Series = z.infer<typeof SeriesSchema>
+
+export const EpisodeSchema = z.object({
+  id: IdSchema,
+  projectId: IdSchema,
+  seriesId: IdSchema.optional(),
+  ordinal: z.number().int().nonnegative(),
+  title: z.string().trim().min(1).max(160),
+  previousSummaryArtifactId: IdSchema.optional(),
+  nextHookArtifactId: IdSchema.optional(),
+  revision: z.number().int().positive(),
+  createdAt: IsoDateSchema,
+  updatedAt: IsoDateSchema,
+})
+export type Episode = z.infer<typeof EpisodeSchema>
+
+export const SharedAssetSchema = z.object({
+  id: IdSchema,
+  logicalId: IdSchema,
+  scope: z.enum(['global', 'series']),
+  seriesId: IdSchema.optional(),
+  type: AssetTypeSchema,
+  name: z.string().trim().min(1).max(160),
+  description: z.string().max(4_000).default(''),
+  metadata: JsonObjectSchema.default({}),
+  selectedVariantId: IdSchema.optional(),
+  revision: z.number().int().positive(),
+  forkedFromAssetId: IdSchema.optional(),
+  archived: z.boolean().default(false),
+  createdAt: IsoDateSchema,
+  updatedAt: IsoDateSchema,
+}).superRefine((asset, context) => {
+  if (asset.scope === 'series' && !asset.seriesId) context.addIssue({ code: 'custom', path: ['seriesId'], message: 'Series 资产必须绑定系列' })
+  if (asset.scope === 'global' && asset.seriesId) context.addIssue({ code: 'custom', path: ['seriesId'], message: 'Global 资产不能绑定系列' })
+})
+export type SharedAsset = z.infer<typeof SharedAssetSchema>
+
+export const SharedMediaReferenceSchema = z.object({
+  id: IdSchema,
+  kind: z.enum(['image', 'video', 'audio', 'subtitle', 'document']),
+  storage: z.literal('managed-file'),
+  locator: z.string().regex(/^[a-zA-Z0-9-]+\.[a-z0-9]{1,8}$/u),
+  mime: z.string().min(3).max(160),
+  size: z.number().int().nonnegative(),
+  sha256: z.string().length(64),
+  createdAt: IsoDateSchema,
+})
+export type SharedMediaReference = z.infer<typeof SharedMediaReferenceSchema>
+
+export const SharedAssetVariantSchema = z.object({
+  id: IdSchema,
+  sharedAssetId: IdSchema,
+  revision: z.number().int().positive(),
+  label: z.string().trim().min(1).max(160),
+  prompt: z.string().max(8_000).default(''),
+  metadata: JsonObjectSchema.default({}),
+  mediaSnapshot: z.object({
+    sharedMediaId: IdSchema,
+    kind: z.enum(['image', 'video', 'audio', 'subtitle', 'document']),
+    mime: z.string().min(3).max(160),
+    size: z.number().int().nonnegative(),
+    sha256: z.string().length(64),
+  }).optional(),
+  forkedFromVariantId: IdSchema.optional(),
+  favorite: z.boolean().default(false),
+  archived: z.boolean().default(false),
+  createdAt: IsoDateSchema,
+})
+export type SharedAssetVariant = z.infer<typeof SharedAssetVariantSchema>
+
+export const AssetBindingSlotSchema = z.enum(['character', 'scene', 'prop', 'style', 'voice', 'music', 'reference'])
+export const AssetBindingSchema = z.object({
+  id: IdSchema,
+  projectId: IdSchema,
+  shotId: IdSchema,
+  slot: AssetBindingSlotSchema,
+  assetKind: z.enum(['local', 'shared']),
+  assetId: IdSchema,
+  variantId: IdSchema,
+  assetRevision: z.number().int().positive(),
+  originScope: AssetScopeSchema,
+  originScopeId: IdSchema.optional(),
+  drifted: z.boolean().default(false),
+  createdAt: IsoDateSchema,
+  updatedAt: IsoDateSchema,
+})
+export type AssetBinding = z.infer<typeof AssetBindingSchema>
+
+export const ResolvedAssetSchema = z.object({
+  logicalId: IdSchema,
+  source: z.enum(['episode', 'series', 'global']),
+  sourceId: IdSchema,
+  assetKind: z.enum(['local', 'shared']),
+  assetId: IdSchema,
+  variantId: IdSchema,
+  revision: z.number().int().positive(),
+  type: AssetTypeSchema,
+  name: z.string().min(1).max(160),
+  drifted: z.boolean(),
+})
+export type ResolvedAsset = z.infer<typeof ResolvedAssetSchema>
+
+export const EpisodeContextSchema = z.object({
+  project: ProjectSchema,
+  episode: EpisodeSchema,
+  series: SeriesSchema.optional(),
+  previousEpisode: EpisodeSchema.optional(),
+  nextEpisode: EpisodeSchema.optional(),
+  resolvedAssets: z.array(ResolvedAssetSchema),
+})
+export type EpisodeContext = z.infer<typeof EpisodeContextSchema>
+
+export const AssetImpactSchema = z.object({
+  assetId: IdSchema,
+  bindingIds: z.array(IdSchema),
+  shotIds: z.array(IdSchema),
+  taskIds: z.array(IdSchema),
+  candidateIds: z.array(IdSchema),
+  boundaryFrameIds: z.array(IdSchema),
+  canDelete: z.boolean(),
+})
+export type AssetImpact = z.infer<typeof AssetImpactSchema>
+
+export const ReconcileDecisionSchema = z.object({
+  bindingId: IdSchema,
+  action: z.enum(['merge', 'promote', 'keep_local', 'rebind']),
+  targetAssetId: IdSchema.optional(),
+  targetVariantId: IdSchema.optional(),
+  expectedAssetRevision: z.number().int().positive().optional(),
+  targetScope: z.enum(['global', 'series']).optional(),
+  targetSeriesId: IdSchema.optional(),
+})
+export type ReconcileDecision = z.infer<typeof ReconcileDecisionSchema>
+
+export const ReconcilePreviewSchema = z.object({
+  operationId: IdSchema,
+  episodeId: IdSchema,
+  expectedProjectRevision: z.number().int().nonnegative(),
+  decisions: z.array(ReconcileDecisionSchema).min(1).max(500),
+  changed: z.array(IdSchema),
+  skipped: z.array(IdSchema),
+  conflicts: z.array(z.object({ bindingId: IdSchema, code: z.string().min(1), message: z.string().min(1).max(500) })),
+  approvalToken: z.string().min(20).max(200),
+  expiresAt: IsoDateSchema,
+})
+export type ReconcilePreview = z.infer<typeof ReconcilePreviewSchema>
+
+export const ReconcileReportSchema = z.object({
+  operationId: IdSchema,
+  episodeId: IdSchema,
+  projectRevision: z.number().int().nonnegative(),
+  changed: z.array(IdSchema),
+  skipped: z.array(IdSchema),
+  conflicts: z.array(z.object({ bindingId: IdSchema, code: z.string().min(1), message: z.string().min(1).max(500) })),
+  appliedAt: IsoDateSchema,
+})
+export type ReconcileReport = z.infer<typeof ReconcileReportSchema>
+
+export const AssetBatchBindingDraftSchema = z.object({
+  shotId: IdSchema,
+  slot: AssetBindingSlotSchema,
+  assetKind: z.enum(['local', 'shared']),
+  assetId: IdSchema,
+  variantId: IdSchema,
+  expectedAssetRevision: z.number().int().positive().optional(),
+})
+export type AssetBatchBindingDraft = z.infer<typeof AssetBatchBindingDraftSchema>
+
+export const AssetBatchBindPreviewSchema = z.object({
+  operationId: IdSchema,
+  episodeId: IdSchema,
+  expectedProjectRevision: z.number().int().nonnegative(),
+  bindings: z.array(AssetBindingSchema).max(500),
+  changed: z.array(IdSchema),
+  skipped: z.array(IdSchema),
+  conflicts: z.array(z.object({ shotId: IdSchema, code: z.string().min(1), message: z.string().min(1).max(500) })),
+  approvalToken: z.string().min(20).max(200),
+  expiresAt: IsoDateSchema,
+})
+export type AssetBatchBindPreview = z.infer<typeof AssetBatchBindPreviewSchema>
+
+export const AssetBatchBindReportSchema = z.object({
+  operationId: IdSchema,
+  episodeId: IdSchema,
+  projectRevision: z.number().int().nonnegative(),
+  bindingIds: z.array(IdSchema),
+  appliedAt: IsoDateSchema,
+})
+export type AssetBatchBindReport = z.infer<typeof AssetBatchBindReportSchema>
+export const AssetUnitSchema = z.object({
+  id: IdSchema,
+  projectId: IdSchema,
+  logicalId: IdSchema.optional(),
+  type: AssetTypeSchema,
+  scope: AssetScopeSchema,
+  name: z.string().trim().min(1).max(160),
+  description: z.string().max(4_000).default(''),
+  metadata: JsonObjectSchema.default({}),
+  selectedVariantId: IdSchema.optional(),
+  revision: z.number().int().positive().default(1),
+  forkedFromAssetId: IdSchema.optional(),
+  archived: z.boolean().default(false),
+  createdAt: IsoDateSchema,
+  updatedAt: IsoDateSchema,
+})
+export type AssetUnit = z.infer<typeof AssetUnitSchema>
 
 export const MediaReferenceSchema = z.object({
-  kind: z.enum(['project_media', 'local_file', 'object_key', 'public_url']),
-  media_id: z.number().int().positive().nullable().optional(),
-  object_key: z.string().default(''),
-  url: z.string().default(''),
-  mime: z.string().default(''),
-  content_hash: z.string().default(''),
+  id: IdSchema,
+  projectId: IdSchema,
+  kind: z.enum(['image', 'video', 'audio', 'subtitle', 'document']),
+  storage: z.enum(['managed-file', 'object-key']),
+  locator: z.string().min(1).max(1_024),
+  mime: z.string().min(3).max(160),
+  size: z.number().int().nonnegative(),
+  sha256: z.string().length(64),
+  createdAt: IsoDateSchema,
 })
 export type MediaReference = z.infer<typeof MediaReferenceSchema>
 
-export const AssetTypeSchema = z.enum(['character', 'scene', 'prop', 'style', 'voice', 'music'])
-export type AssetType = z.infer<typeof AssetTypeSchema>
-export const AssetScopeSchema = z.enum(['episode', 'series', 'global'])
-export type AssetScope = z.infer<typeof AssetScopeSchema>
-export const AssetIdSchema = z.union([z.string().min(1), z.number().int().positive()])
-export type AssetId = z.infer<typeof AssetIdSchema>
-const AssetBooleanSchema = z.union([z.boolean(), z.literal(0), z.literal(1)]).transform(Boolean)
-
-export const AssetVariantSchema = z.object({
-  id: AssetIdSchema,
-  asset_id: AssetIdSchema,
-  revision: z.number().int().positive(),
-  status: z.enum(['active', 'archived']),
-  selected: AssetBooleanSchema,
-  favorite: AssetBooleanSchema,
-  parent_variant_id: AssetIdSchema.nullable().optional(),
-  media_reference: MediaReferenceSchema,
-  provider: z.string().default(''),
-  model: z.string().default(''),
-  prompt: z.string().default(''),
-  content_hash: z.string().default(''),
-  label: z.string().optional(),
-  archived_at: z.union([z.string(), z.number()]).nullish(),
-}).passthrough()
-export type AssetVariant = z.infer<typeof AssetVariantSchema>
-
-export const AssetUnitSchema = z.object({
-  id: AssetIdSchema,
-  asset_type: AssetTypeSchema,
-  name: z.string().min(1),
-  scope: AssetScopeSchema,
-  project_id: z.number().int().positive().nullable().optional(),
-  series_id: z.number().int().positive().nullable().optional(),
-  forked_from_unit_id: AssetIdSchema.nullable().optional(),
-  forked_from_variant_id: AssetIdSchema.nullable().optional(),
-  selected_variant_id: AssetIdSchema.nullable().optional(),
-  variants: z.array(AssetVariantSchema).default([]),
-  metadata: JsonRecordSchema.default({}),
-}).passthrough()
-export type AssetUnit = z.infer<typeof AssetUnitSchema>
-
-export const AssetUnitCreateSchema = z.object({
-  asset_type: AssetTypeSchema,
-  name: z.string().trim().min(1).max(200),
-  scope: AssetScopeSchema.default('episode'),
-  metadata: JsonRecordSchema.default({}),
-})
-export type AssetUnitCreate = z.infer<typeof AssetUnitCreateSchema>
-
-export const VoiceAssetMetadataSchema = z.object({
-  language: z.string().trim().max(40).default('zh-CN'),
-  voice_id: z.string().trim().max(160).default(''),
-  role: z.enum(['narrator', 'character', 'other']).default('narrator'),
-  speed: z.number().min(0.5).max(2).default(1),
-  pitch: z.number().min(-12).max(12).default(0),
-  emotion: z.string().trim().max(80).default('neutral'),
-  provider: z.string().trim().max(80).default(''),
-  model: z.string().trim().max(160).default(''),
-}).passthrough()
-export type VoiceAssetMetadata = z.infer<typeof VoiceAssetMetadataSchema>
-
-export const MusicAssetMetadataSchema = z.object({
-  mood: z.string().trim().max(120).default(''),
-  bpm: z.number().int().min(20).max(300).nullable().default(null),
-  musical_key: z.string().trim().max(32).default(''),
-  duration_seconds: z.number().positive().max(86400).nullable().default(null),
-  loop_start: z.number().min(0).nullable().default(null),
-  loop_end: z.number().positive().nullable().default(null),
-  source: z.string().trim().max(300).default(''),
-  license: z.string().trim().max(300).default(''),
-}).superRefine((value, context) => {
-  if (value.loop_start != null && value.loop_end != null && value.loop_end <= value.loop_start) {
-    context.addIssue({ code: 'custom', path: ['loop_end'], message: '循环终点必须晚于起点' })
-  }
-})
-export type MusicAssetMetadata = z.infer<typeof MusicAssetMetadataSchema>
-
-export const AssetUnitForkSchema = z.object({
-  project_id: z.number().int().positive(),
-  series_id: z.number().int().positive(),
-  variant_id: AssetIdSchema.optional(),
-})
-export type AssetUnitFork = z.infer<typeof AssetUnitForkSchema>
-
-export const AssetVariantCreateSchema = z.object({
-  label: z.string().trim().max(200).default(''),
-  provider: z.string().trim().max(80).default(''),
-  model: z.string().trim().max(160).default(''),
-  prompt: z.string().trim().max(12000).default(''),
-  parent_variant_id: AssetIdSchema.nullable().optional(),
-  content_hash: z.string().trim().max(128).default(''),
-  media_reference: MediaReferenceSchema,
-})
-export type AssetVariantCreate = z.infer<typeof AssetVariantCreateSchema>
-
-export const AssetBindingUpdateSchema = z.object({
-  project_id: z.number().int().positive().optional(),
-  asset_type: AssetTypeSchema,
-  asset_id: AssetIdSchema,
-  variant_id: AssetIdSchema,
-  source_scope: AssetScopeSchema.optional(),
-})
-export type AssetBindingUpdate = z.infer<typeof AssetBindingUpdateSchema>
-
-export const AssetBatchBindingSchema = AssetBindingUpdateSchema.extend({
-  project_id: z.number().int().positive(),
-  storyboard_ids: z.array(z.number().int().positive()).min(1).max(500),
-})
-export type AssetBatchBinding = z.infer<typeof AssetBatchBindingSchema>
-
-export const AssetBindingSchema = z.object({
-  storyboard_id: z.number().int().positive(),
-  project_id: z.number().int().positive().nullable().optional(),
-  asset_type: AssetTypeSchema,
-  asset_id: AssetIdSchema,
-  variant_id: AssetIdSchema,
-  revision: z.number().int().positive(),
-  source_scope: AssetScopeSchema,
-  stale_fields: z.array(z.string()).default([]),
-  stale_sources: z.array(z.string()).default([]),
-  snapshot: JsonRecordSchema,
-}).passthrough()
-export type AssetBinding = z.infer<typeof AssetBindingSchema>
-
+export const ModelModalitySchema = z.enum(['text', 'image', 'video', 'audio'])
+export type ModelModality = z.infer<typeof ModelModalitySchema>
 export const ModelDescriptorSchema = z.object({
-  id: z.string().min(1),
-  provider: z.string().min(1),
-  model: z.string().min(1),
-  modality: z.enum(['text', 'image', 'video', 'audio']),
-  input_types: z.array(z.string()),
-  output_types: z.array(z.string()),
-  capabilities: z.record(z.string(), z.boolean()),
-  accepted_media: z.array(z.enum([
-    'project_media', 'local_file', 'object_key', 'public_url', 'signed_url', 'data_url',
-  ])).default([]),
-  credential_required: z.boolean(),
-  catalog_source: z.string().min(1),
-}).passthrough()
+  id: z.string().regex(/^[a-z0-9][a-z0-9._-]{2,159}$/),
+  providerId: z.string().regex(/^[a-z0-9][a-z0-9._-]{2,119}$/),
+  displayName: z.string().trim().min(1).max(160),
+  modality: ModelModalitySchema,
+  features: z.array(z.string().regex(/^[a-z0-9][a-z0-9._-]{1,79}$/)).max(80),
+  inputModes: z.array(z.enum(['managed-file', 'base64', 'signed-url', 'temporary-upload', 'local-fixture'])).min(1),
+  limits: z.object({
+    maxMediaReferences: z.number().int().nonnegative().max(100),
+    maxBytesPerReference: z.number().int().positive(),
+    acceptedMimePrefixes: z.array(z.string().regex(/^[a-z]+\/$/)).max(20),
+  }),
+  parameterSchema: JsonObjectSchema.default({}),
+  defaults: JsonObjectSchema.default({}),
+  surfaces: z.array(z.enum(['studio', 'demo', 'provider-plugin'])).min(1),
+  status: z.enum(['enabled', 'disabled', 'experimental']),
+  availability: z.enum(['ready', 'unavailable', 'unverified']),
+  credentialReference: z.string().min(1).max(160).optional(),
+  catalogVersion: z.string().regex(/^\d+\.\d+\.\d+$/),
+  contentHash: z.string().length(64),
+})
 export type ModelDescriptor = z.infer<typeof ModelDescriptorSchema>
 
-export const TaskStatusSchema = z.enum([
-  'pending', 'waiting', 'running', 'composing', 'retrying', 'cancel_requested',
-  'reconciling', 'success', 'failed', 'timed_out', 'interrupted', 'orphaned', 'partial', 'canceled',
-])
-export type TaskStatus = z.infer<typeof TaskStatusSchema>
+export const EgressChannelSchema = z.enum(['media-fetch', 'model-api', 'temporary-upload'])
+export const EgressPolicySchema = z.object({
+  id: z.string().regex(/^[a-z][a-z0-9._-]{2,119}$/),
+  channel: EgressChannelSchema,
+  enabled: z.boolean(),
+  allowedHosts: z.array(z.string().trim().toLowerCase().regex(/^(?:[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?\.)+[a-z]{2,63}$/)).max(40),
+  allowedMethods: z.array(z.enum(['GET', 'POST', 'PUT'])).min(1).max(3),
+  timeoutMs: z.number().int().min(500).max(120_000),
+  maxRequestBytes: z.number().int().nonnegative().max(20_000_000),
+  maxResponseBytes: z.number().int().positive().max(200_000_000),
+  maxRedirects: z.number().int().nonnegative().max(5),
+  allowedResponseMimePrefixes: z.array(z.string().regex(/^[a-z0-9.+-]+\/$|^[a-z0-9.+-]+\/[a-z0-9.+*-]+$/)).max(30).default([]),
+  credentialConfigured: z.boolean(),
+})
+export type EgressPolicy = z.infer<typeof EgressPolicySchema>
 
+export const EgressRequestDescriptorSchema = z.object({
+  id: IdSchema,
+  channel: EgressChannelSchema,
+  url: z.string().url().max(2_048),
+  method: z.enum(['GET', 'POST', 'PUT']),
+  headers: z.record(
+    z.string().regex(/^[a-z0-9-]{1,80}$/),
+    z.string().max(8_192),
+  ).default({}),
+  bodyText: z.string().max(2_000_000).optional(),
+}).superRefine((request, context) => {
+  const forbidden = new Set(['authorization', 'proxy-authorization', 'cookie', 'set-cookie', 'x-api-key', 'api-key', 'host', 'connection', 'content-length', 'transfer-encoding'])
+  for (const header of Object.keys(request.headers)) {
+    if (forbidden.has(header)) context.addIssue({ code: 'custom', path: ['headers', header], message: '凭据头只能由宿主 Broker 注入' })
+  }
+})
+export type EgressRequestDescriptor = z.infer<typeof EgressRequestDescriptorSchema>
+
+export const EgressBrokerStatusSchema = z.object({
+  enabled: z.boolean(),
+  networkDisabled: z.boolean(),
+  policies: z.array(EgressPolicySchema),
+})
+export type EgressBrokerStatus = z.infer<typeof EgressBrokerStatusSchema>
+
+export const ProviderPluginManifestSchema = z.object({
+  id: z.string().regex(/^[a-z][a-z0-9._-]{2,119}$/),
+  version: z.string().regex(/^\d+\.\d+\.\d+$/),
+  apiVersion: z.literal(1),
+  displayName: z.string().trim().min(1).max(160),
+  publisherKeyId: z.string().regex(/^[a-z0-9][a-z0-9._-]{2,119}$/),
+  bundleSha256: z.string().length(64),
+  signature: z.string().regex(/^[A-Za-z0-9+/]+={0,2}$/).max(512),
+  channels: z.array(EgressChannelSchema).min(1).max(3),
+  runtime: z.object({ name: z.literal('deno'), version: z.literal('2.9.2') }),
+})
+export type ProviderPluginManifest = z.infer<typeof ProviderPluginManifestSchema>
+
+export const ProviderPluginStateSchema = z.enum(['installed', 'tested', 'enabled', 'quarantined'])
+export type ProviderPluginState = z.infer<typeof ProviderPluginStateSchema>
+
+export const ProviderPluginRecordSchema = z.object({
+  id: IdSchema,
+  pluginId: z.string().regex(/^[a-z][a-z0-9._-]{2,119}$/),
+  version: z.string().regex(/^\d+\.\d+\.\d+$/),
+  manifest: ProviderPluginManifestSchema,
+  state: ProviderPluginStateSchema,
+  bundleLocator: z.string().regex(/^provider-plugins\/[a-z][a-z0-9._-]{2,119}\/\d+\.\d+\.\d+\/[a-f0-9]{64}\.ts$/),
+  bundleSize: z.number().int().positive().max(512 * 1024),
+  revision: z.number().int().positive(),
+  installedAt: IsoDateSchema,
+  testedAt: IsoDateSchema.optional(),
+  enabledAt: IsoDateSchema.optional(),
+  quarantinedAt: IsoDateSchema.optional(),
+  quarantineReason: z.string().regex(/^[A-Z][A-Z0-9_]{2,119}$/).optional(),
+  testEvidenceHash: z.string().length(64).optional(),
+  updatedAt: IsoDateSchema,
+}).superRefine((record, context) => {
+  if (record.pluginId !== record.manifest.id) context.addIssue({ code: 'custom', path: ['pluginId'], message: '插件 ID 必须与 manifest 一致' })
+  if (record.version !== record.manifest.version) context.addIssue({ code: 'custom', path: ['version'], message: '插件版本必须与 manifest 一致' })
+  const expectedLocator = `provider-plugins/${record.pluginId}/${record.version}/${record.manifest.bundleSha256}.ts`
+  if (record.bundleLocator !== expectedLocator) context.addIssue({ code: 'custom', path: ['bundleLocator'], message: '插件定位必须与受验 manifest 一致' })
+  if (record.state === 'tested' && (!record.testedAt || !record.testEvidenceHash)) context.addIssue({ code: 'custom', path: ['testedAt'], message: 'tested 状态必须包含测试证据' })
+  if (record.state === 'enabled' && (!record.testedAt || !record.testEvidenceHash || !record.enabledAt)) context.addIssue({ code: 'custom', path: ['enabledAt'], message: 'enabled 状态必须包含测试和启用证据' })
+  if (record.state === 'quarantined' && (!record.quarantinedAt || !record.quarantineReason)) context.addIssue({ code: 'custom', path: ['quarantineReason'], message: 'quarantined 状态必须包含原因' })
+})
+export type ProviderPluginRecord = z.infer<typeof ProviderPluginRecordSchema>
+
+export const ProviderPluginInstallRequestSchema = z.object({
+  manifest: ProviderPluginManifestSchema,
+  bundleBase64: z.string().min(4).max(700_000).regex(/^[A-Za-z0-9+/]+={0,2}$/),
+})
+export type ProviderPluginInstallRequest = z.infer<typeof ProviderPluginInstallRequestSchema>
+
+export const ProviderPluginTestReportSchema = z.object({
+  plugin: ProviderPluginRecordSchema,
+  passed: z.boolean(),
+  evidenceHash: z.string().length(64),
+  timestamp: IsoDateSchema,
+})
+export type ProviderPluginTestReport = z.infer<typeof ProviderPluginTestReportSchema>
+
+export const ProviderPluginTestRequestSchema = z.object({
+  expectedRevision: z.number().int().positive(),
+  confirmation: z.literal('TEST_SIGNED_PROVIDER_PLUGIN'),
+})
+export type ProviderPluginTestRequest = z.infer<typeof ProviderPluginTestRequestSchema>
+
+export const ProviderPluginEnableRequestSchema = z.object({
+  expectedRevision: z.number().int().positive(),
+  confirmation: z.literal('ENABLE_SIGNED_PROVIDER_PLUGIN'),
+})
+export type ProviderPluginEnableRequest = z.infer<typeof ProviderPluginEnableRequestSchema>
+
+export const ProviderPluginDisableRequestSchema = z.object({
+  expectedRevision: z.number().int().positive(),
+})
+export type ProviderPluginDisableRequest = z.infer<typeof ProviderPluginDisableRequestSchema>
+
+export const ProviderPublisherTrustSchema = z.object({
+  id: IdSchema,
+  keyId: z.string().regex(/^[a-z][a-z0-9._-]{2,80}$/u),
+  displayName: z.string().trim().min(1).max(120),
+  publicKeyFingerprint: z.string().regex(/^[a-f0-9]{64}$/u),
+  state: z.enum(['trusted', 'revoked']),
+  revision: z.number().int().positive(),
+  createdAt: IsoDateSchema,
+  updatedAt: IsoDateSchema,
+  revokedAt: IsoDateSchema.optional(),
+})
+export type ProviderPublisherTrust = z.infer<typeof ProviderPublisherTrustSchema>
+
+const Ed25519PublicKeyPemSchema = z.string().trim().min(80).max(2_048)
+  .refine((value) => value.startsWith('-----BEGIN PUBLIC KEY-----\n') && value.endsWith('\n-----END PUBLIC KEY-----'), {
+    message: '必须提供 SPKI PEM 公钥',
+  })
+
+export const ProviderPublisherTrustRequestSchema = z.object({
+  keyId: z.string().regex(/^[a-z][a-z0-9._-]{2,80}$/u),
+  displayName: z.string().trim().min(1).max(120),
+  publicKeyPem: Ed25519PublicKeyPemSchema,
+  confirmation: z.literal('TRUST_PROVIDER_PLUGIN_PUBLISHER'),
+})
+export type ProviderPublisherTrustRequest = z.infer<typeof ProviderPublisherTrustRequestSchema>
+
+export const ProviderPublisherRevokeRequestSchema = z.object({
+  expectedRevision: z.number().int().positive(),
+  confirmation: z.literal('REVOKE_PROVIDER_PLUGIN_PUBLISHER'),
+})
+export type ProviderPublisherRevokeRequest = z.infer<typeof ProviderPublisherRevokeRequestSchema>
+
+export const DenoRuntimeStatusSchema = z.object({
+  version: z.literal('2.9.2'),
+  platform: z.string().min(1).max(40),
+  arch: z.string().min(1).max(40),
+  supported: z.boolean(),
+  state: z.enum(['not-installed', 'ready', 'invalid', 'unsupported', 'installing']),
+  assetName: z.string().min(1).max(160).optional(),
+  downloadBytes: z.number().int().nonnegative().optional(),
+  archiveSha256: z.string().length(64).optional(),
+  binarySha256: z.string().length(64).optional(),
+  installedAt: IsoDateSchema.optional(),
+  networkDisabled: z.boolean(),
+  installAllowed: z.boolean(),
+  progress: z.object({
+    phase: z.enum(['downloading', 'verifying', 'extracting', 'probing', 'publishing']),
+    receivedBytes: z.number().int().nonnegative(),
+    totalBytes: z.number().int().positive(),
+  }).refine((progress) => progress.receivedBytes <= progress.totalBytes, { message: '已接收字节不能超过总字节' }).optional(),
+})
+export type DenoRuntimeStatus = z.infer<typeof DenoRuntimeStatusSchema>
+
+export const DenoRuntimeInstallRequestSchema = z.object({
+  confirmation: z.literal('INSTALL_DENO_2.9.2'),
+})
+export type DenoRuntimeInstallRequest = z.infer<typeof DenoRuntimeInstallRequestSchema>
+
+export const DenoRuntimeCancelRequestSchema = z.object({
+  confirmation: z.literal('CANCEL_DENO_2.9.2_INSTALL'),
+})
+export type DenoRuntimeCancelRequest = z.infer<typeof DenoRuntimeCancelRequestSchema>
+
+export const DenoRuntimeCancelReportSchema = z.object({
+  status: z.literal('cancelled'),
+  runtime: DenoRuntimeStatusSchema,
+})
+export type DenoRuntimeCancelReport = z.infer<typeof DenoRuntimeCancelReportSchema>
+
+export const ProviderMediaReceiptSchema = z.object({
+  id: IdSchema,
+  projectId: IdSchema,
+  taskId: IdSchema.optional(),
+  candidateId: IdSchema.optional(),
+  modelId: z.string().min(1).max(160),
+  mediaId: IdSchema,
+  role: z.enum(['reference', 'first-frame', 'last-frame']),
+  order: z.number().int().nonnegative(),
+  sourceSha256: z.string().length(64),
+  transmission: z.enum(['local-fixture', 'base64', 'signed-url', 'temporary-upload']),
+  redactedLocatorHash: z.string().length(64),
+  createdAt: IsoDateSchema,
+})
+export type ProviderMediaReceipt = z.infer<typeof ProviderMediaReceiptSchema>
+
+export const MediaResolutionPreviewSchema = z.object({
+  projectId: IdSchema,
+  modelId: z.string().min(1).max(160),
+  supported: z.boolean(),
+  transmission: z.enum(['local-fixture', 'base64', 'signed-url', 'temporary-upload']),
+  receipts: z.array(ProviderMediaReceiptSchema),
+  totalBytes: z.number().int().nonnegative(),
+  issues: z.array(z.string().min(1).max(300)).max(100),
+})
+export type MediaResolutionPreview = z.infer<typeof MediaResolutionPreviewSchema>
+
+export const AssetVariantSchema = z.object({
+  id: IdSchema,
+  assetId: IdSchema,
+  revision: z.number().int().positive(),
+  label: z.string().trim().min(1).max(160),
+  prompt: z.string().max(8_000).default(''),
+  metadata: JsonObjectSchema.default({}),
+  mediaId: IdSchema.optional(),
+  forkedFromVariantId: IdSchema.optional(),
+  favorite: z.boolean().default(false),
+  archived: z.boolean().default(false),
+  createdAt: IsoDateSchema,
+})
+export type AssetVariant = z.infer<typeof AssetVariantSchema>
+
+export const CandidateSchema = z.object({
+  id: IdSchema,
+  projectId: IdSchema,
+  shotId: IdSchema,
+  kind: z.enum(['image', 'video', 'audio']),
+  taskId: IdSchema,
+  promptRevisionId: IdSchema.optional(),
+  batchId: IdSchema.optional(),
+  parentCandidateId: IdSchema.optional(),
+  mediaId: IdSchema.optional(),
+  provider: z.string().min(1),
+  model: z.string().min(1),
+  inputSnapshot: JsonObjectSchema,
+  parametersSnapshot: JsonObjectSchema.default({}),
+  label: z.string().trim().max(120).default(''),
+  tags: z.array(z.string().trim().min(1).max(40)).max(30).default([]),
+  status: z.enum(['ready', 'failed', 'archived']),
+  favorite: z.boolean().default(false),
+  createdAt: IsoDateSchema,
+})
+export type Candidate = z.infer<typeof CandidateSchema>
+
+export const CandidateBatchSchema = z.object({
+  id: IdSchema,
+  projectId: IdSchema,
+  shotId: IdSchema,
+  kind: z.enum(['image', 'video', 'audio']),
+  modelId: z.string().min(1).max(160),
+  idempotencyKey: z.string().min(16).max(200),
+  quantity: z.number().int().min(1).max(20),
+  maxConcurrent: z.number().int().min(1).max(8),
+  status: z.enum(['queued', 'running', 'partial', 'succeeded', 'failed', 'cancelled']),
+  completedCount: z.number().int().nonnegative(),
+  failedCount: z.number().int().nonnegative(),
+  parametersSnapshot: JsonObjectSchema,
+  source: z.enum(['demo-production', 'user', 'retry']),
+  parentBatchId: IdSchema.optional(),
+  createdAt: IsoDateSchema,
+  updatedAt: IsoDateSchema,
+  finishedAt: IsoDateSchema.optional(),
+})
+export type CandidateBatch = z.infer<typeof CandidateBatchSchema>
+
+export const MemoryScopeSchema = z.enum(['episode', 'series', 'global'])
+export const MemorySourceTypeSchema = z.enum(['story_event', 'artifact', 'series_bible', 'shared_asset', 'user_feedback', 'selected_candidate'])
+export const MemorySensitiveFlagSchema = z.enum(['credential', 'signed-url', 'private-path', 'provider-response', 'binary-content'])
+export const MemoryRecordSchema = z.object({
+  id: IdSchema,
+  scope: MemoryScopeSchema,
+  scopeId: IdSchema,
+  originProjectId: IdSchema.optional(),
+  sourceType: MemorySourceTypeSchema,
+  sourceKey: z.string().trim().min(3).max(240),
+  sourceRevision: z.number().int().positive(),
+  title: z.string().trim().min(1).max(240),
+  summary: z.string().trim().min(1).max(4_000),
+  content: z.string().trim().min(1).max(12_000),
+  keywords: z.array(z.string().trim().min(1).max(80)).max(100),
+  contentHash: z.string().length(64),
+  stale: z.boolean().default(false),
+  disabled: z.boolean().default(false),
+  sensitiveFlags: z.array(MemorySensitiveFlagSchema).max(10).default([]),
+  createdAt: IsoDateSchema,
+  updatedAt: IsoDateSchema,
+})
+export type MemoryRecord = z.infer<typeof MemoryRecordSchema>
+
+export const MemoryChunkSchema = z.object({
+  id: IdSchema,
+  memoryId: IdSchema,
+  ordinal: z.number().int().nonnegative(),
+  text: z.string().trim().min(1).max(2_000),
+  keywords: z.array(z.string().trim().min(1).max(80)).max(60),
+  contentHash: z.string().length(64),
+  createdAt: IsoDateSchema,
+})
+export type MemoryChunk = z.infer<typeof MemoryChunkSchema>
+
+export const MemorySearchResultSchema = z.object({
+  record: MemoryRecordSchema,
+  score: z.number().finite().nonnegative(),
+  matchedKeywords: z.array(z.string().min(1).max(80)).max(60),
+  reasons: z.array(z.string().min(1).max(240)).min(1).max(10),
+})
+export type MemorySearchResult = z.infer<typeof MemorySearchResultSchema>
+
+export const AgentMemoryCitationSchema = z.object({
+  memoryId: IdSchema,
+  scope: MemoryScopeSchema,
+  sourceType: MemorySourceTypeSchema,
+  sourceKey: z.string().trim().min(3).max(240),
+  sourceRevision: z.number().int().positive(),
+  contentHash: z.string().length(64),
+  score: z.number().finite().nonnegative(),
+  matchedKeywords: z.array(z.string().trim().min(1).max(80)).max(60),
+  reasons: z.array(z.string().trim().min(1).max(240)).min(1).max(10),
+}).strict()
+export type AgentMemoryCitation = z.infer<typeof AgentMemoryCitationSchema>
+
+export const MemoryRebuildReportSchema = z.object({
+  projectId: IdSchema,
+  created: z.number().int().nonnegative(),
+  reused: z.number().int().nonnegative(),
+  markedStale: z.number().int().nonnegative(),
+  skippedSensitive: z.number().int().nonnegative(),
+  indexedChunks: z.number().int().nonnegative(),
+})
+export type MemoryRebuildReport = z.infer<typeof MemoryRebuildReportSchema>
+
+export const MemoryModelStatusSchema = z.object({
+  mode: z.enum(['keyword', 'hybrid']),
+  keywordReady: z.literal(true),
+  onnx: z.object({ enabled: z.boolean(), installed: z.boolean(), status: z.enum(['not-requested', 'ready', 'unavailable', 'hash-mismatch']), modelId: z.string(), revision: z.string(), expectedSha256: z.string().length(64) }),
+})
+export type MemoryModelStatus = z.infer<typeof MemoryModelStatusSchema>
+
+export const PromptPackRefSchema = z.object({
+  id: z.string().min(1).max(120),
+  version: z.string().regex(/^\d+\.\d+\.\d+$/),
+  contentHash: z.string().length(64),
+})
+
+export const PromptRunSchema = z.object({
+  id: IdSchema,
+  projectId: IdSchema,
+  workflow: z.object({ id: z.string().min(1).max(160), version: z.string().regex(/^\d+\.\d+\.\d+$/) }).optional(),
+  prompt: PromptPackRefSchema,
+  skills: z.array(PromptPackRefSchema).max(31),
+  providerProfile: PromptPackRefSchema,
+  modelSnapshot: z.object({
+    modelId: z.string().min(1).max(160),
+    providerId: z.string().min(1).max(120),
+    capabilities: z.array(z.string().min(1).max(120)).max(50),
+    snapshotVersion: z.string().min(1).max(120),
+  }),
+  variablesHash: z.string().length(64),
+  compiledHash: z.string().length(64),
+  compiled: z.object({
+    system: z.string().min(1).max(30_000),
+    canonical: z.string().min(1).max(50_000),
+    zhReview: z.string().min(1).max(20_000),
+    enExecution: z.string().min(1).max(20_000),
+    outputSchema: JsonObjectSchema,
+    warnings: z.array(z.string().max(1_000)).max(50),
+  }),
+  status: z.enum(['compiled', 'submitted', 'succeeded', 'failed', 'rolled_back']),
+  parentPromptRunId: IdSchema.optional(),
+  createdAt: IsoDateSchema,
+  updatedAt: IsoDateSchema,
+})
+export type PromptRun = z.infer<typeof PromptRunSchema>
+
+export const PromptPackInventorySchema = z.object({
+  package: z.literal('@local/ai-video-director-prompt-pack@0.1.0'),
+  prompts: z.array(z.object({
+    id: z.string().min(1).max(120), version: z.string().regex(/^\d+\.\d+\.\d+$/),
+    title: z.string().min(1).max(200), stage: z.string().min(1).max(80),
+    status: z.enum(['draft', 'canary', 'active', 'retired']), contentHash: z.string().length(64),
+  })),
+  skills: z.array(z.object({
+    id: z.string().min(1).max(120), version: z.string().regex(/^\d+\.\d+\.\d+$/),
+    title: z.string().min(1).max(200), family: z.enum(['story.genre', 'art.style', 'production']),
+    trustLevel: z.enum(['builtin', 'reviewed', 'project', 'untrusted']), contentHash: z.string().length(64),
+  })),
+  workflows: z.array(z.object({
+    id: z.string().min(1).max(160), version: z.string().regex(/^\d+\.\d+\.\d+$/), title: z.string().min(1).max(200), stepCount: z.number().int().positive(),
+  })),
+  providerProfileCount: z.number().int().nonnegative(),
+})
+export type PromptPackInventory = z.infer<typeof PromptPackInventorySchema>
+
+export const TaskAttemptSchema = z.object({
+  id: IdSchema,
+  projectId: IdSchema,
+  taskId: IdSchema,
+  promptRunId: IdSchema.optional(),
+  attempt: z.number().int().positive(),
+  status: z.enum(['created', 'submitting', 'accepted', 'polling', 'reconciling', 'succeeded', 'failed', 'cancelled', 'outcome_unknown']),
+  provider: z.string().min(1).max(120),
+  model: z.string().min(1).max(160),
+  idempotencyKey: z.string().min(16).max(200),
+  receiptId: IdSchema.optional(),
+  diagnosticHash: z.string().length(64).optional(),
+  createdAt: IsoDateSchema,
+  updatedAt: IsoDateSchema,
+  finishedAt: IsoDateSchema.optional(),
+})
+export type TaskAttempt = z.infer<typeof TaskAttemptSchema>
+
+export const ProviderReceiptRecordSchema = z.object({
+  id: IdSchema,
+  projectId: IdSchema,
+  taskId: IdSchema,
+  attemptId: IdSchema,
+  providerId: z.string().min(1).max(120),
+  remoteJobId: z.string().min(1).max(500),
+  acceptedAt: IsoDateSchema,
+  rawStatusHash: z.string().length(64).optional(),
+  createdAt: IsoDateSchema,
+})
+export type ProviderReceiptRecord = z.infer<typeof ProviderReceiptRecordSchema>
+
+export const ReviewDecisionSchema = z.object({
+  id: IdSchema,
+  projectId: IdSchema,
+  candidateId: IdSchema,
+  promptRunId: IdSchema.optional(),
+  source: z.enum(['automatic_critic', 'human']),
+  decision: z.enum(['pending', 'approved', 'rejected']),
+  rubric: z.record(z.string(), z.number().min(0).max(1)).default({}),
+  reasons: z.array(z.string().max(1_000)).max(50).default([]),
+  createdAt: IsoDateSchema,
+})
+export type ReviewDecision = z.infer<typeof ReviewDecisionSchema>
+
+export const ArtifactVersionSchema = z.object({
+  id: IdSchema,
+  projectId: IdSchema,
+  workflow: z.object({ id: z.string().min(1).max(160), version: z.string().regex(/^\d+\.\d+\.\d+$/) }),
+  stageId: z.string().min(1).max(120),
+  artifactType: z.string().min(1).max(160),
+  revision: z.number().int().positive(),
+  promptRunId: IdSchema.optional(),
+  parentArtifactVersionId: IdSchema.optional(),
+  scope: z.object({ type: z.enum(['project', 'series', 'episode', 'source', 'chapter', 'event', 'scene', 'shot', 'candidate']), id: IdSchema }),
+  dependencies: z.array(z.object({ artifactVersionId: IdSchema, contentHash: z.string().length(64) })).max(100).default([]),
+  content: JsonObjectSchema,
+  contentHash: z.string().length(64),
+  status: z.enum(['draft', 'approved', 'rejected', 'superseded']),
+  createdAt: IsoDateSchema,
+  updatedAt: IsoDateSchema,
+})
+export type ArtifactVersion = z.infer<typeof ArtifactVersionSchema>
+
+export const TaskStatusSchema = z.enum([
+  'queued', 'running', 'waiting_approval', 'retrying', 'succeeded', 'failed',
+  'cancel_requested', 'cancelled', 'timed_out', 'orphaned', 'reconciling',
+])
 export const GenerationTaskSchema = z.object({
-  id: z.string().min(1),
-  type: z.string().min(1),
+  id: IdSchema,
+  projectId: IdSchema,
+  type: z.enum(['event_extract', 'adaptation', 'asset', 'image', 'video', 'voice', 'subtitle', 'boundary_extract', 'export']),
   status: TaskStatusSchema,
-  progress: z.number().min(0).max(100),
-  message: z.string(),
-  provider: z.string().nullish(),
-  model: z.string().nullish(),
-  provider_task_id: z.string().nullish(),
-  attempt: z.number().int().positive().default(1),
-  parent_task_id: z.string().nullish(),
-  idempotency_key: z.string().nullish(),
-  retryable: z.boolean().default(false),
-  cancel_state: z.enum(['none', 'requested', 'confirmed', 'local_only']).default('none'),
-  input_snapshot: JsonRecordSchema.nullish(),
-  media_snapshot: z.array(MediaReferenceSchema).default([]),
-  result: z.unknown().nullable(),
-  // `error` 保留旧客户端使用的字符串；新客户端读取结构化 `error_details`。
-  error: z.union([AppErrorPayloadSchema, z.string()]).nullish(),
-  error_details: AppErrorPayloadSchema.nullish(),
-  created_at: z.number(),
-  started_at: z.number().nullish(),
-  updated_at: z.number(),
-  finished_at: z.number().nullish(),
-  timeout_at: z.number().nullish(),
-  correlation_id: z.string().nullish(),
-  meta: JsonRecordSchema.default({}),
-}).passthrough()
+  stage: z.string().min(1),
+  idempotencyKey: z.string().min(16).max(200),
+  provider: z.string().min(1),
+  model: z.string().min(1),
+  providerTaskId: z.string().max(500).optional(),
+  promptRunId: IdSchema.optional(),
+  providerProfileVersion: z.string().regex(/^\d+\.\d+\.\d+$/).optional(),
+  modelCapabilitySnapshot: JsonObjectSchema.optional(),
+  mediaInputOrder: z.array(z.string().min(1).max(500)).max(100).optional(),
+  attempt: z.number().int().positive(),
+  parentTaskId: IdSchema.optional(),
+  inputSnapshot: JsonObjectSchema,
+  result: JsonObjectSchema.optional(),
+  error: AppErrorSchema.optional(),
+  retryable: z.boolean(),
+  progress: z.number().min(0).max(1).optional(),
+  createdAt: IsoDateSchema,
+  startedAt: IsoDateSchema.optional(),
+  updatedAt: IsoDateSchema,
+  finishedAt: IsoDateSchema.optional(),
+})
 export type GenerationTask = z.infer<typeof GenerationTaskSchema>
 
-export const TaskRealtimeEventSchema = z.discriminatedUnion('type', [
-  z.object({
-    type: z.literal('task.changed'),
-    task: GenerationTaskSchema,
-  }).strict(),
-  z.object({
-    type: z.literal('tasks.snapshot'),
-    tasks: z.array(GenerationTaskSchema).max(1000),
-    server_time: z.number().int().nonnegative(),
-  }).strict(),
+export const PlanStepSchema = z.object({
+  id: IdSchema,
+  title: z.string().min(1).max(200),
+  description: z.string().max(2_000),
+  action: z.enum(['analyze', 'extract_events', 'write_scenes', 'plan_assets', 'plan_shots', 'generate', 'export']),
+  risk: z.enum(['read_only', 'writes_project', 'paid_provider', 'destructive', 'export']),
+  status: z.enum(['pending', 'approved', 'running', 'succeeded', 'failed', 'cancelled']),
+})
+export const ExecutionPlanSchema = z.object({
+  id: IdSchema,
+  projectId: IdSchema,
+  runId: IdSchema,
+  title: z.string().min(1).max(200),
+  goal: z.string().min(1).max(2_000),
+  checkpointRevision: z.number().int().nonnegative(),
+  memoryContextHash: z.string().length(64).optional(),
+  memoryCitationCount: z.number().int().nonnegative().max(20).default(0),
+  status: z.enum(['draft', 'awaiting_approval', 'approved', 'running', 'succeeded', 'failed', 'cancelled']),
+  steps: z.array(PlanStepSchema).min(1).max(20),
+  createdAt: IsoDateSchema,
+  updatedAt: IsoDateSchema,
+})
+export type ExecutionPlan = z.infer<typeof ExecutionPlanSchema>
+
+export const AgentRunCheckpointSchema = z.object({
+  id: IdSchema,
+  projectId: IdSchema,
+  runId: IdSchema,
+  planId: IdSchema,
+  graphRevision: z.number().int().nonnegative(),
+  memoryQuery: z.string().max(500),
+  memoryCitations: z.array(AgentMemoryCitationSchema).max(20),
+  memoryContextHash: z.string().length(64),
+  inputArtifactHashes: z.array(z.object({ artifactVersionId: IdSchema, contentHash: z.string().length(64) })).max(100).default([]),
+  createdAt: IsoDateSchema,
+}).strict()
+export type AgentRunCheckpoint = z.infer<typeof AgentRunCheckpointSchema>
+
+export const AgentApprovalSchema = z.object({
+  id: IdSchema,
+  runId: IdSchema,
+  planId: IdSchema,
+  checkpointRevision: z.number().int().nonnegative(),
+  tokenHash: z.string().length(64),
+  status: z.enum(['pending', 'consumed', 'rejected', 'expired']),
+  expiresAt: IsoDateSchema,
+  consumedAt: IsoDateSchema.optional(),
+  createdAt: IsoDateSchema,
+})
+export type AgentApproval = z.infer<typeof AgentApprovalSchema>
+
+export const PromptDefinitionSchema = z.object({
+  id: IdSchema,
+  stableKey: z.string().regex(/^[a-z][a-z0-9._-]{2,80}$/),
+  role: z.enum(['decision', 'execution', 'supervision']),
+  version: z.number().int().positive(),
+  title: z.string().min(1).max(160),
+  content: z.string().min(1).max(30_000),
+  variables: z.array(z.string().regex(/^[a-z][a-zA-Z0-9_]*$/)).max(50),
+  outputSchema: JsonObjectSchema,
+  status: z.enum(['draft', 'published', 'retired']),
+  source: z.literal('original-clean-room'),
+  contentHash: z.string().length(64),
+  createdAt: IsoDateSchema,
+})
+export type PromptDefinition = z.infer<typeof PromptDefinitionSchema>
+
+export const PromptRevisionSchema = z.object({
+  id: IdSchema,
+  projectId: IdSchema.optional(),
+  stableKey: z.string().regex(/^[a-z][a-z0-9._-]{2,80}$/),
+  revision: z.number().int().positive(),
+  parentRevisionId: IdSchema.optional(),
+  title: z.string().trim().min(1).max(160),
+  role: z.enum(['decision', 'execution', 'supervision']),
+  languageDrafts: z.object({
+    original: z.string().min(1).max(30_000),
+    zhReview: z.string().min(1).max(30_000),
+    enExecution: z.string().min(1).max(30_000),
+  }),
+  feedback: z.string().max(8_000).default(''),
+  variablesSchema: JsonObjectSchema,
+  outputSchema: JsonObjectSchema,
+  modelPolicy: JsonObjectSchema.default({}),
+  status: z.enum(['draft', 'published', 'retired']),
+  source: z.enum(['builtin', 'original-clean-room', 'project-override']),
+  contentHash: z.string().length(64),
+  createdAt: IsoDateSchema,
+  updatedAt: IsoDateSchema,
+})
+export type PromptRevision = z.infer<typeof PromptRevisionSchema>
+
+export const ScopedPromptBindingSchema = z.object({
+  promptRevisionId: IdSchema,
+  stableKey: z.string().regex(/^[a-z][a-z0-9._-]{2,80}$/),
+  promptRevision: z.number().int().positive(),
+  promptContentHash: z.string().length(64),
+  targetType: z.enum(['event', 'scene', 'shot']),
+  targetId: IdSchema,
+  targetRevision: z.number().int().positive(),
+  projectGraphRevision: z.number().int().nonnegative(),
+}).strict()
+export type ScopedPromptBinding = z.infer<typeof ScopedPromptBindingSchema>
+
+export const ScopedRegenerationRequestSchema = z.object({
+  promptRevisionId: IdSchema,
+  targetType: z.enum(['event', 'scene', 'shot']),
+  targetId: IdSchema,
+  variables: JsonObjectSchema.default({}),
+  idempotencyKey: z.string().min(16).max(200),
+}).strict()
+export type ScopedRegenerationRequest = z.infer<typeof ScopedRegenerationRequestSchema>
+
+export const ScopedRegenerationResultSchema = z.object({
+  task: GenerationTaskSchema,
+  artifact: ArtifactVersionSchema,
+  candidate: CandidateSchema.optional(),
+}).strict()
+export type ScopedRegenerationResult = z.infer<typeof ScopedRegenerationResultSchema>
+
+export const PromptDiffSchema = z.object({
+  fromRevisionId: IdSchema,
+  toRevisionId: IdSchema,
+  changes: z.array(z.object({
+    field: z.enum(['title', 'original', 'zhReview', 'enExecution', 'feedback', 'variablesSchema', 'outputSchema', 'modelPolicy', 'status']),
+    kind: z.enum(['added', 'removed', 'changed']),
+    before: z.string().max(30_000).optional(),
+    after: z.string().max(30_000).optional(),
+  })).max(100),
+})
+export type PromptDiff = z.infer<typeof PromptDiffSchema>
+
+export const ArtifactHeadSchema = z.object({
+  scope: ArtifactVersionSchema.shape.scope,
+  artifactType: z.string().min(1).max(160),
+  currentVersionId: IdSchema,
+  expectedRevision: z.number().int().positive(),
+  updatedAt: IsoDateSchema,
+})
+export type ArtifactHead = z.infer<typeof ArtifactHeadSchema>
+
+export const ArtifactHistorySchema = z.object({
+  head: ArtifactHeadSchema.optional(),
+  versions: z.array(ArtifactVersionSchema).max(1_000),
+})
+export type ArtifactHistory = z.infer<typeof ArtifactHistorySchema>
+
+export const ArtifactDiffSchema = z.object({
+  fromVersionId: IdSchema,
+  toVersionId: IdSchema,
+  changes: z.array(z.object({
+    field: z.string().min(1).max(240),
+    before: z.unknown().optional(),
+    after: z.unknown().optional(),
+  }).strict()).max(500),
+})
+export type ArtifactDiff = z.infer<typeof ArtifactDiffSchema>
+
+export const SkillManifestSchema = z.object({
+  id: IdSchema,
+  name: z.string().trim().min(1).max(120),
+  version: z.string().regex(/^\d+\.\d+\.\d+$/),
+  description: z.string().max(1_000),
+  entry: z.literal('SKILL.md'),
+  resources: z.array(z.string().regex(/^[a-zA-Z0-9][a-zA-Z0-9._/-]*$/)).max(50),
+  sha256: z.string().length(64),
+})
+export type SkillManifest = z.infer<typeof SkillManifestSchema>
+
+export const SkillPackageVersionSchema = z.object({
+  id: IdSchema,
+  projectId: IdSchema.optional(),
+  stableKey: z.string().regex(/^[a-z][a-z0-9._-]{2,80}$/),
+  version: z.string().regex(/^\d+\.\d+\.\d+$/),
+  parentVersionId: IdSchema.optional(),
+  manifest: SkillManifestSchema,
+  markdown: z.string().min(1).max(100_000),
+  resources: z.array(z.object({
+    path: z.string().regex(/^[a-zA-Z0-9][a-zA-Z0-9._/-]*$/),
+    mime: z.string().min(3).max(160),
+    size: z.number().int().nonnegative().max(10 * 1024 * 1024),
+    sha256: z.string().length(64),
+  })).max(50),
+  trustLevel: z.enum(['builtin', 'reviewed', 'project', 'untrusted']),
+  status: z.enum(['draft', 'published', 'retired']),
+  source: z.enum(['builtin', 'original-clean-room', 'user-fork']),
+  contentHash: z.string().length(64),
+  createdAt: IsoDateSchema,
+  updatedAt: IsoDateSchema,
+})
+export type SkillPackageVersion = z.infer<typeof SkillPackageVersionSchema>
+
+export const GoldenEvaluationSchema = z.object({
+  id: IdSchema,
+  targetType: z.enum(['prompt', 'skill']),
+  targetVersionId: IdSchema,
+  name: z.string().trim().min(1).max(160),
+  input: JsonObjectSchema,
+  expectedSchema: JsonObjectSchema,
+  fakeOutput: JsonObjectSchema,
+  status: z.enum(['passed', 'failed']),
+  diagnosticCode: z.string().max(160).optional(),
+  createdAt: IsoDateSchema,
+})
+export type GoldenEvaluation = z.infer<typeof GoldenEvaluationSchema>
+
+export const GraphNodeTypeSchema = z.enum([
+  'series', 'episode', 'project', 'source', 'chapter', 'event', 'character', 'plan', 'scene', 'shot',
+  'manual', 'style', 'asset', 'candidate', 'track', 'task', 'export',
 ])
-export type TaskRealtimeEvent = z.infer<typeof TaskRealtimeEventSchema>
+export const GraphNodeSchema = z.object({
+  id: z.string().min(1),
+  entityId: IdSchema,
+  type: GraphNodeTypeSchema,
+  label: z.string().min(1).max(200),
+  subtitle: z.string().max(500).default(''),
+  status: z.enum(['idle', 'ready', 'running', 'warning', 'failed', 'stale', 'selected']).default('idle'),
+  position: z.object({ x: z.number().finite(), y: z.number().finite() }),
+  metadata: JsonObjectSchema.default({}),
+})
+export type GraphNode = z.infer<typeof GraphNodeSchema>
 
-export type TaskEvent =
-  | { type: 'start'; at: number }
-  | { type: 'progress'; progress: number; message?: string; at: number }
-  | { type: 'succeed'; result: unknown; at: number }
-  | { type: 'fail'; error: AppErrorPayload; at: number }
-  | { type: 'cancel_request'; at: number }
-  | { type: 'cancel_confirm'; providerConfirmed: boolean; at: number }
-  | { type: 'orphan'; reason: string; at: number }
+export const GraphEdgeSchema = z.object({
+  id: z.string().min(1),
+  source: z.string().min(1),
+  target: z.string().min(1),
+  type: z.string().min(1),
+  label: z.string().max(120).optional(),
+  animated: z.boolean().default(false),
+})
+export type GraphEdge = z.infer<typeof GraphEdgeSchema>
 
-export const StudioStageKindSchema = z.enum([
-  'topic', 'script', 'assets', 'storyboard', 'visuals', 'voice', 'subtitle', 'timeline', 'export',
-])
-export type StudioStageKind = z.infer<typeof StudioStageKindSchema>
-
-export const StudioNodeIdSchema = z.string().regex(
-  /^project:\d+:(topic|script|assets|storyboard|visuals|voice|subtitle|timeline|export)$/,
-  'Studio 节点必须使用 project:<id>:<stage> 稳定 ID',
-)
-export const StudioPointSchema = z.object({
-  x: z.number().finite().min(-100_000).max(100_000),
-  y: z.number().finite().min(-100_000).max(100_000),
-}).strict()
-export const StudioPositionMapSchema = z.record(StudioNodeIdSchema, StudioPointSchema)
-  .refine((positions) => Object.keys(positions).length <= 32, 'Studio 布局节点过多')
-
-export const StudioViewportSchema = z.object({
-  x: z.number().finite().min(-100_000).max(100_000),
-  y: z.number().finite().min(-100_000).max(100_000),
-  zoom: z.number().finite().min(0.1).max(4),
-}).strict()
-
-export const StudioLayoutUpdateSchema = z.object({
-  schema_version: z.literal(1),
-  positions: StudioPositionMapSchema,
-  viewport: StudioViewportSchema.optional(),
-  base_revision: z.number().int().nonnegative().optional(),
-}).strict()
-export type StudioLayoutUpdate = z.infer<typeof StudioLayoutUpdateSchema>
-
-export const StudioLayoutSchema = StudioLayoutUpdateSchema.omit({ base_revision: true }).extend({
-  project_id: z.number().int().positive(),
+export const GraphProjectionSchema = z.object({
+  projectId: IdSchema,
+  view: z.enum(['story', 'production', 'delivery']),
   revision: z.number().int().nonnegative(),
-  updated_at: z.number().int().nonnegative().nullable(),
+  nodes: z.array(GraphNodeSchema),
+  edges: z.array(GraphEdgeSchema),
+  generatedAt: IsoDateSchema,
 })
-export type StudioLayout = z.infer<typeof StudioLayoutSchema>
+export type GraphProjection = z.infer<typeof GraphProjectionSchema>
 
-export const DirectorAdviceOperationSchema = z.enum([
-  'edit-brief',
-  'edit-script',
-  'design-assets',
-  'plan-shots',
-  'review-visuals',
-  'complete-audio',
-  'complete-subtitles',
-  'review-timeline',
-  'diagnose-task',
-  'export-video',
+export const GraphCommandSchema = z.discriminatedUnion('type', [
+  z.object({ type: z.literal('move_nodes'), expectedRevision: z.number().int().nonnegative(), idempotencyKey: z.string().min(16), positions: z.record(z.string(), z.object({ x: z.number(), y: z.number() })) }),
+  z.object({ type: z.literal('connect_events'), expectedRevision: z.number().int().nonnegative(), idempotencyKey: z.string().min(16), sourceEventId: IdSchema, targetEventId: IdSchema, edgeType: StoryEventEdgeTypeSchema }),
+  z.object({ type: z.literal('select_candidate'), expectedRevision: z.number().int().nonnegative(), idempotencyKey: z.string().min(16), shotId: IdSchema, candidateId: IdSchema }),
+  z.object({ type: z.literal('archive_entity'), expectedRevision: z.number().int().nonnegative(), idempotencyKey: z.string().min(16), entityType: z.enum(['asset', 'candidate']), entityId: IdSchema }),
+  z.object({ type: z.literal('update_shot_beats'), expectedRevision: z.number().int().nonnegative(), idempotencyKey: z.string().min(16), shotId: IdSchema, beats: z.array(ShotBeatSchema).min(1).max(16) }),
+  z.object({ type: z.literal('link_previous_boundary'), expectedRevision: z.number().int().nonnegative(), idempotencyKey: z.string().min(16), shotId: IdSchema }),
+  z.object({ type: z.literal('clear_boundary_frame'), expectedRevision: z.number().int().nonnegative(), idempotencyKey: z.string().min(16), shotId: IdSchema, role: z.enum(['start', 'end']) }),
 ])
-export type DirectorAdviceOperation = z.infer<typeof DirectorAdviceOperationSchema>
+export type GraphCommand = z.infer<typeof GraphCommandSchema>
 
-export const DirectorAdviceActionSchema = z.object({
-  id: z.string().regex(/^advice:[a-z0-9-]{3,48}$/),
-  stage: StudioStageKindSchema,
-  operation: DirectorAdviceOperationSchema,
-  title: z.string().trim().min(1).max(120),
-  reason: z.string().trim().min(1).max(500),
-  route: z.string().regex(/^\/(?:[a-z0-9_-]+\/?)+$/i).max(300),
-  priority: z.number().int().min(0).max(100),
-  risk: z.enum(['none', 'review', 'cost']),
-  requires_confirmation: z.boolean(),
-}).strict()
-export type DirectorAdviceAction = z.infer<typeof DirectorAdviceActionSchema>
-
-export const DirectorAdviceEvidenceSchema = z.object({
-  shots: z.number().int().nonnegative(),
-  selected_visuals: z.number().int().nonnegative(),
-  voiced_shots: z.number().int().nonnegative(),
-  subtitled_shots: z.number().int().nonnegative(),
-  asset_units: z.number().int().nonnegative(),
-  active_skills: z.number().int().nonnegative(),
-  failed_tasks: z.number().int().nonnegative(),
-  running_tasks: z.number().int().nonnegative(),
-  exports: z.number().int().nonnegative(),
-}).strict()
-export type DirectorAdviceEvidence = z.infer<typeof DirectorAdviceEvidenceSchema>
-
-export const DirectorAdvicePlanSchema = z.object({
-  schema_version: z.literal(1),
-  plan_id: z.string().regex(/^director:[a-f0-9]{16}$/),
-  project_id: z.number().int().positive(),
-  generated_at: z.number().int().nonnegative(),
-  health_score: z.number().int().min(0).max(100),
-  summary: z.string().trim().min(1).max(500),
-  evidence: DirectorAdviceEvidenceSchema,
-  actions: z.array(DirectorAdviceActionSchema).max(12),
-  next_action_id: z.string().nullable(),
-}).strict()
-export type DirectorAdvicePlan = z.infer<typeof DirectorAdvicePlanSchema>
-
-export interface ProviderContext {
-  signal?: AbortSignal
-  correlationId: string
-  idempotencyKey: string
-}
-
-export interface ProviderSubmission<TResult = unknown> {
-  providerTaskId?: string
-  result?: TResult
-  status: 'submitted' | 'succeeded'
-}
-
-export interface ProviderReconciliation<TResult = unknown> {
-  status: 'running' | 'succeeded' | 'failed' | 'canceled' | 'unknown'
-  result?: TResult
-  error?: AppErrorPayload
-}
-
-export const ProviderCapabilityStateSchema = z.enum(['supported', 'unsupported', 'unverified'])
-export type ProviderCapabilityState = z.infer<typeof ProviderCapabilityStateSchema>
-
-export const ProviderOperationCapabilitiesSchema = z.object({
-  reconcile: ProviderCapabilityStateSchema,
-  cancel: ProviderCapabilityStateSchema,
-  billing: ProviderCapabilityStateSchema,
+export const ProjectSnapshotSchema = z.object({
+  project: ProjectSchema,
+  episode: EpisodeSchema.optional(),
+  series: SeriesSchema.optional(),
+  sources: z.array(SourceDocumentSchema),
+  chapters: z.array(ChapterSchema),
+  events: z.array(StoryEventSchema),
+  eventEdges: z.array(StoryEventEdgeSchema),
+  scenes: z.array(SceneSchema),
+  shots: z.array(ShotSchema),
+  assets: z.array(AssetUnitSchema),
+  variants: z.array(AssetVariantSchema),
+  assetBindings: z.array(AssetBindingSchema).default([]),
+  resolvedAssets: z.array(ResolvedAssetSchema).default([]),
+  media: z.array(MediaReferenceSchema),
+  candidates: z.array(CandidateSchema),
+  candidateBatches: z.array(CandidateBatchSchema).default([]),
+  providerMediaReceipts: z.array(ProviderMediaReceiptSchema).default([]),
+  tasks: z.array(GenerationTaskSchema),
+  plans: z.array(ExecutionPlanSchema),
+  promptRuns: z.array(PromptRunSchema),
+  attempts: z.array(TaskAttemptSchema),
+  providerReceipts: z.array(ProviderReceiptRecordSchema),
+  reviews: z.array(ReviewDecisionSchema),
+  artifactVersions: z.array(ArtifactVersionSchema),
 })
-export type ProviderOperationCapabilities = z.infer<typeof ProviderOperationCapabilitiesSchema>
+export type ProjectSnapshot = z.infer<typeof ProjectSnapshotSchema>
 
-export const ProviderBillingStatusSchema = z.object({
-  provider: z.string().min(1),
-  capability: ProviderCapabilityStateSchema,
-  configured: z.boolean(),
-  status: z.enum(['available', 'unavailable', 'unknown']),
-  reason_code: z.string().min(1),
-  checked_at: z.number().int().nonnegative(),
-  currency: z.string().max(16).nullable().optional(),
-  balance: z.number().finite().nullable().optional(),
-}).passthrough()
-export type ProviderBillingStatus = z.infer<typeof ProviderBillingStatusSchema>
+export const ProjectPackageFileSchema = z.object({
+  path: z.string().regex(/^(?:project\.json|series\.json|projects\/[a-f0-9-]+\.json|media\/(?:[a-f0-9-]+\/)?[a-f0-9-]+\.[a-z0-9]+|shared-media\/[a-f0-9-]+\.[a-z0-9]+)$/),
+  kind: z.enum(['project', 'series', 'media', 'shared-media']),
+  size: z.number().int().nonnegative(),
+  sha256: z.string().length(64),
+  mime: z.string().min(3).max(160).optional(),
+  mediaId: IdSchema.optional(),
+})
+export type ProjectPackageFile = z.infer<typeof ProjectPackageFileSchema>
 
-export interface ProviderAdapter<TInput = unknown, TResult = unknown> {
-  readonly provider: string
-  readonly modality: ModelDescriptor['modality']
-  readonly capabilities?: ProviderOperationCapabilities
-  submit(input: TInput, context: ProviderContext): Promise<ProviderSubmission<TResult>>
-  reconcile?(providerTaskId: string, context: ProviderContext): Promise<ProviderReconciliation<TResult>>
-  cancel?(providerTaskId: string, context: ProviderContext): Promise<'confirmed' | 'requested' | 'unsupported'>
-  getBillingStatus?(context: ProviderContext): Promise<ProviderBillingStatus>
-}
+export const ProjectPackageManifestV1Schema = z.object({
+  format: z.literal('aigc-director-project'),
+  formatVersion: z.literal(1),
+  appVersion: z.literal('2.0.0'),
+  schemaVersion: z.number().int().positive(),
+  sourceProjectId: IdSchema,
+  projectName: z.string().trim().min(1).max(120),
+  createdAt: IsoDateSchema,
+  files: z.array(ProjectPackageFileSchema).min(1).max(5_001),
+  excluded: z.array(z.enum(['credentials', 'provider-secrets', 'logs', 'absolute-paths'])),
+})
+export const ProjectPackageManifestV2Schema = z.object({
+  format: z.literal('aigc-director-project'),
+  formatVersion: z.literal(2),
+  appVersion: z.literal('2.0.0'),
+  schemaVersion: z.number().int().positive(),
+  bundleKind: z.enum(['project', 'series']),
+  sourceProjectId: IdSchema.optional(),
+  sourceSeriesId: IdSchema.optional(),
+  bundleName: z.string().trim().min(1).max(160),
+  createdAt: IsoDateSchema,
+  files: z.array(ProjectPackageFileSchema).min(1).max(5_001),
+  excluded: z.array(z.enum(['credentials', 'provider-secrets', 'logs', 'absolute-paths'])),
+}).superRefine((manifest, context) => {
+  if (manifest.bundleKind === 'project' && !manifest.sourceProjectId) context.addIssue({ code: 'custom', path: ['sourceProjectId'], message: 'Project 包必须声明来源项目' })
+  if (manifest.bundleKind === 'series' && !manifest.sourceSeriesId) context.addIssue({ code: 'custom', path: ['sourceSeriesId'], message: 'Series 包必须声明来源系列' })
+})
+export type ProjectPackageManifestV2 = z.infer<typeof ProjectPackageManifestV2Schema>
+export const ProjectPackageManifestSchema = z.union([ProjectPackageManifestV1Schema, ProjectPackageManifestV2Schema])
+export type ProjectPackageManifest = z.infer<typeof ProjectPackageManifestSchema>
 
-export interface AigcStudioBridge {
-  setLocale(locale: 'zh' | 'en'): void
-  selectExportDirectory(): Promise<string | null>
-}
+export const SeriesPackagePayloadSchema = z.object({
+  series: SeriesSchema,
+  episodes: z.array(EpisodeSchema).min(1).max(1_000),
+  projects: z.array(ProjectSnapshotSchema).min(1).max(1_000),
+  sharedAssets: z.array(SharedAssetSchema).max(10_000),
+  sharedVariants: z.array(SharedAssetVariantSchema).max(50_000),
+  sharedMediaReferences: z.array(SharedMediaReferenceSchema).max(50_000).default([]),
+}).superRefine((payload, context) => {
+  const projectIds = new Set(payload.projects.map((snapshot) => snapshot.project.id))
+  const episodeProjectIds = new Set(payload.episodes.map((episode) => episode.projectId))
+  if (payload.episodes.some((episode) => episode.seriesId !== payload.series.id)) context.addIssue({ code: 'custom', path: ['episodes'], message: '分集必须属于声明的 Series' })
+  if (projectIds.size !== payload.projects.length || episodeProjectIds.size !== payload.episodes.length || [...projectIds].some((id) => !episodeProjectIds.has(id))) {
+    context.addIssue({ code: 'custom', path: ['projects'], message: 'Series 包的 Project 与 Episode 必须一一对应' })
+  }
+})
+export type SeriesPackagePayload = z.infer<typeof SeriesPackagePayloadSchema>
 
-export const DesktopLocaleSchema = z.enum(['zh', 'en'])
-export type DesktopLocale = z.infer<typeof DesktopLocaleSchema>
+export const ProjectPackageImportReportSchema = z.object({
+  project: ProjectSchema,
+  formatVersion: z.union([z.literal(1), z.literal(2)]),
+  bundleKind: z.enum(['project', 'series']).default('project'),
+  fileCount: z.number().int().positive(),
+  mediaCount: z.number().int().nonnegative(),
+  totalBytes: z.number().int().nonnegative(),
+  remappedEntityCount: z.number().int().nonnegative(),
+  warnings: z.array(z.string().max(500)).max(100),
+  series: SeriesSchema.optional(),
+  projects: z.array(ProjectSchema).optional(),
+})
+export type ProjectPackageImportReport = z.infer<typeof ProjectPackageImportReportSchema>
+
+export const ExportRequestSchema = z.object({
+  projectId: IdSchema,
+  outputDirectory: z.string().min(1).max(2_048),
+  fileName: z.string().regex(/^[^/\\]+\.mp4$/i),
+  width: z.number().int().min(320).max(3_840).default(1_280),
+  height: z.number().int().min(320).max(2_160).default(720),
+  fps: z.number().int().min(12).max(60).default(24),
+})
+export type ExportRequest = z.infer<typeof ExportRequestSchema>
+
+export const HealthSchema = z.object({
+  status: z.literal('ok'),
+  version: z.literal('2.0.0'),
+  demoMode: z.boolean(),
+  providerNetworkDisabled: z.boolean(),
+  schemaVersion: z.literal(9),
+  timestamp: IsoDateSchema,
+})
+export type Health = z.infer<typeof HealthSchema>

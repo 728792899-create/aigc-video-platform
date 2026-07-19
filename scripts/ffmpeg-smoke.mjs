@@ -2,16 +2,9 @@ import { spawnSync } from 'node:child_process';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
-import { createRequire } from 'node:module';
 
-const require = createRequire(import.meta.url);
-const rootStatic = require('ffmpeg-static');
-const executableName = process.platform === 'win32' ? 'ffmpeg.exe' : 'ffmpeg';
-const ffmpeg = [
-  process.env.FFMPEG_PATH,
-  typeof rootStatic === 'string' ? rootStatic : '',
-  path.resolve('server', 'node_modules', 'ffmpeg-static', executableName),
-].find((candidate) => candidate && fs.existsSync(candidate)) || 'ffmpeg';
+const ffmpeg = process.env.FFMPEG_PATH || 'ffmpeg';
+const ffprobe = process.env.FFPROBE_PATH || 'ffprobe';
 const out = path.join(os.tmpdir(), `aigc-ffmpeg-smoke-${process.pid}.mp4`);
 const result = spawnSync(ffmpeg, [
   '-y', '-f', 'lavfi', '-i', 'color=c=0x18233b:s=320x180:d=1',
@@ -22,7 +15,12 @@ try {
   if (result.status !== 0 || !fs.existsSync(out) || fs.statSync(out).size < 2_000) {
     throw new Error((result.stderr || result.error?.message || 'FFmpeg smoke failed').slice(-1_000));
   }
-  console.log(`FFmpeg smoke passed: ${fs.statSync(out).size} bytes`);
+  const probe = spawnSync(ffprobe, ['-v', 'error', '-show_entries', 'format=duration', '-of', 'default=nw=1:nk=1', out], { encoding: 'utf8', windowsHide: true });
+  const duration = Number(probe.stdout?.trim());
+  if (probe.status !== 0 || !Number.isFinite(duration) || duration < 0.9) {
+    throw new Error((probe.stderr || probe.error?.message || 'FFprobe validation failed').slice(-1_000));
+  }
+  console.log(`FFmpeg smoke passed: ${fs.statSync(out).size} bytes, ${duration.toFixed(3)} seconds`);
 } finally {
   try { fs.unlinkSync(out); } catch {}
 }

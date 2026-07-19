@@ -1,0 +1,41 @@
+{
+  "profileId": "declarative-http",
+  "secretRef": "secret://replicate/api-token",
+  "submit": {
+    "method": "POST",
+    "url": "https://api.replicate.com/v1/predictions",
+    "headers": {
+      "Content-Type": "application/json",
+      "Idempotency-Key": "{{context.key}}"
+    },
+    "body": {
+      "version": "{{request.parameters.version}}",
+      "input": "{{request.parameters.input}}"
+    },
+    "jobIdPointer": "/id",
+    "statusPointer": "/status"
+  },
+  "poll": {
+    "method": "GET",
+    "url": "https://api.replicate.com/v1/predictions/{{receipt.remoteJobId}}",
+    "statusPointer": "/status",
+    "outputsPointer": "/output"
+  },
+  "cancel": {
+    "method": "POST",
+    "url": "https://api.replicate.com/v1/predictions/{{receipt.remoteJobId}}/cancel"
+  },
+  "reconcile": {
+    "method": "GET",
+    "url": "https://api.replicate.com/v1/predictions/{{receipt.remoteJobId}}",
+    "statusPointer": "/status",
+    "outputsPointer": "/output"
+  },
+  "statusMap": {
+    "starting": "queued",
+    "processing": "running",
+    "successful": "succeeded",
+    "failed": "failed",
+    "canceled": "cancelled"
+  }
+}
