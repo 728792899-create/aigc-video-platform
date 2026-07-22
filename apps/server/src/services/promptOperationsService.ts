@@ -5,12 +5,15 @@ import {
   ArtifactVersionSchema,
   GoldenEvaluationSchema,
   PromptDiffSchema,
+  PromptPolishResultSchema,
   PromptRevisionSchema,
   SkillPackageVersionSchema,
   type ArtifactVersion,
   type GoldenEvaluation,
   type JsonObject,
   type PromptDiff,
+  type PromptPolishRequest,
+  type PromptPolishResult,
   type PromptRevision,
   type SkillPackageVersion,
 } from '@aigc-director/contracts'
@@ -46,6 +49,13 @@ function latestSkillVersion(versions: SkillPackageVersion[]): SkillPackageVersio
     }
     return candidate.createdAt > latest.createdAt ? candidate : latest
   }, undefined)
+}
+
+const polishDirectionCopy: Readonly<Record<PromptPolishRequest['direction'], { zh: string; en: string }>> = {
+  clarity: { zh: '明确目标、输入约束与可验证输出', en: 'Clarify the goal, input constraints, and verifiable output.' },
+  cinematic: { zh: '增强镜头语言、节奏与可拍摄性', en: 'Strengthen shot language, pacing, and filmability.' },
+  structure: { zh: '强化步骤、字段与结构化输出边界', en: 'Strengthen steps, fields, and structured-output boundaries.' },
+  brevity: { zh: '删除重复表达，保留必要约束', en: 'Remove repetition while preserving required constraints.' },
 }
 
 export class PromptOperationsService {
@@ -108,6 +118,65 @@ export class PromptOperationsService {
         field, kind: left === undefined ? 'added' : right === undefined ? 'removed' : 'changed',
         before: typeof left === 'string' ? left : JSON.stringify(left), after: typeof right === 'string' ? right : JSON.stringify(right),
       })),
+    })
+  }
+
+  polishPrompt(revisionId: string, input: PromptPolishRequest): PromptPolishResult {
+    const source = this.database.getPromptRevision(revisionId)
+    if (!source) throw new Error('PROMPT_REVISION_NOT_FOUND')
+    if (!source.projectId) throw new Error('PROMPT_POLISH_REQUIRES_PROJECT_SCOPE')
+    const projectId = source.projectId
+    const requestHash = hash({
+      sourceRevisionId: source.id,
+      expectedRevision: input.expectedRevision,
+      feedback: input.feedback,
+      direction: input.direction,
+    })
+    const cached = this.database.getIdempotent<PromptPolishResult>(input.idempotencyKey)
+    if (cached) {
+      const result = PromptPolishResultSchema.parse(cached)
+      if (result.requestHash !== requestHash || result.sourceRevisionId !== source.id) throw new Error('PROMPT_POLISH_IDEMPOTENCY_CONFLICT')
+      return PromptPolishResultSchema.parse({ ...result, reused: true })
+    }
+    return this.database.transaction(() => {
+      const revisions = this.database.listPromptRevisions(source.stableKey, projectId)
+      const current = revisions[0]
+      if (!current || current.id !== source.id || current.revision !== input.expectedRevision) throw new Error('PROMPT_REVISION_CONFLICT')
+      const lastKnownGood = revisions.find((revision) => revision.status === 'published')
+      const direction = polishDirectionCopy[input.direction]
+      const polished = this.createPromptRevision({
+        projectId,
+        stableKey: source.stableKey,
+        title: source.title,
+        role: source.role,
+        languageDrafts: {
+          original: source.languageDrafts.original,
+          zhReview: `${source.languageDrafts.zhReview.trim()}\n\n润色目标：${direction.zh}\n用户反馈：${input.feedback}`,
+          enExecution: `${source.languageDrafts.enExecution.trim()}\n\nRevision goal: ${direction.en}\nReviewer feedback (verbatim): ${input.feedback}`,
+        },
+        feedback: input.feedback,
+        variablesSchema: source.variablesSchema,
+        outputSchema: source.outputSchema,
+        modelPolicy: {
+          ...source.modelPolicy,
+          polishMode: 'demo-deterministic',
+          direction: input.direction,
+          ...(lastKnownGood ? { lastKnownGoodRevisionId: lastKnownGood.id } : {}),
+        },
+        status: 'draft',
+        source: source.source === 'builtin' ? 'project-override' : source.source,
+      })
+      const result = PromptPolishResultSchema.parse({
+        sourceRevisionId: source.id,
+        revision: polished,
+        diff: this.diffPrompt(source.id, polished.id),
+        ...(lastKnownGood ? { lastKnownGoodRevisionId: lastKnownGood.id } : {}),
+        requestHash,
+        mode: 'demo-deterministic',
+        reused: false,
+      })
+      this.database.saveIdempotent(projectId, input.idempotencyKey, 'prompt-polish', result)
+      return result
     })
   }
 

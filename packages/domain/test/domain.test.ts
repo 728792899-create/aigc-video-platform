@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import type { SourceDocument, StoryEvent, StoryEventEdge } from '@aigc-director/contracts'
-import { canTransitionTask, createAdaptationArtifacts, detectChapterHeadings, extractStoryDeterministically, linkPreviousEndFrame, normalizeShotBeats, propagateStaleFields, sha256, validateStoryGraph } from '../src/index.js'
+import { canTransitionTask, createAdaptationArtifacts, detectChapterHeadings, extractStoryDeterministically, linkPreviousEndFrame, normalizeShotBeats, propagateSceneStaleFields, propagateStaleFields, sha256, validateStoryGraph } from '../src/index.js'
 
 const projectId = '11111111-1111-4111-8111-111111111111'
 const source: SourceDocument = {
@@ -34,8 +34,15 @@ describe('2.0 领域契约', () => {
 
   it('字段级 stale 与任务转换保持可诊断', () => {
     expect(propagateStaleFields(['dialogue'])).toEqual(['voice', 'subtitle', 'timeline', 'export'])
+    expect(propagateStaleFields(['negativePrompt'])).toEqual(['image', 'video', 'timeline', 'export'])
+    expect(propagateStaleFields(['beats'])).toEqual(['image', 'video', 'voice', 'subtitle', 'timeline', 'export'])
+    expect(propagateSceneStaleFields(['synopsis'])).toEqual(['image', 'video', 'timeline', 'export'])
     expect(canTransitionTask('failed', 'retrying')).toBe(true)
     expect(canTransitionTask('succeeded', 'running')).toBe(false)
+    expect(canTransitionTask('running', 'outcome_unknown')).toBe(true)
+    expect(canTransitionTask('outcome_unknown', 'retrying')).toBe(false)
+    expect(canTransitionTask('outcome_unknown', 'reconciling')).toBe(true)
+    expect(canTransitionTask('reconciling', 'needs_attention')).toBe(true)
   })
 
   it('多 Beat 归一后精确覆盖镜头且保留稳定 ID', () => {

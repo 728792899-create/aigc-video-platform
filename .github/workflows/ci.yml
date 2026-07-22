@@ -36,9 +36,37 @@ jobs:
       - run: pnpm native:host
       - run: pnpm audit --prod --audit-level=high
       - run: pnpm quality
+      - run: pnpm local:smoke
       - run: pnpm prepare:package
       - run: pnpm electron:preflight
       - run: git diff --check
+
+  docker-smoke:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 35
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 11.9.0
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      - name: Validate Compose model
+        run: |
+          mkdir -p .local/docker
+          printf '{}\n' > .local/docker/provider-credentials.json
+          printf '%s\n' \
+            'AIGC_DIRECTOR_SESSION_TOKEN=ci-session-token-with-enough-entropy-0001' \
+            'AIGC_DIRECTOR_BOOTSTRAP_TOKEN=ci-bootstrap-token-with-enough-entropy-0001' \
+            'AIGC_DIRECTOR_PUBLIC_PORT=33100' \
+            "AIGC_DIRECTOR_CREDENTIALS_SECRET_FILE=$PWD/.local/docker/provider-credentials.json" \
+            'DEMO_MODE=1' \
+            'PROVIDER_NETWORK_DISABLED=1' > .local/docker/runtime.env
+          docker compose --env-file .local/docker/runtime.env config --quiet
+      - run: pnpm docker:smoke
 
   desktop-preflight:
     strategy:

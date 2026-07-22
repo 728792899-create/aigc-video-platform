@@ -110,9 +110,9 @@ onMounted(load)
 .memory-search { display: grid; gap: 6px; }
 .memory-search label { color: var(--muted); font-size: 10px; }
 .memory-search > div { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 8px; }
-.memory-search input { min-width: 0; padding: 9px 10px; border: 1px solid var(--line); border-radius: 8px; color: var(--text); background: #080f19; }
+.memory-search input { min-width: 0; padding: 9px 10px; border: 1px solid var(--line); border-radius: 8px; color: var(--text); background: var(--surface-panel); }
 .memory-results { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 8px; }
-.memory-results article { padding: 10px; border: 1px solid var(--line); border-radius: 10px; background: #09111c; }
+.memory-results article { padding: 10px; border: 1px solid var(--line); border-radius: 10px; background: var(--surface-panel); }
 .memory-results article > header { display: flex; justify-content: space-between; gap: 8px; }
 .memory-results article header div { display: grid; gap: 3px; }
 .memory-results strong { font-size: 11px; }
@@ -120,6 +120,6 @@ onMounted(load)
 .memory-results ul { margin: 7px 0; padding-left: 15px; color: var(--muted); font-size: 9px; }
 .memory-actions { display: flex; gap: 6px; }
 .memory-actions button { padding: 5px 7px; border: 1px solid var(--line); border-radius: 7px; color: var(--muted-strong); background: transparent; font-size: 9px; }
-.memory-record-summary, .memory-onnx-note { padding: 9px; border-radius: 8px; color: var(--muted); background: rgba(105, 227, 200, .05); font-size: 10px; line-height: 1.5; }
+.memory-record-summary, .memory-onnx-note { padding: 9px; border-radius: 8px; color: var(--muted); background: var(--alpha-accent-05); font-size: 10px; line-height: 1.5; }
 @media (max-width: 720px) { .memory-workspace > header { display: grid; } .memory-results { grid-template-columns: 1fr; } }
 </style>

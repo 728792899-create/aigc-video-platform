@@ -3,7 +3,7 @@ import { mkdir, mkdtemp, readFile, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
-import { MediaReferenceSchema, ProjectPackageManifestSchema, type GenerationTask } from '@aigc-director/contracts'
+import { MediaReferenceSchema, ProjectPackageManifestSchema, ProjectSnapshotSchema, type GenerationTask } from '@aigc-director/contracts'
 import { DirectorDatabase } from '../src/db/database.js'
 import { ProjectPackageService, decodeZipEntries } from '../src/services/projectPackageService.js'
 
@@ -67,11 +67,15 @@ describe('可移植版本化项目包', () => {
     })
     const task: GenerationTask = {
       id: randomUUID(), projectId: project.id, type: 'export', status: 'succeeded', stage: 'completed',
-      idempotencyKey: `portable-${randomUUID()}`, provider: 'demo-local', model: 'ffmpeg', attempt: 1,
+      idempotencyKey: `portable-${randomUUID()}`, provider: 'demo-local', model: 'ffmpeg', providerTaskId: 'remote-sensitive-job-id', attempt: 1,
       inputSnapshot: { outputDirectory: directory, mediaId }, result: { fileName: 'demo.mp4' }, retryable: false,
       createdAt: now, updatedAt: now, finishedAt: now,
     }
     database.put('generation_tasks', project.id, task)
+    database.put('provider_receipts', project.id, {
+      id: randomUUID(), projectId: project.id, taskId: task.id, attemptId: randomUUID(), providerId: 'demo-local',
+      remoteJobId: 'remote-sensitive-job-id', acceptedAt: now, createdAt: now,
+    })
     const artifactId = randomUUID()
     database.put('artifact_versions', project.id, {
       id: artifactId, projectId: project.id, workflow: { id: 'workflow.portable', version: '1.0.0' },
@@ -89,6 +93,9 @@ describe('可移植版本化项目包', () => {
     expect(manifest.files).toHaveLength(2)
     expect(manifest.excluded).toEqual(expect.arrayContaining(['credentials', 'absolute-paths']))
     expect(exported.buffer.toString('utf8')).not.toContain(directory)
+    const portableSnapshot = ProjectSnapshotSchema.parse(JSON.parse(entries.get('project.json')!.toString('utf8')))
+    expect(portableSnapshot.tasks[0]?.providerTaskId).toBeUndefined()
+    expect(portableSnapshot.providerReceipts).toHaveLength(0)
 
     const imported = await service.importProject(exported.buffer, '已导入副本')
     expect(imported.project.id).not.toBe(project.id)
@@ -98,6 +105,8 @@ describe('可移植版本化项目包', () => {
     expect(snapshot.sources[0]?.id).not.toBe(sourceId)
     expect(snapshot.chapters[0]?.sourceId).toBe(snapshot.sources[0]?.id)
     expect(snapshot.tasks[0]?.inputSnapshot.outputDirectory).toBe('[excluded]')
+    expect(snapshot.tasks[0]?.providerTaskId).toBeUndefined()
+    expect(snapshot.providerReceipts).toHaveLength(0)
     expect(snapshot.media[0]?.id).not.toBe(mediaId)
     expect(snapshot.media[0]?.locator).toBe(`${snapshot.media[0]?.id}.png`)
     expect(snapshot.shots[0]?.beats[0]?.id).not.toBe(beatId)
@@ -106,6 +115,24 @@ describe('可移植版本化项目包', () => {
     expect(snapshot.artifactVersions[0]?.content).toEqual({ mediaId: snapshot.media[0]?.id })
     expect(snapshot.artifactVersions[0]?.contentHash).toBe(createHash('sha256').update(JSON.stringify(snapshot.artifactVersions[0]?.content)).digest('hex'))
     expect(createHash('sha256').update(await readFile(join(directory, 'media', imported.project.id, snapshot.media[0]!.locator))).digest('hex')).toBe(media.sha256)
+  })
+
+  it('未知 Provider 任务导入后只进入人工恢复，不携带远端 ID', async () => {
+    const project = database.createProject({ name: '未知任务包' })
+    const now = new Date().toISOString()
+    database.put('generation_tasks', project.id, {
+      id: randomUUID(), projectId: project.id, type: 'video', status: 'outcome_unknown', stage: '等待对账',
+      idempotencyKey: `portable-unknown-${randomUUID()}`, provider: 'demo-local', model: 'demo-video-v1',
+      providerTaskId: 'remote-unknown-sensitive-id', attempt: 1, inputSnapshot: {}, retryable: false,
+      createdAt: now, updatedAt: now,
+    })
+    const exported = await service.exportProject(project.id)
+    const exportedSnapshot = ProjectSnapshotSchema.parse(JSON.parse(decodeZipEntries(exported.buffer).get('project.json')!.toString('utf8')))
+    expect(exportedSnapshot.tasks[0]?.providerTaskId).toBeUndefined()
+    const imported = await service.importProject(exported.buffer, '未知任务副本')
+    const importedTask = database.snapshot(imported.project.id).tasks[0]
+    expect(importedTask).toMatchObject({ status: 'orphaned', retryable: false, error: { code: 'TASK_IMPORTED_FOR_REVIEW' } })
+    expect(importedTask?.providerTaskId).toBeUndefined()
   })
 
   it('在解压前拒绝 Zip Slip 路径', async () => {

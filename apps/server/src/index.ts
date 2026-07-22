@@ -8,14 +8,17 @@ const previousDatabasePath = join(dataDirectory, 'director-v1.sqlite')
 const defaultDatabasePath = existsSync(previousDatabasePath) ? previousDatabasePath : join(dataDirectory, 'director.sqlite')
 const databasePath = resolve(process.env.AIGC_DIRECTOR_DATABASE ?? defaultDatabasePath)
 const sessionToken = process.env.AIGC_DIRECTOR_SESSION_TOKEN ?? randomBytes(32).toString('base64url')
+const bootstrapToken = process.env.AIGC_DIRECTOR_BOOTSTRAP_TOKEN
 const port = Number.parseInt(process.env.AIGC_DIRECTOR_PORT ?? '33100', 10)
-const host = '127.0.0.1'
+const requestedHost = process.env.AIGC_DIRECTOR_HOST ?? '127.0.0.1'
+const host = requestedHost === '0.0.0.0' && process.env.AIGC_DIRECTOR_CONTAINER === '1' ? requestedHost : '127.0.0.1'
 const startupProbe = process.env.AIGC_DIRECTOR_STARTUP_PROBE === '1'
 
 const { httpServer, io, db, service, allowOrigin } = createDirectorApp({
   databasePath,
   dataDirectory,
   sessionToken,
+  ...(bootstrapToken ? { bootstrapToken } : {}),
   allowedOrigins: (process.env.AIGC_DIRECTOR_ALLOWED_ORIGINS ?? 'http://127.0.0.1:5173,http://localhost:5173').split(',').map((item) => item.trim()).filter(Boolean),
   ...(process.env.AIGC_DIRECTOR_STUDIO_DIR ? { studioDirectory: process.env.AIGC_DIRECTOR_STUDIO_DIR } : {}),
 })

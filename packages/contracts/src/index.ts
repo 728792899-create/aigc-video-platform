@@ -132,6 +132,55 @@ export const StoryEventEdgeSchema = z.object({
 }).refine((edge) => edge.sourceEventId !== edge.targetEventId, { message: '事件不能连接自身' })
 export type StoryEventEdge = z.infer<typeof StoryEventEdgeSchema>
 
+export const CreativeBriefSchema = z.object({
+  goal: z.string().trim().min(1).max(2_000),
+  targetAudience: z.string().trim().min(1).max(500),
+  platform: z.enum(['douyin', 'kuaishou', 'bilibili', 'youtube', 'generic']),
+  genre: z.string().trim().min(1).max(200),
+  tone: z.string().trim().min(1).max(500),
+  targetDurationSeconds: z.number().int().min(5).max(3_600),
+  aspectRatio: z.enum(['9:16', '16:9', '1:1', '4:3']),
+  language: z.string().trim().min(2).max(16),
+  constraints: z.array(z.string().trim().min(1).max(500)).max(30).default([]),
+}).strict()
+export type CreativeBrief = z.infer<typeof CreativeBriefSchema>
+
+export const CreativeBriefRevisionRequestSchema = z.object({
+  expectedRevision: z.number().int().nonnegative(),
+  brief: CreativeBriefSchema,
+}).strict()
+export type CreativeBriefRevisionRequest = z.infer<typeof CreativeBriefRevisionRequestSchema>
+
+export const CreativeBriefFieldSchema = z.enum([
+  'goal', 'targetAudience', 'platform', 'genre', 'tone',
+  'targetDurationSeconds', 'aspectRatio', 'language', 'constraints',
+])
+export type CreativeBriefField = z.infer<typeof CreativeBriefFieldSchema>
+
+export const CreativeBriefCandidateRequestSchema = z.object({
+  count: z.number().int().min(2).max(3).default(3),
+  feedback: z.string().trim().max(2_000).default(''),
+  lockedFields: z.array(CreativeBriefFieldSchema).max(9).default([]),
+  idempotencyKey: z.string().min(16).max(200),
+}).strict()
+export type CreativeBriefCandidateRequest = z.infer<typeof CreativeBriefCandidateRequestSchema>
+
+export const CreativeBriefCandidateReviewRequestSchema = z.discriminatedUnion('decision', [
+  z.object({
+    decision: z.literal('approve'),
+    expectedApprovedRevision: z.number().int().nonnegative(),
+    confirmation: z.literal('APPROVE_CREATIVE_BRIEF'),
+    idempotencyKey: z.string().min(16).max(200),
+  }).strict(),
+  z.object({
+    decision: z.literal('reject'),
+    expectedApprovedRevision: z.number().int().nonnegative(),
+    confirmation: z.literal('REJECT_CREATIVE_BRIEF'),
+    idempotencyKey: z.string().min(16).max(200),
+  }).strict(),
+])
+export type CreativeBriefCandidateReviewRequest = z.infer<typeof CreativeBriefCandidateReviewRequestSchema>
+
 export const SceneSchema = z.object({
   id: IdSchema,
   projectId: IdSchema,
@@ -210,6 +259,48 @@ export type Shot = z.infer<typeof ShotSchema>
 export const AssetTypeSchema = z.enum(['character', 'scene', 'prop', 'style', 'voice', 'music'])
 export const AssetScopeSchema = z.enum(['global', 'series', 'episode', 'project'])
 
+export const VoiceAssetMetadataSchema = z.object({
+  language: z.string().trim().min(2).max(16).default('zh-CN'),
+  purpose: z.enum(['narrator', 'character', 'ambient']).default('narrator'),
+  voiceId: z.string().trim().min(1).max(200).optional(),
+  speed: z.number().min(0.5).max(2).default(1),
+  pitchSemitones: z.number().min(-12).max(12).default(0),
+  emotion: z.string().trim().max(120).default('neutral'),
+  provider: z.string().trim().max(120).optional(),
+  model: z.string().trim().max(160).optional(),
+  previewMediaId: IdSchema.optional(),
+  rightsStatus: z.enum(['original', 'licensed', 'review_required']).default('review_required'),
+  rightsNote: z.string().max(1_000).default(''),
+}).strict()
+export type VoiceAssetMetadata = z.infer<typeof VoiceAssetMetadataSchema>
+
+export const MusicAssetMetadataSchema = z.object({
+  mood: z.string().trim().max(160).default(''),
+  bpm: z.number().int().min(20).max(300).optional(),
+  musicalKey: z.string().trim().max(24).default(''),
+  durationMs: z.number().int().min(100).max(7_200_000).optional(),
+  loopStartMs: z.number().int().nonnegative().optional(),
+  loopEndMs: z.number().int().positive().optional(),
+  source: z.enum(['original', 'licensed', 'generated', 'demo_fixture']).default('original'),
+  previewMediaId: IdSchema.optional(),
+  rightsStatus: z.enum(['original', 'licensed', 'review_required']).default('review_required'),
+  licenseNote: z.string().max(1_000).default(''),
+}).strict().superRefine((metadata, context) => {
+  if (metadata.loopStartMs !== undefined && metadata.loopEndMs !== undefined && metadata.loopEndMs <= metadata.loopStartMs) {
+    context.addIssue({ code: 'custom', path: ['loopEndMs'], message: '循环结束必须晚于循环起点' })
+  }
+  if (metadata.durationMs !== undefined && metadata.loopEndMs !== undefined && metadata.loopEndMs > metadata.durationMs) {
+    context.addIssue({ code: 'custom', path: ['loopEndMs'], message: '循环结束不能超过音乐时长' })
+  }
+})
+export type MusicAssetMetadata = z.infer<typeof MusicAssetMetadataSchema>
+
+export function parseAssetMetadata(type: z.infer<typeof AssetTypeSchema>, value: unknown): JsonObject {
+  if (type === 'voice') return VoiceAssetMetadataSchema.parse(value ?? {})
+  if (type === 'music') return MusicAssetMetadataSchema.parse(value ?? {})
+  return JsonObjectSchema.parse(value ?? {})
+}
+
 export const SeriesSchema = z.object({
   id: IdSchema,
   workspaceId: IdSchema,
@@ -237,6 +328,27 @@ export const EpisodeSchema = z.object({
   updatedAt: IsoDateSchema,
 })
 export type Episode = z.infer<typeof EpisodeSchema>
+
+export const EpisodeContinuitySummarySchema = z.object({
+  episodeId: IdSchema,
+  seriesId: IdSchema.optional(),
+  source: z.object({ id: IdSchema, revision: z.number().int().positive(), contentHash: z.string().length(64) }),
+  summary: z.string().trim().min(1).max(4_000),
+  nextHook: z.string().trim().max(2_000).default(''),
+  lockedFacts: z.array(z.string().trim().min(1).max(500)).max(100).default([]),
+  eventRevisionHash: z.string().length(64),
+  generatedAt: IsoDateSchema,
+})
+export type EpisodeContinuitySummary = z.infer<typeof EpisodeContinuitySummarySchema>
+
+export const EpisodeContinuitySummaryRequestSchema = z.object({
+  expectedSourceId: IdSchema,
+  expectedSourceRevision: z.number().int().positive(),
+  expectedSourceHash: z.string().length(64),
+  idempotencyKey: z.string().min(16).max(200),
+  confirmation: z.literal('CREATE_EPISODE_CONTINUITY_SUMMARY'),
+})
+export type EpisodeContinuitySummaryRequest = z.infer<typeof EpisodeContinuitySummaryRequestSchema>
 
 export const SharedAssetSchema = z.object({
   id: IdSchema,
@@ -466,6 +578,159 @@ export const ModelDescriptorSchema = z.object({
   contentHash: z.string().length(64),
 })
 export type ModelDescriptor = z.infer<typeof ModelDescriptorSchema>
+
+export const ProviderProtocolSchema = z.enum(['demo-local', 'openai-compatible', 'declarative-http'])
+export type ProviderProtocol = z.infer<typeof ProviderProtocolSchema>
+
+const ProviderEndpointOriginSchema = z.string().url().max(512).refine((value) => {
+  const url = new URL(value)
+  return url.protocol === 'https:' && url.username === '' && url.password === '' && url.pathname === '/' && url.search === '' && url.hash === ''
+}, { message: 'Provider endpoint 必须是不含凭据、路径、查询或片段的 HTTPS origin' })
+
+export const DeclarativeProviderManifestSchema = z.object({
+  version: z.literal(1),
+  submit: z.object({
+    method: z.literal('POST'), path: z.string().regex(/^\/[a-zA-Z0-9._~!$&'()*+,;=:@%/-]{1,300}$/u),
+    response: z.object({ jobId: z.string().regex(/^[a-zA-Z0-9_.-]{1,160}$/u), status: z.string().regex(/^[a-zA-Z0-9_.-]{1,160}$/u) }).strict(),
+  }).strict(),
+  poll: z.object({
+    method: z.literal('GET'), pathTemplate: z.string().regex(/^\/[a-zA-Z0-9._~!$&'()*+,;=:@%/{}/-]{1,300}$/u).refine((value) => value.includes('{jobId}')),
+    response: z.object({ status: z.string().regex(/^[a-zA-Z0-9_.-]{1,160}$/u), outputUrl: z.string().regex(/^[a-zA-Z0-9_.-]{1,160}$/u).optional() }).strict(),
+  }).strict().optional(),
+  cancel: z.object({ method: z.literal('POST'), pathTemplate: z.string().regex(/^\/[a-zA-Z0-9._~!$&'()*+,;=:@%/{}/-]{1,300}$/u).refine((value) => value.includes('{jobId}')) }).strict().optional(),
+  terminalStates: z.object({ succeeded: z.array(z.string().min(1).max(80)).min(1).max(20), failed: z.array(z.string().min(1).max(80)).min(1).max(20) }).strict(),
+}).strict()
+export type DeclarativeProviderManifest = z.infer<typeof DeclarativeProviderManifestSchema>
+
+export const ProviderConnectionSchema = z.object({
+  id: IdSchema,
+  displayName: z.string().trim().min(1).max(120),
+  protocol: ProviderProtocolSchema,
+  endpointOrigin: ProviderEndpointOriginSchema.optional(),
+  credentialRef: z.string().regex(/^(?:keychain|docker-secret):[a-zA-Z0-9._-]{3,120}$/u).optional(),
+  credentialConfigured: z.boolean(),
+  capabilities: z.array(ModelModalitySchema).min(1).max(4),
+  manifest: DeclarativeProviderManifestSchema.optional(),
+  state: z.enum(['draft', 'ready', 'disabled', 'error']),
+  trust: z.enum(['builtin', 'verified-endpoint', 'unverified']),
+  revision: z.number().int().positive(),
+  lastTestedAt: IsoDateSchema.optional(),
+  lastErrorCode: z.string().regex(/^[A-Z][A-Z0-9_]{2,119}$/u).optional(),
+  createdAt: IsoDateSchema,
+  updatedAt: IsoDateSchema,
+}).strict().superRefine((connection, context) => {
+  if (connection.protocol === 'demo-local') {
+    if (connection.endpointOrigin) context.addIssue({ code: 'custom', path: ['endpointOrigin'], message: 'Demo Provider 不允许外部 endpoint' })
+    if (connection.credentialRef || connection.credentialConfigured) context.addIssue({ code: 'custom', path: ['credentialRef'], message: 'Demo Provider 不使用凭据' })
+  } else {
+    if (!connection.endpointOrigin) context.addIssue({ code: 'custom', path: ['endpointOrigin'], message: '外部 Provider 必须配置 HTTPS origin' })
+    if (!connection.credentialRef) context.addIssue({ code: 'custom', path: ['credentialRef'], message: '外部 Provider 必须只保存凭据引用' })
+  }
+  if (connection.protocol === 'declarative-http' && !connection.manifest) context.addIssue({ code: 'custom', path: ['manifest'], message: '声明式 Provider 必须提供 manifest' })
+  if (connection.protocol !== 'declarative-http' && connection.manifest) context.addIssue({ code: 'custom', path: ['manifest'], message: '只有声明式 Provider 可配置 manifest' })
+})
+export type ProviderConnection = z.infer<typeof ProviderConnectionSchema>
+
+export const ProviderConnectionCreateRequestSchema = z.object({
+  displayName: z.string().trim().min(1).max(120),
+  protocol: ProviderProtocolSchema.exclude(['demo-local']),
+  endpointOrigin: ProviderEndpointOriginSchema,
+  credentialKey: z.string().regex(/^[a-zA-Z0-9._-]{3,120}$/u),
+  credential: z.string().min(8).max(16_384).optional(),
+  capabilities: z.array(ModelModalitySchema).min(1).max(4),
+  manifest: DeclarativeProviderManifestSchema.optional(),
+  confirmation: z.literal('CREATE_LOCAL_PROVIDER_CONNECTION'),
+}).strict().superRefine((request, context) => {
+  if (request.protocol === 'declarative-http' && !request.manifest) context.addIssue({ code: 'custom', path: ['manifest'], message: '声明式 Provider 必须提供 manifest' })
+  if (request.protocol !== 'declarative-http' && request.manifest) context.addIssue({ code: 'custom', path: ['manifest'], message: 'OpenAI-compatible 连接不接受自定义 manifest' })
+})
+export type ProviderConnectionCreateRequest = z.infer<typeof ProviderConnectionCreateRequestSchema>
+
+export const ProviderCredentialUpdateRequestSchema = z.object({
+  expectedRevision: z.number().int().positive(), credential: z.string().min(8).max(16_384),
+  confirmation: z.literal('REPLACE_PROVIDER_CREDENTIAL'),
+}).strict()
+export type ProviderCredentialUpdateRequest = z.infer<typeof ProviderCredentialUpdateRequestSchema>
+
+export const ProviderConnectionTestRequestSchema = z.object({
+  expectedRevision: z.number().int().positive(), confirmation: z.literal('TEST_PROVIDER_CONNECTION'),
+}).strict()
+export type ProviderConnectionTestRequest = z.infer<typeof ProviderConnectionTestRequestSchema>
+
+export const ProviderConnectionTestReportSchema = z.object({
+  connection: ProviderConnectionSchema,
+  outcome: z.enum(['ready', 'network_disabled', 'credential_missing', 'timeout', 'rate_limited', 'invalid_response', 'unreachable']),
+  latencyMs: z.number().int().nonnegative(),
+  checkedAt: IsoDateSchema,
+}).strict()
+export type ProviderConnectionTestReport = z.infer<typeof ProviderConnectionTestReportSchema>
+
+export const ProviderRouteSchema = z.object({
+    modality: ModelModalitySchema,
+    primaryConnectionId: IdSchema,
+    fallbackConnectionIds: z.array(IdSchema).max(8),
+    fallbackConnectionModels: z.record(IdSchema, z.string().min(1).max(160)).optional(),
+    model: z.string().min(1).max(160),
+    maxAttempts: z.number().int().min(1).max(8),
+    timeoutMs: z.number().int().min(1_000).max(600_000),
+  }).strict()
+export type ProviderRoute = z.infer<typeof ProviderRouteSchema>
+
+export const ProviderRoutePolicySchema = z.object({
+  projectId: IdSchema,
+  revision: z.number().int().nonnegative(),
+  routes: z.array(ProviderRouteSchema).max(4),
+  dailyBudgetMicros: z.number().int().nonnegative().max(Number.MAX_SAFE_INTEGER),
+  currency: z.string().regex(/^[A-Z]{3}$/u),
+  updatedAt: IsoDateSchema,
+}).strict().superRefine((policy, context) => {
+  const modalities = policy.routes.map((route) => route.modality)
+  if (new Set(modalities).size !== modalities.length) context.addIssue({ code: 'custom', path: ['routes'], message: '每种模态只能定义一条路由' })
+  for (const [index, route] of policy.routes.entries()) {
+    if (route.fallbackConnectionIds.includes(route.primaryConnectionId) || new Set(route.fallbackConnectionIds).size !== route.fallbackConnectionIds.length) {
+      context.addIssue({ code: 'custom', path: ['routes', index, 'fallbackConnectionIds'], message: '降级链不得重复或包含主连接' })
+    }
+    if (Object.keys(route.fallbackConnectionModels ?? {}).some((connectionId) => !route.fallbackConnectionIds.includes(connectionId))) {
+      context.addIssue({ code: 'custom', path: ['routes', index, 'fallbackConnectionModels'], message: '降级模型只能引用降级链中的连接' })
+    }
+  }
+})
+export type ProviderRoutePolicy = z.infer<typeof ProviderRoutePolicySchema>
+
+export const ProviderRoutePolicyUpdateRequestSchema = z.object({
+  routes: z.array(ProviderRouteSchema).max(4),
+  dailyBudgetMicros: z.number().int().nonnegative().max(Number.MAX_SAFE_INTEGER),
+  currency: z.string().regex(/^[A-Z]{3}$/u),
+  expectedRevision: z.number().int().nonnegative(),
+  confirmation: z.literal('UPDATE_PROVIDER_ROUTE_POLICY'),
+}).strict().superRefine((request, context) => {
+  const parsed = ProviderRoutePolicySchema.safeParse({
+    projectId: '00000000-0000-4000-8000-000000000000', revision: request.expectedRevision,
+    routes: request.routes, dailyBudgetMicros: request.dailyBudgetMicros, currency: request.currency,
+    updatedAt: new Date(0).toISOString(),
+  })
+  for (const issue of parsed.success ? [] : parsed.error.issues) context.addIssue({ ...issue, path: issue.path.filter((part) => part !== 'projectId') })
+})
+export type ProviderRoutePolicyUpdateRequest = z.infer<typeof ProviderRoutePolicyUpdateRequestSchema>
+
+export const RoutedCandidateGenerationRequestSchema = z.object({
+  expectedRouteRevision: z.number().int().nonnegative(),
+  expectedPolicyRevision: z.number().int().nonnegative(),
+  idempotencyKey: z.string().min(16).max(200),
+  maxCostMicros: z.number().int().positive().max(Number.MAX_SAFE_INTEGER),
+  promptAppendix: z.string().trim().max(4_000).optional(),
+  confirmation: z.literal('GENERATE_WITH_USER_PROVIDER'),
+}).strict()
+export type RoutedCandidateGenerationRequest = z.infer<typeof RoutedCandidateGenerationRequestSchema>
+
+export const ProviderCostLedgerEntrySchema = z.object({
+  id: IdSchema, projectId: IdSchema, taskId: IdSchema, attemptId: IdSchema.optional(),
+  connectionId: IdSchema, model: z.string().min(1).max(160),
+  amountMicros: z.number().int().nonnegative().max(Number.MAX_SAFE_INTEGER), currency: z.string().regex(/^[A-Z]{3}$/u),
+  source: z.enum(['provider-reported', 'local-estimate', 'demo-zero']), billed: z.boolean(),
+  createdAt: IsoDateSchema,
+}).strict()
+export type ProviderCostLedgerEntry = z.infer<typeof ProviderCostLedgerEntrySchema>
 
 export const EgressChannelSchema = z.enum(['media-fetch', 'model-api', 'temporary-upload'])
 export const EgressPolicySchema = z.object({
@@ -736,6 +1001,12 @@ export const CandidateBatchSchema = z.object({
 })
 export type CandidateBatch = z.infer<typeof CandidateBatchSchema>
 
+export const CandidateBatchRetryRequestSchema = z.object({
+  idempotencyKey: z.string().min(16).max(200),
+  confirmation: z.literal('RETRY_FAILED_CANDIDATES'),
+})
+export type CandidateBatchRetryRequest = z.infer<typeof CandidateBatchRetryRequestSchema>
+
 export const MemoryScopeSchema = z.enum(['episode', 'series', 'global'])
 export const MemorySourceTypeSchema = z.enum(['story_event', 'artifact', 'series_bible', 'shared_asset', 'user_feedback', 'selected_candidate'])
 export const MemorySensitiveFlagSchema = z.enum(['credential', 'signed-url', 'private-path', 'provider-response', 'binary-content'])
@@ -927,9 +1198,57 @@ export const ArtifactVersionSchema = z.object({
 })
 export type ArtifactVersion = z.infer<typeof ArtifactVersionSchema>
 
+export const EpisodeContinuityArtifactStateSchema = z.object({
+  episode: EpisodeSchema,
+  artifact: ArtifactVersionSchema.optional(),
+  summary: EpisodeContinuitySummarySchema.optional(),
+  currentSource: z.object({ id: IdSchema, revision: z.number().int().positive(), contentHash: z.string().length(64) }).optional(),
+  stale: z.boolean(),
+  staleReasons: z.array(z.enum(['missing_summary', 'missing_source', 'source_changed', 'event_revision_changed'])),
+})
+export type EpisodeContinuityArtifactState = z.infer<typeof EpisodeContinuityArtifactStateSchema>
+
+export const EpisodeContinuityStateSchema = z.object({
+  current: EpisodeContinuityArtifactStateSchema,
+  previous: EpisodeContinuityArtifactStateSchema.optional(),
+})
+export type EpisodeContinuityState = z.infer<typeof EpisodeContinuityStateSchema>
+
+export const CreativeBriefCandidateSchema = z.object({
+  batchId: IdSchema,
+  artifact: ArtifactVersionSchema,
+  brief: CreativeBriefSchema,
+  label: z.string().trim().min(1).max(120),
+  changedFields: z.array(CreativeBriefFieldSchema).max(9),
+  lockedFields: z.array(CreativeBriefFieldSchema).max(9),
+}).strict()
+export type CreativeBriefCandidate = z.infer<typeof CreativeBriefCandidateSchema>
+
+export const CreativeBriefStateSchema = z.object({
+  projectId: IdSchema,
+  brief: CreativeBriefSchema,
+  artifact: ArtifactVersionSchema.optional(),
+  candidates: z.array(CreativeBriefCandidateSchema).max(30).default([]),
+  invalidArtifactIds: z.array(IdSchema).max(100).default([]),
+  staleSceneCount: z.number().int().nonnegative(),
+  staleShotCount: z.number().int().nonnegative(),
+})
+export type CreativeBriefState = z.infer<typeof CreativeBriefStateSchema>
+
+export const CreativeBriefCandidateBatchSchema = z.object({
+  batchId: IdSchema,
+  candidates: z.array(CreativeBriefCandidateSchema).min(2).max(3),
+  reused: z.boolean(),
+}).strict()
+export type CreativeBriefCandidateBatch = z.infer<typeof CreativeBriefCandidateBatchSchema>
+
 export const TaskStatusSchema = z.enum([
   'queued', 'running', 'waiting_approval', 'retrying', 'succeeded', 'failed',
   'cancel_requested', 'cancelled', 'timed_out', 'orphaned', 'reconciling',
+  'outcome_unknown', 'needs_attention',
+])
+export const TaskCancelStateSchema = z.enum([
+  'not_requested', 'local_requested', 'provider_requested', 'provider_confirmed', 'unsupported',
 ])
 export const GenerationTaskSchema = z.object({
   id: IdSchema,
@@ -951,6 +1270,9 @@ export const GenerationTaskSchema = z.object({
   result: JsonObjectSchema.optional(),
   error: AppErrorSchema.optional(),
   retryable: z.boolean(),
+  cancelState: TaskCancelStateSchema.optional(),
+  lastReconciledAt: IsoDateSchema.optional(),
+  needsAttentionReason: z.string().min(1).max(500).optional(),
   progress: z.number().min(0).max(1).optional(),
   createdAt: IsoDateSchema,
   startedAt: IsoDateSchema.optional(),
@@ -958,6 +1280,263 @@ export const GenerationTaskSchema = z.object({
   finishedAt: IsoDateSchema.optional(),
 })
 export type GenerationTask = z.infer<typeof GenerationTaskSchema>
+
+export const CandidateBatchRetryResultSchema = z.object({
+  batch: CandidateBatchSchema,
+  tasks: z.array(GenerationTaskSchema).max(20),
+  candidates: z.array(CandidateSchema).max(20),
+  reused: z.boolean(),
+})
+export type CandidateBatchRetryResult = z.infer<typeof CandidateBatchRetryResultSchema>
+
+export const TaskRetryRequestSchema = z.object({
+  idempotencyKey: z.string().min(16).max(200),
+  confirmation: z.literal('RETRY_FAILED_TASK'),
+}).strict()
+export type TaskRetryRequest = z.infer<typeof TaskRetryRequestSchema>
+
+export const TaskDiagnosticSchema = z.object({
+  taskId: IdSchema,
+  projectId: IdSchema,
+  status: TaskStatusSchema,
+  outcomeCertainty: z.enum(['certain', 'unknown']),
+  reconcileRequired: z.boolean(),
+  retryAllowed: z.boolean(),
+  cancelSemantics: z.enum(['none', 'local_only', 'provider_requested', 'provider_confirmed', 'unsupported']),
+  correlationId: IdSchema,
+  providerReferenceHash: z.string().length(64).optional(),
+  errorCode: z.string().min(1).max(160).optional(),
+  suggestedActions: z.array(z.enum(['wait', 'reconcile', 'retry', 'cancel', 'inspect'])).max(5),
+  elapsedMs: z.number().int().nonnegative(),
+  updatedAt: IsoDateSchema,
+})
+export type TaskDiagnostic = z.infer<typeof TaskDiagnosticSchema>
+
+export const SecurityAuditActionSchema = z.enum([
+  'creative_brief.review',
+  'scene_patch.apply',
+  'source_import.commit',
+  'graph.clear_boundary',
+  'candidate_batch.retry_failed',
+  'provider_candidate.submit',
+  'export.approve',
+  'generation_policy.update',
+  'task.cancel',
+  'task.retry',
+  'task.reconcile',
+  'artifact.rollback',
+  'prompt.publish',
+  'prompt.rollback',
+  'skill.publish',
+  'skill.rollback',
+]).describe('固定高风险动作；新增动作必须同步契约、审计 UI 与测试')
+export type SecurityAuditAction = z.infer<typeof SecurityAuditActionSchema>
+
+export const SecurityAuditEventSchema = z.object({
+  id: IdSchema,
+  operationId: IdSchema,
+  projectId: IdSchema,
+  action: SecurityAuditActionSchema,
+  status: z.enum(['started', 'succeeded', 'rejected']),
+  targetType: z.enum(['project', 'task', 'shot', 'candidate_batch', 'export', 'source_import', 'artifact', 'prompt', 'skill']),
+  targetReferenceHash: z.string().regex(/^[a-f0-9]{64}$/u),
+  correlationId: z.string().regex(/^[a-zA-Z0-9-]{8,100}$/u),
+  errorCode: z.string().regex(/^[A-Z][A-Z0-9_]{2,159}$/u).optional(),
+  createdAt: IsoDateSchema,
+}).strict().superRefine((event, context) => {
+  if (event.status === 'rejected' && !event.errorCode) {
+    context.addIssue({ code: 'custom', path: ['errorCode'], message: '拒绝事件必须记录稳定错误码' })
+  }
+  if (event.status !== 'rejected' && event.errorCode) {
+    context.addIssue({ code: 'custom', path: ['errorCode'], message: '只有拒绝事件可以记录错误码' })
+  }
+})
+export type SecurityAuditEvent = z.infer<typeof SecurityAuditEventSchema>
+
+export const ProjectSecurityAuditLogSchema = z.object({
+  projectId: IdSchema,
+  generatedAt: IsoDateSchema,
+  events: z.array(SecurityAuditEventSchema).max(500),
+}).strict()
+export type ProjectSecurityAuditLog = z.infer<typeof ProjectSecurityAuditLogSchema>
+
+export const ProjectDiagnosticTaskSchema = z.object({
+  taskReferenceHash: z.string().length(64),
+  type: GenerationTaskSchema.shape.type,
+  status: TaskStatusSchema,
+  stage: z.string().min(1).max(200),
+  provider: z.string().min(1).max(160),
+  model: z.string().min(1).max(200),
+  attempt: z.number().int().positive(),
+  outcomeCertainty: z.enum(['certain', 'unknown']),
+  reconcileRequired: z.boolean(),
+  retryAllowed: z.boolean(),
+  cancelSemantics: z.enum(['none', 'local_only', 'provider_requested', 'provider_confirmed', 'unsupported']),
+  correlationId: IdSchema,
+  providerReferenceHash: z.string().length(64).optional(),
+  errorCode: z.string().min(1).max(160).optional(),
+  suggestedActions: z.array(z.enum(['wait', 'reconcile', 'retry', 'cancel', 'inspect'])).max(5),
+  elapsedMs: z.number().int().nonnegative(),
+  updatedAt: IsoDateSchema,
+}).strict()
+export type ProjectDiagnosticTask = z.infer<typeof ProjectDiagnosticTaskSchema>
+
+export const ProjectIntegrityIssueCodeSchema = z.enum([
+  'SHOT_SELECTED_CANDIDATE_MISSING',
+  'SELECTED_CANDIDATE_MEDIA_MISSING',
+  'CANDIDATE_MEDIA_MISSING',
+  'CANDIDATE_TASK_MISSING',
+  'BOUNDARY_MEDIA_MISSING',
+])
+export type ProjectIntegrityIssueCode = z.infer<typeof ProjectIntegrityIssueCodeSchema>
+
+export const ProjectDiagnosticBundleSchema = z.object({
+  format: z.literal('aigc-director-diagnostic'),
+  version: z.literal(1),
+  generatedAt: IsoDateSchema,
+  projectReferenceHash: z.string().length(64),
+  runtime: z.object({
+    productVersion: z.literal('2.0.0'),
+    schemaVersion: z.number().int().positive(),
+    providerNetworkDisabled: z.boolean(),
+    billingMode: z.enum(['demo-only', 'user-funded']),
+  }).strict(),
+  counts: z.object({
+    sources: z.number().int().nonnegative(),
+    chapters: z.number().int().nonnegative(),
+    events: z.number().int().nonnegative(),
+    scenes: z.number().int().nonnegative(),
+    shots: z.number().int().nonnegative(),
+    assets: z.number().int().nonnegative(),
+    candidates: z.number().int().nonnegative(),
+    media: z.number().int().nonnegative(),
+    artifacts: z.number().int().nonnegative(),
+    tasks: z.number().int().nonnegative(),
+  }).strict(),
+  taskStatusCounts: z.record(z.string().min(1).max(80), z.number().int().nonnegative()),
+  tasks: z.array(ProjectDiagnosticTaskSchema).max(10_000),
+  integrityIssues: z.array(z.object({
+    code: ProjectIntegrityIssueCodeSchema,
+    severity: z.enum(['warning', 'error']),
+    entityReferenceHash: z.string().length(64),
+    message: z.string().min(1).max(300),
+  }).strict()).max(20_000),
+  privacy: z.object({
+    credentialsIncluded: z.literal(false),
+    absolutePathsIncluded: z.literal(false),
+    rawUserContentIncluded: z.literal(false),
+    rawPromptsIncluded: z.literal(false),
+    providerPayloadsIncluded: z.literal(false),
+    signedUrlsIncluded: z.literal(false),
+  }).strict(),
+  bundleHash: z.string().length(64),
+}).strict()
+export type ProjectDiagnosticBundle = z.infer<typeof ProjectDiagnosticBundleSchema>
+
+export const ProjectRecoveryIssueSchema = z.object({
+  code: ProjectIntegrityIssueCodeSchema,
+  severity: z.enum(['warning', 'error']),
+  entityType: z.enum(['shot', 'candidate']),
+  entityId: IdSchema,
+  relatedEntityId: IdSchema.optional(),
+  boundaryRole: z.enum(['start', 'end']).optional(),
+  action: z.enum(['open_shot', 'open_candidate', 'clear_boundary']),
+  message: z.string().min(1).max(300),
+}).strict()
+export type ProjectRecoveryIssue = z.infer<typeof ProjectRecoveryIssueSchema>
+
+export const ProjectRecoveryTaskSchema = z.object({
+  taskId: IdSchema,
+  type: GenerationTaskSchema.shape.type,
+  status: TaskStatusSchema,
+  stage: z.string().min(1).max(200),
+  actions: z.array(z.enum(['reconcile', 'retry', 'inspect'])).min(1).max(3),
+  updatedAt: IsoDateSchema,
+}).strict()
+export type ProjectRecoveryTask = z.infer<typeof ProjectRecoveryTaskSchema>
+
+export const ProjectRecoveryReportSchema = z.object({
+  projectId: IdSchema,
+  generatedAt: IsoDateSchema,
+  summary: z.object({
+    errors: z.number().int().nonnegative(),
+    warnings: z.number().int().nonnegative(),
+    recoverableTasks: z.number().int().nonnegative(),
+  }).strict(),
+  issues: z.array(ProjectRecoveryIssueSchema).max(20_000),
+  tasks: z.array(ProjectRecoveryTaskSchema).max(10_000),
+}).strict()
+export type ProjectRecoveryReport = z.infer<typeof ProjectRecoveryReportSchema>
+
+export const TaskRetryResultSchema = z.object({
+  task: GenerationTaskSchema,
+  diagnostic: TaskDiagnosticSchema,
+  reused: z.boolean(),
+})
+export type TaskRetryResult = z.infer<typeof TaskRetryResultSchema>
+
+export const TaskReconcileResultSchema = z.object({
+  task: GenerationTaskSchema,
+  diagnostic: TaskDiagnosticSchema,
+  observation: z.enum(['succeeded', 'failed', 'cancelled', 'running', 'unknown', 'local_active', 'unsupported', 'terminal']),
+})
+export type TaskReconcileResult = z.infer<typeof TaskReconcileResultSchema>
+
+export const ProjectGenerationPolicySchema = z.object({
+  projectId: IdSchema,
+  revision: z.number().int().nonnegative(),
+  billingMode: z.enum(['demo-only', 'user-funded']),
+  paidProviders: z.enum(['blocked', 'enabled']),
+  maxConcurrentTasks: z.number().int().min(1).max(32),
+  maxCandidatesPerBatch: z.number().int().min(1).max(8),
+  maxExportDurationMs: z.number().int().min(5_000).max(3_600_000),
+  dailyPaidBudgetMicros: z.number().int().nonnegative().max(Number.MAX_SAFE_INTEGER),
+  updatedAt: IsoDateSchema,
+}).strict().superRefine((policy, context) => {
+  if (policy.billingMode === 'demo-only' && (policy.paidProviders !== 'blocked' || policy.dailyPaidBudgetMicros !== 0)) {
+    context.addIssue({ code: 'custom', path: ['billingMode'], message: 'Demo-only 必须关闭外部 Provider 且预算为 0' })
+  }
+  if (policy.billingMode === 'user-funded' && policy.paidProviders !== 'enabled') {
+    context.addIssue({ code: 'custom', path: ['paidProviders'], message: '用户自付模式必须显式启用 Provider' })
+  }
+})
+export type ProjectGenerationPolicy = z.infer<typeof ProjectGenerationPolicySchema>
+
+export const ProjectGenerationPolicyUpdateRequestSchema = z.object({
+  expectedRevision: z.number().int().nonnegative(),
+  billingMode: z.enum(['demo-only', 'user-funded']).optional(),
+  dailyPaidBudgetMicros: z.number().int().nonnegative().max(Number.MAX_SAFE_INTEGER).optional(),
+  maxConcurrentTasks: z.number().int().min(1).max(32),
+  maxCandidatesPerBatch: z.number().int().min(1).max(8),
+  maxExportDurationMs: z.number().int().min(5_000).max(3_600_000),
+  confirmation: z.enum(['UPDATE_GENERATION_POLICY', 'ENABLE_USER_FUNDED_PROVIDERS']),
+}).strict().superRefine((request, context) => {
+  if ((request.billingMode === 'user-funded' || (request.dailyPaidBudgetMicros ?? 0) > 0) && request.confirmation !== 'ENABLE_USER_FUNDED_PROVIDERS') {
+    context.addIssue({ code: 'custom', path: ['confirmation'], message: '启用外部 Provider 或付费预算需要专用二次确认' })
+  }
+})
+export type ProjectGenerationPolicyUpdateRequest = z.infer<typeof ProjectGenerationPolicyUpdateRequestSchema>
+
+export const TaskAdmissionSchema = z.object({
+  projectId: IdSchema,
+  allowed: z.boolean(),
+  activeTasks: z.number().int().nonnegative(),
+  maxConcurrentTasks: z.number().int().min(1).max(32),
+  maxCandidatesPerBatch: z.number().int().min(1).max(8),
+  maxExportDurationMs: z.number().int().min(5_000).max(3_600_000),
+  policyRevision: z.number().int().nonnegative(),
+  paidProviders: z.enum(['blocked', 'enabled']),
+  dailyPaidBudgetMicros: z.number().int().nonnegative().max(Number.MAX_SAFE_INTEGER),
+  dailyPaidSpentMicros: z.number().int().nonnegative().max(Number.MAX_SAFE_INTEGER),
+  remainingPaidBudgetMicros: z.number().int().nonnegative().max(Number.MAX_SAFE_INTEGER),
+  providerNetworkDisabled: z.boolean(),
+  reasons: z.array(z.enum([
+    'concurrency_limit', 'candidate_limit', 'export_duration_limit', 'paid_budget_exceeded',
+    'paid_provider_disabled', 'provider_network_disabled',
+  ])).max(6),
+  checkedAt: IsoDateSchema,
+}).strict()
+export type TaskAdmission = z.infer<typeof TaskAdmissionSchema>
 
 export const PlanStepSchema = z.object({
   id: IdSchema,
@@ -1051,6 +1630,14 @@ export const PromptRevisionSchema = z.object({
 })
 export type PromptRevision = z.infer<typeof PromptRevisionSchema>
 
+export const PromptPolishRequestSchema = z.object({
+  expectedRevision: z.number().int().positive(),
+  feedback: z.string().trim().min(1).max(8_000),
+  direction: z.enum(['clarity', 'cinematic', 'structure', 'brevity']).default('clarity'),
+  idempotencyKey: z.string().min(16).max(200),
+}).strict()
+export type PromptPolishRequest = z.infer<typeof PromptPolishRequestSchema>
+
 export const ScopedPromptBindingSchema = z.object({
   promptRevisionId: IdSchema,
   stableKey: z.string().regex(/^[a-z][a-z0-9._-]{2,80}$/),
@@ -1079,6 +1666,65 @@ export const ScopedRegenerationResultSchema = z.object({
 }).strict()
 export type ScopedRegenerationResult = z.infer<typeof ScopedRegenerationResultSchema>
 
+export const ShotRevisionPatchSchema = z.object({
+  shotId: IdSchema,
+  baseRevision: z.number().int().positive(),
+  changes: z.object({
+    title: z.string().trim().min(1).max(200).optional(),
+    description: z.string().trim().min(1).max(4_000).optional(),
+    dialogue: z.string().max(2_000).optional(),
+    visualPrompt: z.string().max(8_000).optional(),
+    videoPrompt: z.string().max(8_000).optional(),
+    negativePrompt: z.string().max(4_000).optional(),
+    durationMs: z.number().int().min(500).max(120_000).optional(),
+    beats: z.array(ShotBeatSchema).max(16).optional(),
+  }).strict().refine((changes) => Object.keys(changes).length > 0, { message: '镜头 patch 至少包含一个变更' }),
+}).strict()
+export type ShotRevisionPatch = z.infer<typeof ShotRevisionPatchSchema>
+
+export const SceneRevisionPatchSchema = z.object({
+  sceneId: IdSchema,
+  baseRevision: z.number().int().positive(),
+  changes: z.object({
+    title: z.string().trim().min(1).max(200).optional(),
+    synopsis: z.string().max(4_000).optional(),
+  }).strict().default({}),
+  shotPatches: z.array(ShotRevisionPatchSchema).max(500).default([]),
+}).strict().superRefine((patch, context) => {
+  if (Object.keys(patch.changes).length === 0 && patch.shotPatches.length === 0) {
+    context.addIssue({ code: 'custom', path: ['changes'], message: '场景 patch 至少包含一个场景或镜头变更' })
+  }
+  const shotIds = patch.shotPatches.map((item) => item.shotId)
+  if (new Set(shotIds).size !== shotIds.length) {
+    context.addIssue({ code: 'custom', path: ['shotPatches'], message: '同一镜头只能出现一次' })
+  }
+})
+export type SceneRevisionPatch = z.infer<typeof SceneRevisionPatchSchema>
+
+export const ScenePatchApplyRequestSchema = z.object({
+  expectedProjectRevision: z.number().int().nonnegative(),
+  expectedSceneRevision: z.number().int().positive(),
+  idempotencyKey: z.string().min(16).max(200),
+  confirmation: z.literal('APPLY_SCENE_PATCH'),
+}).strict()
+export type ScenePatchApplyRequest = z.infer<typeof ScenePatchApplyRequestSchema>
+
+export const ScenePatchApplyResultSchema = z.object({
+  artifact: ArtifactVersionSchema,
+  scene: SceneSchema,
+  staleShotIds: z.array(IdSchema),
+  updatedShots: z.array(ShotSchema).default([]),
+  changedFields: z.array(z.object({
+    targetType: z.enum(['scene', 'shot']),
+    targetId: IdSchema,
+    fields: z.array(z.string().min(1).max(120)).min(1),
+    staleFields: z.array(z.string().min(1).max(120)),
+  }).strict()).default([]),
+  projectGraphRevision: z.number().int().nonnegative(),
+  reused: z.boolean(),
+}).strict()
+export type ScenePatchApplyResult = z.infer<typeof ScenePatchApplyResultSchema>
+
 export const PromptDiffSchema = z.object({
   fromRevisionId: IdSchema,
   toRevisionId: IdSchema,
@@ -1090,6 +1736,17 @@ export const PromptDiffSchema = z.object({
   })).max(100),
 })
 export type PromptDiff = z.infer<typeof PromptDiffSchema>
+
+export const PromptPolishResultSchema = z.object({
+  sourceRevisionId: IdSchema,
+  revision: PromptRevisionSchema,
+  diff: PromptDiffSchema,
+  lastKnownGoodRevisionId: IdSchema.optional(),
+  requestHash: z.string().length(64),
+  mode: z.literal('demo-deterministic'),
+  reused: z.boolean(),
+}).strict()
+export type PromptPolishResult = z.infer<typeof PromptPolishResultSchema>
 
 export const ArtifactHeadSchema = z.object({
   scope: ArtifactVersionSchema.shape.scope,
@@ -1322,12 +1979,66 @@ export const ExportRequestSchema = z.object({
 })
 export type ExportRequest = z.infer<typeof ExportRequestSchema>
 
+export const ExportPreflightSchema = z.object({
+  id: IdSchema,
+  projectId: IdSchema,
+  fileName: z.string().regex(/^[^/\\]+\.mp4$/i),
+  shotCount: z.number().int().positive().max(10_000),
+  selectedCandidateCount: z.number().int().positive().max(10_000),
+  durationMs: z.number().int().positive(),
+  width: z.number().int().min(320).max(3_840),
+  height: z.number().int().min(320).max(2_160),
+  fps: z.number().int().min(12).max(60),
+  assemblyHash: z.string().length(64),
+  destination: z.literal('local-directory-selected'),
+  billing: z.object({
+    provider: z.literal('demo-local'),
+    verified: z.literal(true),
+    amountMicros: z.literal(0),
+    currency: z.literal('none'),
+  }).strict(),
+  approvalToken: z.string().min(20).max(200),
+  expiresAt: IsoDateSchema,
+}).strict()
+export type ExportPreflight = z.infer<typeof ExportPreflightSchema>
+
+export const ExportApprovalRequestSchema = z.object({
+  preflightId: IdSchema,
+  approvalToken: z.string().min(20).max(200),
+  confirmation: z.literal('START_LOCAL_EXPORT'),
+}).strict()
+export type ExportApprovalRequest = z.infer<typeof ExportApprovalRequestSchema>
+
+export const ExportSelectionSchema = z.object({
+  shotId: IdSchema,
+  shotRevision: z.number().int().positive(),
+  candidateId: IdSchema,
+  mediaId: IdSchema,
+  mediaSha256: z.string().length(64),
+  kind: z.enum(['image', 'video']),
+}).strict()
+export type ExportSelection = z.infer<typeof ExportSelectionSchema>
+
+export const ExportTaskInputSchema = ExportRequestSchema.extend({
+  shotSnapshots: z.array(ShotSchema).min(1).max(10_000),
+  selections: z.array(ExportSelectionSchema).min(1).max(10_000),
+  assemblyHash: z.string().length(64),
+  assembledAt: IsoDateSchema,
+}).superRefine((input, context) => {
+  if (input.shotSnapshots.length !== input.selections.length) context.addIssue({ code: 'custom', path: ['selections'], message: '每个镜头必须固定一个已选候选' })
+  const shotIds = input.shotSnapshots.map((shot) => shot.id)
+  if (new Set(shotIds).size !== shotIds.length || input.selections.some((selection, index) => selection.shotId !== shotIds[index])) {
+    context.addIssue({ code: 'custom', path: ['selections'], message: '导出选择必须按镜头顺序一一对应' })
+  }
+})
+export type ExportTaskInput = z.infer<typeof ExportTaskInputSchema>
+
 export const HealthSchema = z.object({
   status: z.literal('ok'),
   version: z.literal('2.0.0'),
   demoMode: z.boolean(),
   providerNetworkDisabled: z.boolean(),
-  schemaVersion: z.literal(9),
+  schemaVersion: z.literal(12),
   timestamp: IsoDateSchema,
 })
 export type Health = z.infer<typeof HealthSchema>

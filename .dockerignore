@@ -1,0 +1,27 @@
+.git
+.github
+.director-data
+.local
+.cache
+.vite
+.package-stage
+.desktop-stage
+node_modules
+**/node_modules
+**/dist
+dist-electron
+dist-server-jsc
+client
+server
+electron
+coverage
+*.sqlite*
+*.db*
+*.log
+*.dmg
+*.pkg
+*.exe
+*.msi
+*.tgz
+* 2
+* 2.*

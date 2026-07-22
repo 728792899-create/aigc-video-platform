@@ -106,9 +106,9 @@ watch(() => props.artifact.id, () => { void load() }, { immediate: true })
 .artifact-history__versions { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 6px; }
 .artifact-history__versions button { display: grid; gap: 2px; padding: 7px; border: 1px solid var(--line); border-radius: 8px; color: var(--muted-strong); background: transparent; text-align: left; }
 .artifact-history__versions button.active { border-color: var(--mint); }
-.artifact-history__versions button.current { background: rgba(105, 227, 200, .07); }
+.artifact-history__versions button.current { background: var(--alpha-accent-07); }
 .artifact-history__versions span, .artifact-history__versions small { font-size: 8px; color: var(--muted); }
-.artifact-history__diff { display: grid; gap: 6px; padding: 8px; border-radius: 8px; background: #080e18; }
+.artifact-history__diff { display: grid; gap: 6px; padding: 8px; border-radius: 8px; background: var(--surface-panel); }
 .artifact-history__diff strong { color: var(--mint); font-size: 10px; }
 .artifact-history__diff details { min-width: 0; }
 .artifact-history__diff summary { color: var(--muted-strong); font-size: 10px; cursor: pointer; }

@@ -6,11 +6,18 @@ import type {
   AssetBatchBindPreview,
   AssetBinding,
   BoundaryFrame,
+  CreativeBrief,
+  CreativeBriefField,
+  CreativeBriefState,
+  EpisodeContinuityState,
   ExecutionPlan,
+  ExportPreflight,
+  ExportRequest,
   GenerationTask,
   GraphNode,
   GraphProjection,
   Project,
+  ProjectGenerationPolicy,
   ProjectSnapshot,
   PromptPackInventory,
   ReconcilePreview,
@@ -19,6 +26,8 @@ import type {
   SharedAsset,
   ShotBeat,
   SourceImportPreview,
+  TaskDiagnostic,
+  TaskAdmission,
 } from '@aigc-director/contracts'
 import { connectTaskEvents, directorApi, DirectorApiError, type TaskEventStream } from '../api/client.js'
 
@@ -41,9 +50,15 @@ export const useStudioStore = defineStore('studio', () => {
   const currentCheckpoint = ref<AgentRunCheckpoint>()
   const approvalToken = ref('')
   const tasks = ref<GenerationTask[]>([])
+  const taskDiagnostics = ref<Record<string, TaskDiagnostic>>({})
+  const taskAdmission = ref<TaskAdmission>()
+  const generationPolicy = ref<ProjectGenerationPolicy>()
+  const creativeBrief = ref<CreativeBriefState>()
+  const episodeContinuity = ref<EpisodeContinuityState>()
   const promptPack = ref<PromptPackInventory>()
   const pendingBatchBind = ref<AssetBatchBindPreview>()
   const pendingReconcile = ref<ReconcilePreview>()
+  const pendingExportPreflight = ref<ExportPreflight>()
   let taskEvents: TaskEventStream | undefined
 
   const currentProject = computed(() => projects.value.find((project) => project.id === currentProjectId.value))
@@ -52,6 +67,7 @@ export const useStudioStore = defineStore('studio', () => {
     const node = selectedNode.value
     const data = snapshot.value
     if (!node || !data) return undefined
+    if (node.type === 'project') return data.project
     if (node.type === 'series') return data.series
     if (node.type === 'episode') return data.episode
     if (node.type === 'asset') return data.resolvedAssets.find((asset) => asset.assetId === node.entityId) ?? data.assets.find((asset) => asset.id === node.entityId)
@@ -62,6 +78,10 @@ export const useStudioStore = defineStore('studio', () => {
   function captureError(reason: unknown): void {
     if (reason instanceof DirectorApiError) error.value = { message: reason.message, code: reason.code, retryable: reason.retryable, correlationId: reason.correlationId }
     else error.value = { message: '操作未完成，请重试。', code: 'CLIENT_ERROR', retryable: true, correlationId: crypto.randomUUID() }
+  }
+
+  function selectNode(nodeId?: string): void {
+    selectedNodeId.value = nodeId
   }
 
   function receiveTask(task: GenerationTask): void {
@@ -114,13 +134,21 @@ export const useStudioStore = defineStore('studio', () => {
   async function loadProject(projectId: string): Promise<void> {
     currentProjectId.value = projectId
     taskEvents?.subscribe(projectId)
-    snapshot.value = await directorApi.snapshot(projectId)
+    const [nextSnapshot, nextBrief, nextPolicy] = await Promise.all([
+      directorApi.snapshot(projectId), directorApi.creativeBrief(projectId), directorApi.generationPolicy(projectId),
+    ])
+    snapshot.value = nextSnapshot
+    creativeBrief.value = nextBrief
+    generationPolicy.value = nextPolicy
+    episodeContinuity.value = nextSnapshot.episode ? await directorApi.episodeContinuity(nextSnapshot.episode.id) : undefined
     tasks.value = snapshot.value.tasks
+    taskAdmission.value = await directorApi.taskAdmission(projectId)
     currentPlan.value = [...snapshot.value.plans].sort((a, b) => b.updatedAt.localeCompare(a.updatedAt))[0]
     currentCheckpoint.value = currentPlan.value ? await directorApi.agentCheckpoint(currentPlan.value.runId).catch(() => undefined) : undefined
     approvalToken.value = ''
     pendingBatchBind.value = undefined
     pendingReconcile.value = undefined
+    pendingExportPreflight.value = undefined
     await loadGraph()
   }
 
@@ -128,6 +156,59 @@ export const useStudioStore = defineStore('studio', () => {
     if (!currentProjectId.value) { graph.value = undefined; return }
     graph.value = await directorApi.graph(currentProjectId.value, view.value)
     selectedNodeId.value = selectedNodeId.value && graph.value.nodes.some((node) => node.id === selectedNodeId.value) ? selectedNodeId.value : undefined
+  }
+
+  async function saveCreativeBrief(brief: CreativeBrief): Promise<boolean> {
+    if (!currentProjectId.value) return false
+    const result = await run(async () => {
+      creativeBrief.value = await directorApi.reviseCreativeBrief(currentProjectId.value!, {
+        expectedRevision: creativeBrief.value?.artifact?.revision ?? 0, brief,
+      })
+      snapshot.value = await directorApi.snapshot(currentProjectId.value!)
+      await loadGraph()
+      return true
+    }, '创意简报已保存；受影响的下游节点已标记 stale，历史候选仍保留。')
+    return result === true
+  }
+
+  async function generateCreativeBriefCandidates(feedback: string, lockedFields: CreativeBriefField[]): Promise<boolean> {
+    if (!currentProjectId.value) return false
+    const result = await run(async () => {
+      await directorApi.createCreativeBriefCandidates(currentProjectId.value!, {
+        count: 3,
+        feedback,
+        lockedFields,
+        idempotencyKey: `brief-candidates-${crypto.randomUUID()}`,
+      })
+      creativeBrief.value = await directorApi.creativeBrief(currentProjectId.value!)
+      return true
+    }, '已生成 3 个本地确定性简报候选；当前批准稿尚未改变。')
+    return result === true
+  }
+
+  async function reviewCreativeBriefCandidate(artifactId: string, decision: 'approve' | 'reject'): Promise<boolean> {
+    if (!currentProjectId.value) return false
+    const result = await run(async () => {
+      creativeBrief.value = await directorApi.reviewCreativeBriefCandidate(currentProjectId.value!, artifactId, decision === 'approve'
+        ? {
+            decision,
+            expectedApprovedRevision: creativeBrief.value?.artifact?.revision ?? 0,
+            confirmation: 'APPROVE_CREATIVE_BRIEF',
+            idempotencyKey: `brief-review-${crypto.randomUUID()}`,
+          }
+        : {
+            decision,
+            expectedApprovedRevision: creativeBrief.value?.artifact?.revision ?? 0,
+            confirmation: 'REJECT_CREATIVE_BRIEF',
+            idempotencyKey: `brief-review-${crypto.randomUUID()}`,
+          })
+      snapshot.value = await directorApi.snapshot(currentProjectId.value!)
+      await loadGraph()
+      return true
+    }, decision === 'approve'
+      ? '候选已批准为新的简报 revision；受影响节点已精确标记 stale。'
+      : '候选已拒绝，当前批准稿和下游产物保持不变。')
+    return result === true
   }
 
   async function changeView(next: GraphProjection['view']): Promise<void> {
@@ -139,6 +220,7 @@ export const useStudioStore = defineStore('studio', () => {
     if (!currentProjectId.value) return
     await run(async () => {
       snapshot.value = await directorApi.importSource(currentProjectId.value!, { title, content })
+      episodeContinuity.value = snapshot.value.episode ? await directorApi.episodeContinuity(snapshot.value.episode.id) : undefined
       await loadGraph()
     }, '章节与事件图谱已生成。')
   }
@@ -154,6 +236,7 @@ export const useStudioStore = defineStore('studio', () => {
       snapshot.value = await directorApi.commitSourceImport(currentProjectId.value!, preview.id, {
         title, language, expectedContentHash: preview.contentHash,
       })
+      episodeContinuity.value = snapshot.value.episode ? await directorApi.episodeContinuity(snapshot.value.episode.id) : undefined
       await loadGraph()
       return true
     }, '文件已确认导入，章节与事件图谱已生成。')
@@ -177,6 +260,21 @@ export const useStudioStore = defineStore('studio', () => {
     }, '制作计划已生成，等待批准。')
   }
 
+  async function createEpisodeContinuitySummary(): Promise<void> {
+    const state = episodeContinuity.value
+    const episode = snapshot.value?.episode
+    const source = state?.current.currentSource
+    if (!episode || !source) return
+    await run(async () => {
+      episodeContinuity.value = await directorApi.createEpisodeContinuitySummary(episode.id, {
+        expectedSourceId: source.id, expectedSourceRevision: source.revision, expectedSourceHash: source.contentHash,
+        idempotencyKey: `episode-continuity-${crypto.randomUUID()}`,
+      })
+      snapshot.value = await directorApi.snapshot(episode.projectId)
+      await loadGraph()
+    }, '跨集摘要已固定到当前 Source revision；后续来源变化会标记 stale。')
+  }
+
   async function approvePlan(): Promise<void> {
     if (!currentPlan.value || !approvalToken.value) return
     await run(async () => {
@@ -196,19 +294,123 @@ export const useStudioStore = defineStore('studio', () => {
     }, 'Demo 候选已生成，付费请求为 0。')
   }
 
-  async function startExport(outputDirectory: string): Promise<GenerationTask | undefined> {
-    if (!currentProjectId.value) return undefined
+  async function produceProviderCandidate(shotId: string, maxCostMicros: number, promptAppendix?: string): Promise<GenerationTask | undefined> {
+    if (!currentProjectId.value || !generationPolicy.value) return undefined
     return await run(async () => {
-      const task = await directorApi.startExport({ projectId: currentProjectId.value!, outputDirectory, fileName: `${currentProject.value?.name ?? 'director-demo'}.mp4`, width: 1280, height: 720, fps: 24 })
+      const route = await directorApi.providerRoutePolicy(currentProjectId.value!)
+      const task = await directorApi.generateRoutedCandidate(shotId, {
+        expectedRouteRevision: route.revision,
+        expectedPolicyRevision: generationPolicy.value!.revision,
+        idempotencyKey: `provider-candidate-${crypto.randomUUID()}`,
+        maxCostMicros,
+        ...(promptAppendix?.trim() ? { promptAppendix: promptAppendix.trim() } : {}),
+        confirmation: 'GENERATE_WITH_USER_PROVIDER',
+      })
       tasks.value = upsertTask(tasks.value, task)
       return task
-    }, '导出任务已创建。')
+    }, '用户自付候选已进入任务中心；未知结果只允许先对账。')
+  }
+
+  async function prepareExport(
+    outputDirectory: string,
+    options: Partial<Pick<ExportRequest, 'fileName' | 'width' | 'height' | 'fps'>> = {},
+  ): Promise<ExportPreflight | undefined> {
+    if (!currentProjectId.value) return undefined
+    return await run(async () => {
+      const preflight = await directorApi.prepareExport({
+        projectId: currentProjectId.value!,
+        outputDirectory,
+        fileName: options.fileName ?? `${currentProject.value?.name ?? 'director-demo'}.mp4`,
+        width: options.width ?? 1280,
+        height: options.height ?? 720,
+        fps: options.fps ?? 24,
+      })
+      pendingExportPreflight.value = preflight
+      return preflight
+    }, '导出预检已完成；确认前不会启动 FFmpeg。')
+  }
+
+  async function confirmExport(): Promise<GenerationTask | undefined> {
+    const preflight = pendingExportPreflight.value
+    if (!preflight) return undefined
+    return await run(async () => {
+      const task = await directorApi.startExport({
+        preflightId: preflight.id,
+        approvalToken: preflight.approvalToken,
+        confirmation: 'START_LOCAL_EXPORT',
+      })
+      tasks.value = upsertTask(tasks.value, task)
+      pendingExportPreflight.value = undefined
+      return task
+    }, '导出任务已创建；重复确认会复用同一任务。')
   }
 
   async function refreshTasks(): Promise<void> {
     if (!currentProjectId.value) return
-    tasks.value = await directorApi.tasks(currentProjectId.value)
+    const [nextTasks, admission] = await Promise.all([directorApi.tasks(currentProjectId.value), directorApi.taskAdmission(currentProjectId.value)])
+    tasks.value = nextTasks
+    taskAdmission.value = admission
     if (snapshot.value) snapshot.value = { ...snapshot.value, tasks: tasks.value }
+  }
+
+  async function updateGenerationPolicy(input: Pick<ProjectGenerationPolicy, 'maxConcurrentTasks' | 'maxCandidatesPerBatch' | 'maxExportDurationMs'> & Partial<Pick<ProjectGenerationPolicy, 'billingMode' | 'dailyPaidBudgetMicros'>>): Promise<boolean> {
+    if (!currentProjectId.value || !generationPolicy.value) return false
+    const result = await run(async () => {
+      generationPolicy.value = await directorApi.updateGenerationPolicy(currentProjectId.value!, {
+        expectedRevision: generationPolicy.value!.revision,
+        ...input,
+        confirmation: input.billingMode === 'user-funded' || (input.dailyPaidBudgetMicros ?? 0) > 0
+          ? 'ENABLE_USER_FUNDED_PROVIDERS'
+          : 'UPDATE_GENERATION_POLICY',
+      })
+      taskAdmission.value = await directorApi.taskAdmission(currentProjectId.value!)
+      return true
+    }, input.billingMode === 'user-funded'
+      ? '项目已启用用户自付 Provider；实际执行仍受连接状态、网络总开关和每日预算约束。'
+      : '项目生成策略已更新；外部 Provider 已关闭。')
+    return result === true
+  }
+
+  async function exportDiagnosticBundle(): Promise<{ blob: Blob; fileName: string } | undefined> {
+    if (!currentProjectId.value) return undefined
+    return await run(async () => {
+      const bundle = await directorApi.projectDiagnosticBundle(currentProjectId.value!)
+      return {
+        blob: new Blob([`${JSON.stringify(bundle, null, 2)}\n`], { type: 'application/json' }),
+        fileName: `aigc-director-diagnostic-${bundle.projectReferenceHash.slice(0, 12)}.json`,
+      }
+    }, '脱敏诊断包已生成；其中不包含原文、Prompt、凭据、Provider payload 或本机路径。')
+  }
+
+  async function inspectTask(taskId: string): Promise<void> {
+    await run(async () => {
+      taskDiagnostics.value = { ...taskDiagnostics.value, [taskId]: await directorApi.taskDiagnostic(taskId) }
+    })
+  }
+
+  async function cancelTask(taskId: string): Promise<void> {
+    await run(async () => {
+      const task = await directorApi.cancelTask(taskId)
+      receiveTask(task)
+      taskDiagnostics.value = { ...taskDiagnostics.value, [taskId]: await directorApi.taskDiagnostic(taskId) }
+    }, '已请求取消任务；远端取消状态会单独显示。')
+  }
+
+  async function reconcileTask(taskId: string): Promise<void> {
+    await run(async () => {
+      const result = await directorApi.reconcileTask(taskId)
+      receiveTask(result.task)
+      taskDiagnostics.value = { ...taskDiagnostics.value, [taskId]: result.diagnostic }
+      await loadGraph()
+    }, '对账已完成，未执行新的 Provider 提交。')
+  }
+
+  async function retryTask(taskId: string): Promise<void> {
+    await run(async () => {
+      const result = await directorApi.retryTask(taskId, `task-retry-${crypto.randomUUID()}`)
+      receiveTask(result.task)
+      taskDiagnostics.value = { ...taskDiagnostics.value, [result.task.id]: result.diagnostic }
+    }, '已创建新的重试 attempt，原失败记录仍保留。')
   }
 
   async function rollbackArtifactVersion(target: ArtifactVersion, expectedHeadRevision: number): Promise<ArtifactVersion | undefined> {
@@ -368,6 +570,16 @@ export const useStudioStore = defineStore('studio', () => {
     }, '候选标注已保存。')
   }
 
+  async function retryFailedCandidateBatch(batchId: string): Promise<void> {
+    if (!currentProjectId.value) return
+    await run(async () => {
+      await directorApi.retryFailedCandidateBatch(batchId, `retry-candidate-batch-${crypto.randomUUID()}`)
+      snapshot.value = await directorApi.snapshot(currentProjectId.value!)
+      tasks.value = snapshot.value.tasks
+      await loadGraph()
+    }, '失败候选已作为新批次重试，原批次和原候选已保留。')
+  }
+
   async function updateShotBeats(shotId: string, beats: ShotBeat[]): Promise<void> {
     if (!currentProjectId.value || !graph.value) return
     await run(async () => {
@@ -406,10 +618,10 @@ export const useStudioStore = defineStore('studio', () => {
 
   return {
     projects, series, currentProjectId, currentProject, snapshot, graph, view, selectedNodeId, selectedNode, selectedEntity,
-    loading, message, error, currentPlan, currentCheckpoint, approvalToken, tasks, promptPack, pendingBatchBind, pendingReconcile,
-    initialize, createProject, loadProject, loadGraph, changeView, importSource, previewSourceImport, commitSourceImport, cancelSourceImport, createPlan, approvePlan, produceDemo, startExport, refreshTasks, rollbackArtifactVersion,
-    exportProjectPackage, exportSeriesPackage, importProjectPackage, moveNodes, connectEvents, selectCandidate, annotateCandidate,
-    updateShotBeats, linkPreviousBoundary, clearBoundaryFrame, createSeriesAndAttach, createSharedAsset,
+    loading, message, error, currentPlan, currentCheckpoint, approvalToken, tasks, taskDiagnostics, taskAdmission, generationPolicy, creativeBrief, episodeContinuity, promptPack, pendingBatchBind, pendingReconcile, pendingExportPreflight,
+    initialize, createProject, loadProject, loadGraph, selectNode, saveCreativeBrief, generateCreativeBriefCandidates, reviewCreativeBriefCandidate, changeView, importSource, previewSourceImport, commitSourceImport, cancelSourceImport, createPlan, approvePlan, produceDemo, produceProviderCandidate, prepareExport, confirmExport, refreshTasks, updateGenerationPolicy, exportDiagnosticBundle, inspectTask, cancelTask, reconcileTask, retryTask, rollbackArtifactVersion,
+    exportProjectPackage, exportSeriesPackage, importProjectPackage, moveNodes, connectEvents, selectCandidate, annotateCandidate, retryFailedCandidateBatch,
+    updateShotBeats, linkPreviousBoundary, clearBoundaryFrame, createEpisodeContinuitySummary, createSeriesAndAttach, createSharedAsset,
     forkResolvedAsset, promoteResolvedAsset, previewShotBinding, applyPendingBatchBind, previewBindingRepair, applyPendingReconcile,
   }
 })

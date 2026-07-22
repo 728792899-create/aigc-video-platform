@@ -1,0 +1,254 @@
+:root {
+  color-scheme: dark;
+
+  /* Obsidian Atelier — final Figma runtime tokens. */
+  --surface-canvas: #0f1418;
+  --surface-chrome: #141b21;
+  --surface-panel: #1a232a;
+  --surface-raised: #212c34;
+  --surface-panel-strong: var(--surface-raised);
+  --surface-panel-soft: #182027;
+  --surface-hover: #253139;
+  --surface-selected: #273730;
+  --surface-info-subtle: #1d2c31;
+  --surface-success-subtle: #213029;
+  --surface-warning-subtle: #302b20;
+  --surface-danger-subtle: #322328;
+  --surface-overlay: rgb(8 12 15 / 76%);
+  --surface-preview-overlay: rgb(15 20 24 / 82%);
+  --surface-media-canvas: var(--surface-canvas);
+  --surface-media-panel: var(--surface-panel);
+
+  --border-default: #34414a;
+  --border-strong: #4a5b65;
+  --border-media: var(--border-default);
+  --text-primary: #ece8df;
+  --text-secondary: #b7b8b2;
+  --text-muted: #8e9595;
+  --text-accent: #a7bcb4;
+  --text-on-accent: #0f1418;
+  --text-media: var(--text-primary);
+  --accent-primary: #78958a;
+  --accent-primary-strong: #91aaa1;
+  --accent-primary-subtle: #26362f;
+  --status-info: #66848c;
+  --status-running: var(--status-info);
+  --status-warning: #b09662;
+  --status-success: #78947d;
+  --status-danger: #a7666d;
+  --status-stale: #9a7184;
+  --status-unknown: #817a94;
+  --status-needs-attention: var(--status-warning);
+  --focus-ring: #9bb0a8;
+  --shadow-color: rgb(0 0 0 / 46%);
+  --shadow: 0 24px 70px var(--shadow-color);
+
+  /* Compatibility names retained while legacy selectors are split. */
+  --palette-cream-ivory: var(--text-primary);
+  --palette-parchment: var(--surface-chrome);
+  --palette-pearl: var(--text-primary);
+  --palette-sage: var(--accent-primary);
+  --palette-forest: var(--accent-primary);
+  --palette-rose: var(--status-stale);
+  --palette-burgundy: var(--status-danger);
+  --palette-champagne: var(--status-warning);
+  --palette-antique-gold: var(--status-warning);
+  --palette-midnight: var(--surface-canvas);
+  --palette-ink: var(--text-primary);
+  --palette-soft-line: var(--border-default);
+  --support-warm-hover: var(--surface-hover);
+  --support-border-strong: var(--border-strong);
+  --support-text-secondary: var(--text-secondary);
+  --support-text-muted: var(--text-muted);
+  --support-forest-hover: var(--accent-primary-strong);
+  --support-warning-text: #d2ba82;
+  --support-info: var(--status-info);
+  --support-dark-panel: var(--surface-panel);
+  --support-dark-panel-strong: var(--surface-raised);
+  --support-dark-panel-soft: var(--surface-panel-soft);
+  --support-dark-line: var(--border-default);
+  --support-dark-line-strong: var(--border-strong);
+  --support-dark-muted: var(--text-muted);
+  --support-dark-accent: var(--accent-primary-strong);
+  --support-dark-danger: var(--status-danger);
+  --support-dark-success: var(--status-success);
+  --support-dark-info: var(--status-info);
+  --support-dark-stale: var(--status-stale);
+
+  /* Translucent paints used by component CSS. */
+  --alpha-accent-04: rgb(120 149 138 / 4%);
+  --alpha-accent-05: rgb(120 149 138 / 5%);
+  --alpha-accent-06: rgb(120 149 138 / 6%);
+  --alpha-accent-07: rgb(120 149 138 / 7%);
+  --alpha-accent-08: rgb(120 149 138 / 8%);
+  --alpha-accent-10: rgb(120 149 138 / 10%);
+  --alpha-accent-12: rgb(120 149 138 / 12%);
+  --alpha-accent-20: rgb(120 149 138 / 20%);
+  --alpha-accent-24: rgb(120 149 138 / 24%);
+  --alpha-accent-28: rgb(120 149 138 / 28%);
+  --alpha-accent-35: rgb(120 149 138 / 35%);
+  --alpha-accent-38: rgb(120 149 138 / 38%);
+  --alpha-accent-45: rgb(120 149 138 / 45%);
+  --alpha-accent-50: rgb(120 149 138 / 50%);
+  --alpha-sage-04: rgb(120 148 125 / 4%);
+  --alpha-sage-06: rgb(120 148 125 / 6%);
+  --alpha-sage-08: rgb(120 148 125 / 8%);
+  --alpha-rose-05: rgb(167 102 109 / 5%);
+  --alpha-rose-07: rgb(167 102 109 / 7%);
+  --alpha-rose-10: rgb(167 102 109 / 10%);
+  --alpha-rose-12: rgb(167 102 109 / 12%);
+  --alpha-rose-24: rgb(167 102 109 / 24%);
+  --alpha-rose-35: rgb(167 102 109 / 35%);
+  --alpha-rose-40: rgb(167 102 109 / 40%);
+  --alpha-gold-05: rgb(176 150 98 / 5%);
+  --alpha-gold-06: rgb(176 150 98 / 6%);
+  --alpha-gold-10: rgb(176 150 98 / 10%);
+  --alpha-gold-12: rgb(176 150 98 / 12%);
+  --alpha-gold-35: rgb(176 150 98 / 35%);
+  --alpha-gold-40: rgb(176 150 98 / 40%);
+  --alpha-gold-45: rgb(176 150 98 / 45%);
+  --alpha-gold-50: rgb(176 150 98 / 50%);
+  --alpha-burgundy-07: rgb(167 102 109 / 7%);
+  --alpha-burgundy-10: rgb(167 102 109 / 10%);
+  --alpha-burgundy-40: rgb(167 102 109 / 40%);
+  --alpha-info-05: rgb(102 132 140 / 5%);
+  --alpha-info-12: rgb(102 132 140 / 12%);
+  --alpha-white-02: rgb(236 232 223 / 2%);
+  --alpha-black-18: rgb(0 0 0 / 18%);
+  --alpha-black-24: rgb(0 0 0 / 24%);
+  --alpha-black-32: rgb(0 0 0 / 32%);
+  --alpha-black-35: rgb(0 0 0 / 35%);
+  --alpha-black-38: rgb(0 0 0 / 38%);
+  --alpha-black-40: rgb(0 0 0 / 40%);
+
+  --graph-grid: var(--border-default);
+  --graph-edge: var(--border-strong);
+  --graph-edge-active: var(--status-warning);
+  --graph-minimap-node: var(--accent-primary);
+  --graph-minimap-mask: rgb(15 20 24 / 76%);
+  --graph-node: var(--surface-panel);
+  --graph-node-strong: var(--surface-raised);
+
+  --bg: var(--surface-canvas);
+  --panel: var(--surface-panel);
+  --panel-strong: var(--surface-panel-strong);
+  --panel-soft: var(--surface-panel-soft);
+  --line: var(--border-default);
+  --line-strong: var(--border-strong);
+  --text: var(--text-primary);
+  --muted: var(--text-muted);
+  --muted-strong: var(--text-secondary);
+  --accent: var(--accent-primary);
+  --accent-strong: var(--accent-primary-strong);
+  --accent-soft: var(--accent-primary-subtle);
+  --mint: var(--accent-primary);
+  --blue: var(--status-info);
+  --warning: var(--status-warning);
+  --danger: var(--status-danger);
+  --success: var(--status-success);
+  --radius: 16px;
+  --view-accent: var(--accent-primary);
+  --view-accent-text: var(--text-accent);
+  --view-accent-subtle: var(--accent-primary-subtle);
+  --feature-accent: var(--accent-primary);
+  --feature-accent-text: var(--text-accent);
+  --feature-accent-subtle: var(--accent-primary-subtle);
+}
+
+.studio-shell[data-view="production"] {
+  --view-accent: var(--status-stale);
+  --view-accent-text: #d3a9b8;
+  --view-accent-subtle: var(--surface-danger-subtle);
+}
+
+.studio-shell[data-view="delivery"] {
+  --view-accent: var(--status-warning);
+  --view-accent-text: var(--support-warning-text);
+  --view-accent-subtle: var(--surface-warning-subtle);
+}
+
+.studio-shell[data-workspace="assets"],
+.studio-shell[data-workspace="shots"],
+.studio-shell[data-workspace="continuity"],
+.studio-shell[data-workspace="generation"],
+.studio-shell[data-workspace="review"] {
+  --view-accent: var(--accent-primary);
+  --view-accent-text: var(--text-accent);
+  --view-accent-subtle: var(--accent-primary-subtle);
+}
+
+.surface-cinema {
+  color-scheme: dark;
+  --bg: var(--surface-canvas);
+  --panel: var(--surface-panel);
+  --panel-strong: var(--surface-panel-strong);
+  --panel-soft: var(--surface-panel-soft);
+  --line: var(--border-default);
+  --line-strong: var(--border-strong);
+  --text: var(--text-primary);
+  --muted: var(--text-muted);
+  --muted-strong: var(--text-secondary);
+  --accent: var(--accent-primary);
+  --accent-strong: var(--accent-primary-strong);
+  --accent-soft: var(--accent-primary-subtle);
+  --mint: var(--accent-primary);
+  --blue: var(--status-info);
+  --warning: var(--status-warning);
+  --danger: var(--status-danger);
+  --success: var(--status-success);
+}
+
+.tone-nature,
+.creative-brief,
+.memory-workspace,
+.source-import-preview {
+  --feature-accent: var(--accent-primary);
+  --feature-accent-text: var(--text-accent);
+  --feature-accent-subtle: var(--accent-primary-subtle);
+}
+
+.tone-editorial,
+.prompt-ops,
+.artifact-history {
+  --feature-accent: var(--status-warning);
+  --feature-accent-text: var(--support-warning-text);
+  --feature-accent-subtle: var(--surface-warning-subtle);
+}
+
+.tone-review,
+.candidate-review,
+.continuity-summary,
+.shot-continuity {
+  --feature-accent: var(--status-stale);
+  --feature-accent-text: #d3a9b8;
+  --feature-accent-subtle: var(--surface-danger-subtle);
+}
+
+.tone-operations,
+.task-tray,
+.recovery-center,
+.security-audit {
+  --feature-accent: var(--status-info);
+  --feature-accent-text: #9cb5bb;
+  --feature-accent-subtle: var(--surface-info-subtle);
+}
+
+.tone-nature,
+.tone-editorial,
+.tone-review,
+.tone-operations,
+.creative-brief,
+.memory-workspace,
+.source-import-preview,
+.prompt-ops,
+.artifact-history,
+.candidate-review,
+.continuity-summary,
+.shot-continuity,
+.task-tray,
+.recovery-center,
+.security-audit {
+  --accent: var(--feature-accent-text);
+  --accent-soft: var(--feature-accent-subtle);
+  --mint: var(--feature-accent-text);
+}

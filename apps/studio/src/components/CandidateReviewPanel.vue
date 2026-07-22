@@ -1,5 +1,5 @@
 <template>
-  <section class="candidate-review" aria-label="镜头候选批次评审" tabindex="0" @keydown="handleKeydown">
+  <section class="candidate-review" data-guide-target="candidate-review" aria-label="镜头候选批次评审" tabindex="0" @keydown="handleKeydown">
     <header class="candidate-review__header">
       <div><strong>{{ filtered.length }} / {{ candidates.length }} 个候选</strong><small>{{ batchSummary }}</small></div>
       <div class="candidate-review__filters" role="group" aria-label="候选筛选">
@@ -7,6 +7,10 @@
         <button type="button" :aria-pressed="filter === 'favorite'" @click="filter = 'favorite'">收藏</button>
       </div>
     </header>
+    <div v-for="batch in failedBatches" :key="batch.id" class="candidate-review__retry">
+      <span>{{ batch.failedCount }} 个失败项 · 原批次保留</span>
+      <button type="button" @click="requestRetry(batch.id)">{{ pendingRetryBatchId === batch.id ? '确认创建新批次' : '重试失败项' }}</button>
+    </div>
     <div v-if="visible.length" class="candidate-review__list" role="listbox" :aria-activedescendant="activeCandidate ? `candidate-review-${activeCandidate.id}` : undefined">
       <article
         v-for="candidate in visible"
@@ -49,12 +53,14 @@ const emit = defineEmits<{
   openCandidate: [candidateId: string]
   selectCandidate: [candidateId: string]
   annotate: [candidateId: string, patch: { favorite?: boolean; label?: string; tags?: string[] }]
+  retryFailedBatch: [batchId: string]
 }>()
 const filter = ref<'all' | 'favorite'>('all')
 const page = ref(0)
 const pageSize = 50
 const activeId = ref<string>()
 const compareIds = ref(new Set<string>())
+const pendingRetryBatchId = ref<string>()
 const filtered = computed(() => props.candidates.filter((candidate) => filter.value === 'all' || candidate.favorite))
 const pageCount = computed(() => Math.max(1, Math.ceil(filtered.value.length / pageSize)))
 const visible = computed(() => filtered.value.slice(page.value * pageSize, (page.value + 1) * pageSize))
@@ -62,6 +68,7 @@ const activeCandidate = computed(() => filtered.value.find((candidate) => candid
 const batchSummary = computed(() => props.batches.length
   ? `${props.batches.length} 个批次 · ${props.batches.filter((batch) => batch.status === 'succeeded').length} 已完成`
   : '旧候选 · 尚无批次 lineage')
+const failedBatches = computed(() => props.batches.filter((batch) => batch.failedCount > 0 && ['partial', 'failed'].includes(batch.status)))
 
 watch(filter, () => { page.value = 0; activeId.value = undefined })
 watch(() => props.candidates.map((candidate) => candidate.id).join(','), () => {
@@ -83,6 +90,15 @@ function toggleCompare(candidateId: string): void {
   if (next.has(candidateId)) next.delete(candidateId)
   else if (next.size < 2) next.add(candidateId)
   compareIds.value = next
+}
+
+function requestRetry(batchId: string): void {
+  if (pendingRetryBatchId.value === batchId) {
+    pendingRetryBatchId.value = undefined
+    emit('retryFailedBatch', batchId)
+    return
+  }
+  pendingRetryBatchId.value = batchId
 }
 
 function handleKeydown(event: KeyboardEvent): void {

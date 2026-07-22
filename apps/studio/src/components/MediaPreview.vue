@@ -1,6 +1,6 @@
 <template>
-  <div class="media-preview">
-    <img v-if="url" :src="url" alt="本地 Demo 候选画面" />
+  <div class="media-preview surface-cinema">
+    <img v-if="url" :src="url" :alt="alt ?? '本地 Demo 候选画面'" />
     <div v-else-if="loading" class="media-preview__placeholder">正在读取本地媒体…</div>
     <div v-else class="media-preview__placeholder media-preview__placeholder--error">媒体加载失败</div>
   </div>
@@ -10,7 +10,7 @@
 import { onBeforeUnmount, ref, watch } from 'vue'
 import { directorApi } from '../api/client.js'
 
-const props = defineProps<{ projectId: string; locator: string }>()
+const props = defineProps<{ projectId: string; locator: string; alt?: string }>()
 const url = ref('')
 const loading = ref(false)
 

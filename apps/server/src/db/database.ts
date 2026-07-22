@@ -15,7 +15,12 @@ import {
   MemoryChunkSchema,
   MemoryRecordSchema,
   PromptRevisionSchema,
+  ProjectGenerationPolicySchema,
+  SecurityAuditEventSchema,
   ProviderPluginRecordSchema,
+  ProviderConnectionSchema,
+  ProviderCostLedgerEntrySchema,
+  ProviderRoutePolicySchema,
   ProviderPublisherTrustSchema,
   ResolvedAssetSchema,
   SeriesSchema,
@@ -44,11 +49,16 @@ import {
   type MemoryChunk,
   type MemoryRecord,
   type Project,
+  type ProjectGenerationPolicy,
+  type SecurityAuditEvent,
   type ProjectSnapshot,
   type PromptRun,
   type PromptRevision,
   type ProviderReceiptRecord,
   type ProviderPluginRecord,
+  type ProviderConnection,
+  type ProviderCostLedgerEntry,
+  type ProviderRoutePolicy,
   type ProviderPublisherTrust,
   type ProviderMediaReceipt,
   type ReviewDecision,
@@ -65,6 +75,7 @@ import {
   type StoryEvent,
   type StoryEventEdge,
   type TaskAttempt,
+  parseAssetMetadata,
 } from '@aigc-director/contracts'
 import { DatabaseRuntime } from '../runtimeModules.js'
 
@@ -90,12 +101,18 @@ const versionTwoEntityTables: readonly EntityTable[] = [
 const versionFiveEntityTables: readonly EntityTable[] = ['candidate_batches', 'provider_media_receipts']
 
 const entityTables: readonly EntityTable[] = [...versionOneEntityTables, ...versionTwoEntityTables, ...versionFiveEntityTables]
-export const LATEST_SCHEMA_VERSION = 9
+export const LATEST_SCHEMA_VERSION = 12
 
 interface EntityRow { payload: string }
 interface ProjectRow { id: string; name: string; description: string; status: string; graph_revision: number; created_at: string; updated_at: string }
 interface PayloadRow { payload: string }
 interface ProviderPublisherRow extends PayloadRow { public_key_pem: string }
+
+function staleFieldsForAssetSlot(slot: AssetBinding['slot']): string[] {
+  if (slot === 'voice') return ['asset.voice', 'voice', 'subtitle', 'timeline', 'export']
+  if (slot === 'music') return ['asset.music', 'timeline', 'export']
+  return [`asset.${slot}`, 'image', 'video', 'timeline', 'export']
+}
 
 export class DirectorDatabase {
   readonly raw: Database.Database
@@ -207,6 +224,33 @@ export class DirectorDatabase {
       })()
     } else {
       this.createAgentRunCheckpointTables()
+    }
+
+    if (current < 10) {
+      this.raw.transaction(() => {
+        this.createGenerationPolicyTables()
+        this.setSchemaVersion(10)
+      })()
+    } else {
+      this.createGenerationPolicyTables()
+    }
+
+    if (current < 11) {
+      this.raw.transaction(() => {
+        this.createSecurityAuditTables()
+        this.setSchemaVersion(11)
+      })()
+    } else {
+      this.createSecurityAuditTables()
+    }
+
+    if (current < 12) {
+      this.raw.transaction(() => {
+        this.createProviderConnectionTables()
+        this.setSchemaVersion(12)
+      })()
+    } else {
+      this.createProviderConnectionTables()
     }
   }
 
@@ -427,6 +471,74 @@ export class DirectorDatabase {
     `)
   }
 
+  private createGenerationPolicyTables(): void {
+    this.raw.exec(`
+      CREATE TABLE IF NOT EXISTS project_generation_policies (
+        project_id TEXT PRIMARY KEY REFERENCES projects(id) ON DELETE CASCADE,
+        revision INTEGER NOT NULL,
+        payload TEXT NOT NULL,
+        updated_at TEXT NOT NULL
+      );
+    `)
+  }
+
+  private createSecurityAuditTables(): void {
+    this.raw.exec(`
+      CREATE TABLE IF NOT EXISTS security_audit_events (
+        id TEXT PRIMARY KEY,
+        operation_id TEXT NOT NULL,
+        project_id TEXT NOT NULL,
+        action TEXT NOT NULL,
+        status TEXT NOT NULL CHECK(status IN ('started','succeeded','rejected')),
+        payload TEXT NOT NULL,
+        created_at TEXT NOT NULL
+      );
+      CREATE INDEX IF NOT EXISTS idx_security_audit_project_time
+        ON security_audit_events(project_id, created_at DESC, id DESC);
+      CREATE INDEX IF NOT EXISTS idx_security_audit_operation
+        ON security_audit_events(operation_id, created_at ASC, id ASC);
+      CREATE TRIGGER IF NOT EXISTS security_audit_events_no_update
+        BEFORE UPDATE ON security_audit_events
+        BEGIN SELECT RAISE(ABORT, 'SECURITY_AUDIT_IMMUTABLE'); END;
+      CREATE TRIGGER IF NOT EXISTS security_audit_events_no_delete
+        BEFORE DELETE ON security_audit_events
+        BEGIN SELECT RAISE(ABORT, 'SECURITY_AUDIT_IMMUTABLE'); END;
+    `)
+  }
+
+  private createProviderConnectionTables(): void {
+    this.raw.exec(`
+      CREATE TABLE IF NOT EXISTS provider_connections (
+        id TEXT PRIMARY KEY,
+        protocol TEXT NOT NULL CHECK(protocol IN ('demo-local','openai-compatible','declarative-http')),
+        state TEXT NOT NULL CHECK(state IN ('draft','ready','disabled','error')),
+        revision INTEGER NOT NULL,
+        payload TEXT NOT NULL,
+        created_at TEXT NOT NULL,
+        updated_at TEXT NOT NULL
+      );
+      CREATE INDEX IF NOT EXISTS idx_provider_connections_state ON provider_connections(state, updated_at DESC);
+      CREATE TABLE IF NOT EXISTS provider_route_policies (
+        project_id TEXT PRIMARY KEY REFERENCES projects(id) ON DELETE CASCADE,
+        revision INTEGER NOT NULL,
+        payload TEXT NOT NULL,
+        updated_at TEXT NOT NULL
+      );
+      CREATE TABLE IF NOT EXISTS provider_cost_ledger (
+        id TEXT PRIMARY KEY,
+        project_id TEXT NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
+        task_id TEXT NOT NULL,
+        connection_id TEXT NOT NULL,
+        amount_micros INTEGER NOT NULL,
+        currency TEXT NOT NULL,
+        payload TEXT NOT NULL,
+        created_at TEXT NOT NULL
+      );
+      CREATE INDEX IF NOT EXISTS idx_provider_cost_project ON provider_cost_ledger(project_id, created_at DESC);
+      CREATE INDEX IF NOT EXISTS idx_provider_cost_task ON provider_cost_ledger(task_id, created_at DESC);
+    `)
+  }
+
   private ensureWorkspaceId(): string {
     const existing = this.raw.prepare("SELECT value FROM schema_meta WHERE key = 'workspace_id'").get() as { value?: string } | undefined
     if (existing?.value) return existing.value
@@ -531,6 +643,48 @@ export class DirectorDatabase {
     return project
   }
 
+  getGenerationPolicy(projectId: string): ProjectGenerationPolicy | undefined {
+    const row = this.raw.prepare('SELECT payload FROM project_generation_policies WHERE project_id = ?').get(projectId) as PayloadRow | undefined
+    return row ? ProjectGenerationPolicySchema.parse(JSON.parse(row.payload)) : undefined
+  }
+
+  putGenerationPolicy(rawPolicy: ProjectGenerationPolicy, expectedRevision: number): ProjectGenerationPolicy {
+    const policy = ProjectGenerationPolicySchema.parse(rawPolicy)
+    if (!this.getProject(policy.projectId)) throw new Error('PROJECT_NOT_FOUND')
+    const current = this.getGenerationPolicy(policy.projectId)
+    if ((current?.revision ?? 0) !== expectedRevision) throw new Error('GENERATION_POLICY_REVISION_CONFLICT')
+    if (policy.revision !== expectedRevision + 1) throw new Error('GENERATION_POLICY_REVISION_INVALID')
+    this.raw.prepare(`INSERT INTO project_generation_policies(project_id,revision,payload,updated_at)
+      VALUES (?,?,?,?) ON CONFLICT(project_id) DO UPDATE SET revision=excluded.revision,payload=excluded.payload,updated_at=excluded.updated_at`)
+      .run(policy.projectId, policy.revision, JSON.stringify(policy), policy.updatedAt)
+    return policy
+  }
+
+  appendSecurityAuditEvent(rawEvent: SecurityAuditEvent): SecurityAuditEvent {
+    const event = SecurityAuditEventSchema.parse(rawEvent)
+    if (!this.getProject(event.projectId)) throw new Error('PROJECT_NOT_FOUND')
+    this.raw.prepare(`INSERT INTO security_audit_events(
+      id, operation_id, project_id, action, status, payload, created_at
+    ) VALUES (?,?,?,?,?,?,?)`).run(
+      event.id,
+      event.operationId,
+      event.projectId,
+      event.action,
+      event.status,
+      JSON.stringify(event),
+      event.createdAt,
+    )
+    return event
+  }
+
+  listSecurityAuditEvents(projectId: string, limit = 100): SecurityAuditEvent[] {
+    if (!this.getProject(projectId)) throw new Error('PROJECT_NOT_FOUND')
+    if (!Number.isSafeInteger(limit) || limit < 1 || limit > 500) throw new Error('SECURITY_AUDIT_LIMIT_INVALID')
+    const rows = this.raw.prepare(`SELECT payload FROM security_audit_events
+      WHERE project_id = ? ORDER BY created_at DESC, id DESC LIMIT ?`).all(projectId, limit) as PayloadRow[]
+    return rows.map((row) => SecurityAuditEventSchema.parse(JSON.parse(row.payload)))
+  }
+
   createSeries(input: { name: string; description?: string | undefined; artDirection?: string | undefined; defaults?: Record<string, unknown> | undefined }): Series {
     const timestamp = new Date().toISOString()
     const series = SeriesSchema.parse({
@@ -618,6 +772,21 @@ export class DirectorDatabase {
     return updated
   }
 
+  updateEpisodeContinuityArtifacts(
+    episodeId: string,
+    patch: { previousSummaryArtifactId?: string | undefined; nextHookArtifactId?: string | undefined },
+  ): Episode {
+    const episode = this.getEpisode(episodeId)
+    if (!episode) throw new Error('EPISODE_NOT_FOUND')
+    return this.saveEpisode({
+      ...episode,
+      ...(patch.previousSummaryArtifactId ? { previousSummaryArtifactId: patch.previousSummaryArtifactId } : {}),
+      ...(patch.nextHookArtifactId ? { nextHookArtifactId: patch.nextHookArtifactId } : {}),
+      revision: episode.revision + 1,
+      updatedAt: new Date().toISOString(),
+    })
+  }
+
   getEpisodeContext(episodeId: string): EpisodeContext {
     const episode = this.getEpisode(episodeId)
     if (!episode) throw new Error('EPISODE_NOT_FOUND')
@@ -643,7 +812,7 @@ export class DirectorDatabase {
     const asset = SharedAssetSchema.parse({
       id: randomUUID(), logicalId: input.logicalId ?? randomUUID(), scope: input.scope,
       ...(input.seriesId ? { seriesId: input.seriesId } : {}), type: input.type, name: input.name,
-      description: input.description ?? '', metadata: input.metadata ?? {}, revision: 1,
+      description: input.description ?? '', metadata: parseAssetMetadata(input.type, input.metadata), revision: 1,
       ...(input.forkedFromAssetId ? { forkedFromAssetId: input.forkedFromAssetId } : {}),
       archived: false, createdAt: timestamp, updatedAt: timestamp,
     })
@@ -677,7 +846,7 @@ export class DirectorDatabase {
         ...current,
         ...(patch.name === undefined ? {} : { name: patch.name }),
         ...(patch.description === undefined ? {} : { description: patch.description }),
-        ...(patch.metadata === undefined ? {} : { metadata: patch.metadata }),
+        ...(patch.metadata === undefined ? {} : { metadata: parseAssetMetadata(current.type, patch.metadata) }),
         ...(patch.selectedVariantId === undefined ? {} : { selectedVariantId: patch.selectedVariantId }),
         revision: current.revision + 1,
         updatedAt: new Date().toISOString(),
@@ -691,7 +860,7 @@ export class DirectorDatabase {
         if (shot) {
           this.put('shots', binding.projectId, {
             ...shot,
-            staleFields: [...new Set([...shot.staleFields, 'image', 'video', 'timeline', 'export'])],
+            staleFields: [...new Set([...shot.staleFields, ...staleFieldsForAssetSlot(binding.slot)])],
             revision: shot.revision + 1,
             updatedAt: new Date().toISOString(),
           })
@@ -1150,6 +1319,64 @@ export class DirectorDatabase {
 
   deleteMemoryRecord(id: string): boolean {
     return this.raw.prepare('DELETE FROM memory_documents WHERE id = ?').run(id).changes === 1
+  }
+
+  putProviderConnection(rawConnection: ProviderConnection, expectedRevision: number): ProviderConnection {
+    const connection = ProviderConnectionSchema.parse(rawConnection)
+    const existing = this.getProviderConnection(connection.id)
+    if (existing && existing.protocol !== connection.protocol) throw new Error('PROVIDER_CONNECTION_PROTOCOL_IMMUTABLE')
+    if (existing ? existing.revision !== expectedRevision : expectedRevision !== 0) throw new Error('PROVIDER_CONNECTION_REVISION_CONFLICT')
+    this.raw.prepare(`INSERT INTO provider_connections(id,protocol,state,revision,payload,created_at,updated_at)
+      VALUES (?,?,?,?,?,?,?) ON CONFLICT(id) DO UPDATE SET
+      state=excluded.state,revision=excluded.revision,payload=excluded.payload,updated_at=excluded.updated_at`)
+      .run(connection.id, connection.protocol, connection.state, connection.revision, JSON.stringify(connection), connection.createdAt, connection.updatedAt)
+    return connection
+  }
+
+  getProviderConnection(id: string): ProviderConnection | undefined {
+    const row = this.raw.prepare('SELECT payload FROM provider_connections WHERE id = ?').get(id) as PayloadRow | undefined
+    return row ? ProviderConnectionSchema.parse(JSON.parse(row.payload)) : undefined
+  }
+
+  listProviderConnections(): ProviderConnection[] {
+    const rows = this.raw.prepare('SELECT payload FROM provider_connections ORDER BY updated_at DESC, id ASC').all() as PayloadRow[]
+    return rows.map((row) => ProviderConnectionSchema.parse(JSON.parse(row.payload)))
+  }
+
+  putProviderRoutePolicy(rawPolicy: ProviderRoutePolicy, expectedRevision: number): ProviderRoutePolicy {
+    const policy = ProviderRoutePolicySchema.parse(rawPolicy)
+    const existing = this.getProviderRoutePolicy(policy.projectId)
+    if (existing ? existing.revision !== expectedRevision : expectedRevision !== 0) throw new Error('PROVIDER_ROUTE_REVISION_CONFLICT')
+    this.raw.prepare(`INSERT INTO provider_route_policies(project_id,revision,payload,updated_at)
+      VALUES (?,?,?,?) ON CONFLICT(project_id) DO UPDATE SET
+      revision=excluded.revision,payload=excluded.payload,updated_at=excluded.updated_at`)
+      .run(policy.projectId, policy.revision, JSON.stringify(policy), policy.updatedAt)
+    return policy
+  }
+
+  getProviderRoutePolicy(projectId: string): ProviderRoutePolicy | undefined {
+    const row = this.raw.prepare('SELECT payload FROM provider_route_policies WHERE project_id = ?').get(projectId) as PayloadRow | undefined
+    return row ? ProviderRoutePolicySchema.parse(JSON.parse(row.payload)) : undefined
+  }
+
+  appendProviderCost(rawEntry: ProviderCostLedgerEntry): ProviderCostLedgerEntry {
+    const entry = ProviderCostLedgerEntrySchema.parse(rawEntry)
+    const existing = this.raw.prepare('SELECT payload FROM provider_cost_ledger WHERE id = ?').get(entry.id) as PayloadRow | undefined
+    if (existing) {
+      const parsed = ProviderCostLedgerEntrySchema.parse(JSON.parse(existing.payload))
+      if (JSON.stringify(parsed) !== JSON.stringify(entry)) throw new Error('PROVIDER_COST_ENTRY_IMMUTABLE')
+      return parsed
+    }
+    this.raw.prepare(`INSERT INTO provider_cost_ledger(id,project_id,task_id,connection_id,amount_micros,currency,payload,created_at)
+      VALUES (?,?,?,?,?,?,?,?)`).run(
+      entry.id, entry.projectId, entry.taskId, entry.connectionId, entry.amountMicros, entry.currency, JSON.stringify(entry), entry.createdAt,
+    )
+    return entry
+  }
+
+  listProviderCosts(projectId: string): ProviderCostLedgerEntry[] {
+    const rows = this.raw.prepare('SELECT payload FROM provider_cost_ledger WHERE project_id = ? ORDER BY created_at DESC, id DESC').all(projectId) as PayloadRow[]
+    return rows.map((row) => ProviderCostLedgerEntrySchema.parse(JSON.parse(row.payload)))
   }
 
   putAgentRunCheckpoint(rawCheckpoint: AgentRunCheckpoint): AgentRunCheckpoint {

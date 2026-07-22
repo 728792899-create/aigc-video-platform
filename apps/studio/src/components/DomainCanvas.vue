@@ -14,8 +14,8 @@
       @connect="onConnect"
       @pane-click="$emit('select', undefined)"
     >
-      <Background pattern-color="#24314a" :gap="26" :size="1" />
-      <MiniMap :pannable="true" :zoomable="true" node-color="#65e6cb" mask-color="rgba(8, 13, 23, .72)" />
+      <Background pattern-color="var(--graph-grid)" :gap="26" :size="1" />
+      <MiniMap :pannable="true" :zoomable="true" node-color="var(--graph-minimap-node)" mask-color="var(--graph-minimap-mask)" />
       <Controls position="bottom-left" />
       <template #node-domain="nodeProps">
         <GraphNodeCard v-bind="nodeProps" />
@@ -54,7 +54,7 @@ const flowEdges = computed(() => props.graph.edges.map((edge) => ({
   id: edge.id, source: edge.source, target: edge.target,
   ...(edge.label ? { label: edge.label } : {}),
   ...(edge.animated === undefined ? {} : { animated: edge.animated }),
-  style: { stroke: edge.animated ? '#65e6cb' : '#46536b', strokeWidth: 1.5 },
+  style: { stroke: edge.animated ? 'var(--graph-edge-active)' : 'var(--graph-edge)', strokeWidth: 1.5 },
 })))
 const emptyTitle = computed(() => props.graph.view === 'story' ? '从原著或一个想法开始' : props.graph.view === 'production' ? '先批准改编计划' : '先生成镜头候选')
 const emptyDescription = computed(() => props.graph.view === 'story' ? '导入文本后，章节和事件会直接出现在这张画布上。' : '画布只展示真实领域对象，不创建静态演示节点。')

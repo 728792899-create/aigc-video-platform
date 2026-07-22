@@ -1,5 +1,5 @@
 <template>
-  <aside class="agent-panel" :class="{ 'agent-panel--open': open }" aria-label="AI 导演计划">
+  <aside class="agent-panel" data-guide-target="agent-plan" :class="{ 'agent-panel--open': open }" aria-label="AI 导演计划">
     <button class="agent-panel__toggle" type="button" :aria-expanded="open" @click="open = !open">
       <Bot :size="18" /><span>导演 Agent</span><ChevronRight :size="15" :class="{ rotate: open }" />
     </button>
@@ -34,14 +34,22 @@
 </template>
 
 <script setup lang="ts">
-import { computed, ref } from 'vue'
+import { computed, nextTick, ref } from 'vue'
 import { Bot, ChevronRight, Clapperboard, RefreshCw, ShieldCheck, Sparkles } from 'lucide-vue-next'
 import type { ExecutionPlan } from '@aigc-director/contracts'
 import { useStudioStore } from '../stores/studio.js'
 
 const store = useStudioStore()
-const open = ref(true)
+const open = ref(!(typeof window !== 'undefined' && window.matchMedia?.('(max-width: 768px)').matches))
 const canPlan = computed(() => (store.snapshot?.events.length ?? 0) > 0)
 type Risk = ExecutionPlan['steps'][number]['risk']
 const riskLabel = (risk: Risk): string => ({ read_only: '只读', writes_project: '写入', paid_provider: '付费', destructive: '删除', export: '导出' })[risk]
+
+async function openPanel(): Promise<void> {
+  open.value = true
+  await nextTick()
+  document.querySelector<HTMLElement>('[data-guide-target="agent-plan"] .plan-card button, [data-guide-target="agent-plan"] .agent-empty button')?.focus()
+}
+
+defineExpose({ openPanel })
 </script>

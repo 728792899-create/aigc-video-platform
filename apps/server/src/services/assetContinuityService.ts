@@ -133,7 +133,7 @@ export class AssetContinuityService {
           ...(target.scopeId ? { originScopeId: target.scopeId } : { originScopeId: undefined }),
           drifted: false, updatedAt: appliedAt,
         }))
-        this.markShotStale(context.project.id, binding.shotId, appliedAt)
+        this.markShotStale(context.project.id, binding.shotId, binding.slot, appliedAt)
       }
       const projectRevision = this.database.bumpGraphRevision(context.project.id)
       const report = ReconcileReportSchema.parse({
@@ -197,7 +197,7 @@ export class AssetContinuityService {
     return this.database.transaction(() => {
       for (const binding of operation.payload.bindings) {
         this.database.putAssetBinding(binding)
-        this.markShotStale(context.project.id, binding.shotId, appliedAt)
+        this.markShotStale(context.project.id, binding.shotId, binding.slot, appliedAt)
       }
       const projectRevision = this.database.bumpGraphRevision(context.project.id)
       const report = AssetBatchBindReportSchema.parse({ operationId, episodeId, projectRevision, bindingIds: operation.payload.bindings.map((binding) => binding.id), appliedAt })
@@ -230,11 +230,16 @@ export class AssetContinuityService {
     }
   }
 
-  private markShotStale(projectId: string, shotId: string, timestamp: string): void {
+  private markShotStale(projectId: string, shotId: string, slot: AssetBinding['slot'], timestamp: string): void {
     const shot = this.database.get<Shot>('shots', shotId)
     if (!shot || shot.projectId !== projectId) throw new Error('SHOT_NOT_FOUND')
+    const affected = slot === 'voice'
+      ? ['voice', 'subtitle', 'timeline', 'export']
+      : slot === 'music'
+        ? ['timeline', 'export']
+        : ['image', 'video', 'timeline', 'export']
     this.database.put('shots', projectId, {
-      ...shot, staleFields: [...new Set([...shot.staleFields, 'image', 'video', 'timeline', 'export'])],
+      ...shot, staleFields: [...new Set([...shot.staleFields, `asset.${slot}`, ...affected])],
       revision: shot.revision + 1, updatedAt: timestamp,
     })
   }

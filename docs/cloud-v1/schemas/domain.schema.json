@@ -1,0 +1,309 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://aigc-director.local/schemas/cloud-v1/domain.schema.json",
+  "title": "AIGC Director Studio Cloud v1 domain contracts",
+  "description": "Proposed cloud collaboration contracts. These schemas are not implemented by the current schema v12 runtime.",
+  "$defs": {
+    "Id": {
+      "type": "string",
+      "format": "uuid"
+    },
+    "IsoDate": {
+      "type": "string",
+      "format": "date-time"
+    },
+    "Revision": {
+      "type": "integer",
+      "minimum": 1
+    },
+    "Role": {
+      "type": "string",
+      "enum": ["owner", "admin", "editor", "reviewer", "operator", "viewer"]
+    },
+    "Organization": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["id", "name", "ownerId", "status", "revision", "createdAt", "updatedAt"],
+      "properties": {
+        "id": { "$ref": "#/$defs/Id" },
+        "name": { "type": "string", "minLength": 1, "maxLength": 120 },
+        "ownerId": { "$ref": "#/$defs/Id" },
+        "status": { "type": "string", "enum": ["active", "suspended", "deleting"] },
+        "revision": { "$ref": "#/$defs/Revision" },
+        "createdAt": { "$ref": "#/$defs/IsoDate" },
+        "updatedAt": { "$ref": "#/$defs/IsoDate" }
+      }
+    },
+    "Membership": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["organizationId", "userId", "role", "status", "revision", "joinedAt"],
+      "properties": {
+        "organizationId": { "$ref": "#/$defs/Id" },
+        "userId": { "$ref": "#/$defs/Id" },
+        "role": { "$ref": "#/$defs/Role" },
+        "status": { "type": "string", "enum": ["invited", "active", "suspended"] },
+        "revision": { "$ref": "#/$defs/Revision" },
+        "joinedAt": { "$ref": "#/$defs/IsoDate" }
+      }
+    },
+    "Invitation": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["id", "organizationId", "email", "role", "status", "expiresAt", "createdAt"],
+      "properties": {
+        "id": { "$ref": "#/$defs/Id" },
+        "organizationId": { "$ref": "#/$defs/Id" },
+        "email": { "type": "string", "format": "email", "maxLength": 320 },
+        "role": { "$ref": "#/$defs/Role" },
+        "status": { "type": "string", "enum": ["pending", "accepted", "expired", "revoked"] },
+        "expiresAt": { "$ref": "#/$defs/IsoDate" },
+        "acceptedAt": { "$ref": "#/$defs/IsoDate" },
+        "createdAt": { "$ref": "#/$defs/IsoDate" }
+      }
+    },
+    "Presence": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["actorId", "organizationId", "projectId", "workspace", "lastSeen"],
+      "properties": {
+        "actorId": { "$ref": "#/$defs/Id" },
+        "organizationId": { "$ref": "#/$defs/Id" },
+        "projectId": { "$ref": "#/$defs/Id" },
+        "workspace": {
+          "type": "string",
+          "enum": [
+            "project_center", "project_setup", "brief", "script", "assets", "shots",
+            "continuity", "generation", "review", "timeline", "canvas", "prompt_skill",
+            "tasks", "export_settings"
+          ]
+        },
+        "entityType": { "type": "string", "maxLength": 80 },
+        "entityId": { "$ref": "#/$defs/Id" },
+        "lastSeen": { "$ref": "#/$defs/IsoDate" }
+      }
+    },
+    "SoftLock": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["id", "organizationId", "projectId", "entityType", "entityId", "holderId", "leaseUntil"],
+      "properties": {
+        "id": { "$ref": "#/$defs/Id" },
+        "organizationId": { "$ref": "#/$defs/Id" },
+        "projectId": { "$ref": "#/$defs/Id" },
+        "entityType": { "type": "string", "minLength": 1, "maxLength": 80 },
+        "entityId": { "$ref": "#/$defs/Id" },
+        "holderId": { "$ref": "#/$defs/Id" },
+        "leaseUntil": { "$ref": "#/$defs/IsoDate" },
+        "takeoverReason": { "type": "string", "minLength": 1, "maxLength": 500 }
+      }
+    },
+    "ReviewThread": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "id", "organizationId", "projectId", "targetType", "targetId", "targetRevision",
+        "status", "createdBy", "revision", "createdAt", "updatedAt"
+      ],
+      "properties": {
+        "id": { "$ref": "#/$defs/Id" },
+        "organizationId": { "$ref": "#/$defs/Id" },
+        "projectId": { "$ref": "#/$defs/Id" },
+        "targetType": { "type": "string", "enum": ["brief", "scene", "shot", "asset", "candidate", "timeline", "export"] },
+        "targetId": { "$ref": "#/$defs/Id" },
+        "targetRevision": { "$ref": "#/$defs/Revision" },
+        "status": { "type": "string", "enum": ["open", "changes_requested", "approved", "resolved", "stale"] },
+        "assigneeId": { "$ref": "#/$defs/Id" },
+        "createdBy": { "$ref": "#/$defs/Id" },
+        "revision": { "$ref": "#/$defs/Revision" },
+        "createdAt": { "$ref": "#/$defs/IsoDate" },
+        "updatedAt": { "$ref": "#/$defs/IsoDate" }
+      }
+    },
+    "ReviewComment": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["id", "threadId", "body", "mentionUserIds", "createdBy", "createdAt"],
+      "properties": {
+        "id": { "$ref": "#/$defs/Id" },
+        "threadId": { "$ref": "#/$defs/Id" },
+        "body": { "type": "string", "minLength": 1, "maxLength": 8000 },
+        "mentionUserIds": {
+          "type": "array",
+          "maxItems": 50,
+          "uniqueItems": true,
+          "items": { "$ref": "#/$defs/Id" }
+        },
+        "createdBy": { "$ref": "#/$defs/Id" },
+        "createdAt": { "$ref": "#/$defs/IsoDate" },
+        "editedAt": { "$ref": "#/$defs/IsoDate" }
+      }
+    },
+    "ReviewDecision": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["id", "threadId", "decision", "targetRevision", "decidedBy", "createdAt"],
+      "properties": {
+        "id": { "$ref": "#/$defs/Id" },
+        "threadId": { "$ref": "#/$defs/Id" },
+        "decision": { "type": "string", "enum": ["approve", "request_changes"] },
+        "targetRevision": { "$ref": "#/$defs/Revision" },
+        "reason": { "type": "string", "maxLength": 4000 },
+        "decidedBy": { "$ref": "#/$defs/Id" },
+        "createdAt": { "$ref": "#/$defs/IsoDate" }
+      }
+    },
+    "Notification": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["id", "organizationId", "userId", "type", "target", "createdAt"],
+      "properties": {
+        "id": { "$ref": "#/$defs/Id" },
+        "organizationId": { "$ref": "#/$defs/Id" },
+        "userId": { "$ref": "#/$defs/Id" },
+        "type": { "type": "string", "enum": ["mention", "assignment", "review_decision", "task_attention", "provider_approval"] },
+        "target": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["type", "id"],
+          "properties": {
+            "type": { "type": "string", "minLength": 1, "maxLength": 80 },
+            "id": { "$ref": "#/$defs/Id" }
+          }
+        },
+        "readAt": { "$ref": "#/$defs/IsoDate" },
+        "createdAt": { "$ref": "#/$defs/IsoDate" }
+      }
+    },
+    "ProviderConnection": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "id", "organizationId", "ownerId", "scope", "endpointOrigin", "protocol", "status",
+        "credentialRef", "credentialFingerprint", "capabilities", "revision", "createdAt", "updatedAt"
+      ],
+      "properties": {
+        "id": { "$ref": "#/$defs/Id" },
+        "organizationId": { "$ref": "#/$defs/Id" },
+        "ownerId": { "$ref": "#/$defs/Id" },
+        "scope": { "type": "string", "enum": ["personal", "project", "team"] },
+        "projectId": { "$ref": "#/$defs/Id" },
+        "endpointOrigin": { "type": "string", "format": "uri", "pattern": "^https://" },
+        "protocol": { "type": "string", "enum": ["official", "openai_compatible", "async_polling", "self_hosted_gateway"] },
+        "status": { "type": "string", "enum": ["draft", "testing", "pending_approval", "active", "rejected", "revoked"] },
+        "credentialRef": { "type": "string", "minLength": 16, "maxLength": 500 },
+        "credentialFingerprint": { "type": "string", "pattern": "^[a-f0-9]{64}$" },
+        "capabilities": {
+          "type": "array",
+          "uniqueItems": true,
+          "maxItems": 30,
+          "items": { "type": "string", "enum": ["text", "image", "video", "audio", "submit", "poll", "cancel", "reconcile"] }
+        },
+        "lastTestAt": { "$ref": "#/$defs/IsoDate" },
+        "revision": { "$ref": "#/$defs/Revision" },
+        "createdAt": { "$ref": "#/$defs/IsoDate" },
+        "updatedAt": { "$ref": "#/$defs/IsoDate" }
+      }
+    },
+    "RelayApproval": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["id", "connectionId", "requestedScope", "status", "requestedBy", "revision", "createdAt"],
+      "properties": {
+        "id": { "$ref": "#/$defs/Id" },
+        "connectionId": { "$ref": "#/$defs/Id" },
+        "requestedScope": { "type": "string", "enum": ["project", "team"] },
+        "projectId": { "$ref": "#/$defs/Id" },
+        "status": { "type": "string", "enum": ["pending", "approved", "rejected", "revoked"] },
+        "requestedBy": { "$ref": "#/$defs/Id" },
+        "reviewedBy": { "$ref": "#/$defs/Id" },
+        "reason": { "type": "string", "maxLength": 4000 },
+        "revision": { "$ref": "#/$defs/Revision" },
+        "createdAt": { "$ref": "#/$defs/IsoDate" },
+        "reviewedAt": { "$ref": "#/$defs/IsoDate" }
+      }
+    },
+    "ModelBinding": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["id", "organizationId", "projectId", "capability", "connectionId", "modelId", "revision", "createdAt", "updatedAt"],
+      "properties": {
+        "id": { "$ref": "#/$defs/Id" },
+        "organizationId": { "$ref": "#/$defs/Id" },
+        "projectId": { "$ref": "#/$defs/Id" },
+        "capability": { "type": "string", "enum": ["text", "image", "video", "audio"] },
+        "connectionId": { "$ref": "#/$defs/Id" },
+        "modelId": { "type": "string", "minLength": 1, "maxLength": 200 },
+        "revision": { "$ref": "#/$defs/Revision" },
+        "createdAt": { "$ref": "#/$defs/IsoDate" },
+        "updatedAt": { "$ref": "#/$defs/IsoDate" }
+      }
+    },
+    "ProjectBudget": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["projectId", "currency", "limitMicros", "warningThresholdMicros", "hardStop", "revision", "updatedAt"],
+      "properties": {
+        "projectId": { "$ref": "#/$defs/Id" },
+        "currency": { "type": "string", "pattern": "^[A-Z]{3}$" },
+        "limitMicros": { "type": "integer", "minimum": 0 },
+        "warningThresholdMicros": { "type": "integer", "minimum": 0 },
+        "hardStop": { "type": "boolean" },
+        "revision": { "$ref": "#/$defs/Revision" },
+        "updatedAt": { "$ref": "#/$defs/IsoDate" }
+      }
+    },
+    "CostLedgerEntry": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "id", "organizationId", "projectId", "taskId", "attemptId", "estimateMicros", "actualMicros",
+        "currency", "billed", "correlationId", "createdAt"
+      ],
+      "properties": {
+        "id": { "$ref": "#/$defs/Id" },
+        "organizationId": { "$ref": "#/$defs/Id" },
+        "projectId": { "$ref": "#/$defs/Id" },
+        "taskId": { "$ref": "#/$defs/Id" },
+        "attemptId": { "$ref": "#/$defs/Id" },
+        "providerReceiptRef": { "type": "string", "minLength": 1, "maxLength": 500 },
+        "estimateMicros": { "type": "integer", "minimum": 0 },
+        "actualMicros": { "type": "integer", "minimum": 0 },
+        "currency": { "type": "string", "pattern": "^[A-Z]{3}$" },
+        "billed": { "type": "boolean" },
+        "reconciledAt": { "$ref": "#/$defs/IsoDate" },
+        "correlationId": { "type": "string", "minLength": 8, "maxLength": 200 },
+        "createdAt": { "$ref": "#/$defs/IsoDate" }
+      }
+    },
+    "ApiError": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["code", "userMessage", "retryable"],
+      "properties": {
+        "code": {
+          "type": "string",
+          "enum": [
+            "UNAUTHORIZED", "FORBIDDEN", "NOT_FOUND", "VALIDATION_FAILED", "REVISION_CONFLICT",
+            "LOCK_HELD", "RATE_LIMITED", "PROVIDER_UNKNOWN", "CREDENTIAL_REVOKED",
+            "RECONCILIATION_REQUIRED", "CONFIRMATION_REQUIRED", "ENDPOINT_BLOCKED"
+          ]
+        },
+        "userMessage": { "type": "string", "minLength": 1, "maxLength": 1000 },
+        "retryable": { "type": "boolean" },
+        "details": { "type": "object" }
+      }
+    },
+    "ApiErrorResponse": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["ok", "error", "correlationId", "timestamp"],
+      "properties": {
+        "ok": { "const": false },
+        "error": { "$ref": "#/$defs/ApiError" },
+        "correlationId": { "type": "string", "minLength": 8, "maxLength": 200 },
+        "timestamp": { "$ref": "#/$defs/IsoDate" }
+      }
+    }
+  }
+}

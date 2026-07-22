@@ -24,7 +24,15 @@ dist-server-jsc/
 *.sqlite
 *.sqlite3
 *.sqlite-journal
+*.sqlite-wal
+*.sqlite-shm
+*.sqlite3-journal
+*.sqlite3-wal
+*.sqlite3-shm
 *.db
+*.db-journal
+*.db-wal
+*.db-shm
 *.log
 logs/
 uploads/
@@ -54,6 +62,7 @@ secrets.json
 # Preserved local duplicate files; never stage these automatically.
 * 2
 * 2.*
+启动说明 *.md
 
 # Tool and OS state
 .DS_Store
@@ -61,6 +70,7 @@ Thumbs.db
 .idea/
 .vscode/
 .cache/
+.local/
 .vite/
 coverage/
 *.tsbuildinfo

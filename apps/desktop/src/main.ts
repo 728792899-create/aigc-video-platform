@@ -175,7 +175,7 @@ async function createMainWindow(): Promise<void> {
   const origin = `http://127.0.0.1:${serverConfig.port}`
   mainWindow = new BrowserWindow({
     width: 1480, height: 940, minWidth: 980, minHeight: 680,
-    title: 'AIGC 导演工作室', backgroundColor: '#070b13', show: false,
+    title: 'AIGC 导演工作室', backgroundColor: '#0F1418', show: false,
     webPreferences: { preload: preloadPath, contextIsolation: true, nodeIntegration: false, sandbox: true, webSecurity: true, devTools: !app.isPackaged },
   })
   mainWindow.removeMenu()

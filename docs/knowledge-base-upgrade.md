@@ -1,5 +1,7 @@
 # 开源功能知识库对照与升级记录
 
+> 当前产品结论（2026-07-21）：知识库中的“隔离可执行插件运行时”只保留为历史安全研究。Local v1 采用 schema v12 的内置 Demo、OpenAI-compatible 和受限声明式 HTTPS Provider；Server 不加载任意 JavaScript、Python 或 Deno 适配器，旧插件路径固定返回 HTTP 410。下文 schema v7/v8 与 Deno 内容是历史实现证据，不是当前产品入口或后续承诺。
+
 ## 参考基线
 
 - 本次实际读取：`open-source-feature-knowledge-base@1425238f35b16f23b8a63aee1a109113a164e4a9`。
@@ -33,7 +35,7 @@
 | capability-driven-model-catalog | 独立确定性 Model Catalog 已构建；静态能力与 Provider 健康/账单分离 | extract | **P2 Phase 3 已完成**，未知模型/能力 fail fast |
 | provider-aware-media-resolution | MediaResolver 校验项目、MIME、大小、顺序和 locator，只返回脱敏 receipt | harden | **P2 Phase 3 已完成**，无 signed URL/Authorization 持久化 |
 | checkpointed-hitl-agent-orchestration | ExecutionPlan + 一次性审批 + checkpoint revision + 脱敏记忆 provenance 已实现 | keep | **schema v9 已完成**，已通过防重放与不可覆盖测试 |
-| sandboxed-vendor-adapter-runtime | 已有签名 manifest、bundle hash、Deno 全 deny 命令、64 KiB JSON-RPC、隔离监督器、固定校验安装核心、schema v7 插件状态机、schema v8 发布者信任与二次确认 UI | harden | **P3 Phase 5 安全边界进行中**，信任列表与 enable 门禁默认关闭，真实进程待验证 |
+| sandboxed-vendor-adapter-runtime | 历史研究代码和表结构保留用于可逆迁移；生产 HTTP 应用不初始化运行时 | avoid | **已关闭**：任意 JS/Python/Deno 适配器固定 410；只允许声明式连接 |
 | artifact-version-rollback | ArtifactVersion 不可变依赖链、字段 diff、ArtifactHead CAS、追加式回滚和 Inspector 二次确认已实现 | harden | **P2 Phase 2 已完成**，错误 scope fail closed，历史不覆盖 |
 | layered-shared-asset-library | Episode→Series→Global resolver、fork/promote、媒体快照、引用保护与审批式批量改绑已实现 | reimplement | **P2 Phase 1 已完成**，revision drift 不覆盖历史 |
 | local-first-project-persistence | SQLite WAL、schema 迁移、任务恢复已实现 | keep | P0 已通过重启恢复 |
@@ -101,21 +103,20 @@ Project 继续是可独立生产和导出的 Episode 工作单元；旧项目迁
 - 敏感扫描拒绝 credential、signed URL、Provider 原始响应、二进制内容与本机私密路径。默认为零网络关键词检索；ONNX 固定模型/revision/hash 已记录，不会自动下载。
 - Browser 实测重建、来源解释、禁用/恢复与删除二次确认；390×844 无横向溢出，console 0 error。
 
-## 本次已实现：默认关闭的安全出口与插件监督器
+## 本次最终实现：声明式 Provider 与可执行适配器关闭
 
-- `media-fetch` / `model-api` / `temporary-upload` 三通道策略均默认关闭且 allowlist 为空；当前只开放脱敏状态查询，没有任意 URL 执行 API。
-- Broker 强制 HTTPS、精确 host、每跳 DNS 复检、已验证 IP 固定 TLS、流式容量/超时上限和宿主 secret resolver；审计不记录 URL、header、body 或 secret。
-- Provider bundle 需通过 SHA-256、受信 Ed25519 签名与固定 Deno 2.9.2 manifest。监督器限制单消息 64 KiB、单次超时和工具调用次数，协议违规或异常退出立即终止并隔离。插件只能用 `broker.execute` 反向 RPC 提交出口描述，无法获得 secret 或直接联网。
-- Deno 运行时安装核心锁定官方 2.9.2 平台资产、大小和 SHA-256；下载逐跳限制到 GitHub HTTPS 资产域，流式校验大小/hash，ZIP 仅允许单个预期可执行文件，并在版本探测后原子发布。现有安装会复核 receipt、二进制 hash 和精确版本。
-- Systems 工作台显示平台、固定版本、下载大小和本地验证状态。安装必须二次点击精确确认，且默认 `PROVIDER_NETWORK_DISABLED=1` 时 UI 和 API 都在下载前拒绝；API 不返回本机可执行路径。
-- 测试只运行内存假进程与生成的 ZIP fixture，未下载 Deno、未运行第三方插件。完整 `pnpm quality` 通过 148 项 workspace test、Smoke、FFmpeg、clean-room、安全扫描与生产构建，付费请求 0。schema v7/v8 已实现插件生命周期与发布者信任，schema v9 已将脱敏记忆 provenance 绑定到 Agent run/plan；真实 Deno 进程验收仍未完成。
+- schema v12 新增 Provider connection、按模态 route policy 与追加式 cost ledger；Demo、OpenAI-compatible 和声明式 HTTPS manifest 共用超时、限流、异常格式、取消、对账和降级契约。
+- 连接创建和测试强制 HTTPS、安全 origin 与受限协议能力。secret 由系统 Keychain/Credential Manager 或 Docker Secret 解析，API、日志、项目包和诊断包均不返回 secret。
+- 用户自付模式必须显式启用 Provider、设置每日预算并确认实际提交；产品不托管余额、不代扣。未知 Provider 结果只能先 reconcile，不允许直接 fallback 或重复扣费重试。
+- 历史 Broker、签名 bundle、Deno 安装器与插件监督器保留为安全研究和迁移证据，但不再进入 HTTP 应用依赖图。所有 `/api/v2/provider-plugins*` 与 `/api/v2/provider-plugin-publishers*` 路径固定返回 410 `EXECUTABLE_PROVIDER_ADAPTERS_DISABLED`。
+- 最终 `pnpm quality` 通过 235 项 workspace tests、Smoke、FFmpeg、clean-room、安全扫描与 Server/Studio/Desktop 生产构建；`pnpm local:smoke`、`pnpm docker:smoke`、Electron preflight 和生产依赖审计均通过，付费请求 0。
 
 ## 后续路线
 
 本轮新增的 TXT/Markdown 垂直切片不会执行 Markdown/HTML；取消时数据库保持不变，确认时再次校验 SHA-256，并以数据库幂等记录防止崩溃重放创建重复 Source。Browser 已实测选择、预览、取消、重新选择和确认生成 2 章/4 事件。
 
-1. P2：跨集摘要 Artifact、字段级 stale 传播与逐场景修复。
+1. P2：跨集摘要 Artifact 已固定来源 revision；逐场景/逐镜头字段 patch、事务 CAS 和字段级 stale 已完成，继续补充可视化冲突修复与长剧本部分失败重跑。
 2. P2：候选失败项 retry API、批量比较性能和真实视频尾帧恢复诊断。
-3. 外部门禁：真实 Deno 隔离进程、Provider live verification、签名与线上更新只在明确授权和凭据齐备后验收。
+3. 外部门禁：真实 Provider live verification、桌面签名/公证与线上更新只在明确授权和凭据齐备后验收；Deno/任意可执行适配器不再是产品路线。
 
 本文的许可证结论是工程风险提示，不替代正式法律意见。

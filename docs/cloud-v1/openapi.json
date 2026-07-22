@@ -1,0 +1,569 @@
+{
+  "openapi": "3.1.0",
+  "info": {
+    "title": "AIGC Director Studio Cloud v1 proposed API",
+    "version": "0.1.0-rc2",
+    "description": "Additive proposal over the current /api/v2 surface. This file documents a review candidate and does not claim that the cloud endpoints are implemented."
+  },
+  "servers": [
+    { "url": "/api/v2", "description": "Versioned application API" }
+  ],
+  "security": [
+    { "bearerSession": [] }
+  ],
+  "tags": [
+    { "name": "Organizations" },
+    { "name": "Collaboration" },
+    { "name": "Review" },
+    { "name": "Provider Trust" },
+    { "name": "Cost and Budget" }
+  ],
+  "paths": {
+    "/organizations": {
+      "get": {
+        "tags": ["Organizations"],
+        "operationId": "listOrganizations",
+        "x-required-roles": ["owner", "admin", "editor", "reviewer", "operator", "viewer"],
+        "responses": { "200": { "$ref": "#/components/responses/Success" }, "default": { "$ref": "#/components/responses/Error" } }
+      },
+      "post": {
+        "tags": ["Organizations"],
+        "operationId": "createOrganization",
+        "x-idempotent": true,
+        "x-audit-action": "organization.create",
+        "parameters": [{ "$ref": "#/components/parameters/IdempotencyKey" }],
+        "requestBody": {
+          "required": true,
+          "content": { "application/json": { "schema": { "$ref": "#/components/schemas/CreateOrganizationRequest" } } }
+        },
+        "responses": { "201": { "$ref": "#/components/responses/Success" }, "default": { "$ref": "#/components/responses/Error" } }
+      }
+    },
+    "/organizations/{organizationId}": {
+      "parameters": [{ "$ref": "#/components/parameters/OrganizationId" }],
+      "get": {
+        "tags": ["Organizations"],
+        "operationId": "getOrganization",
+        "responses": { "200": { "$ref": "#/components/responses/Success" }, "default": { "$ref": "#/components/responses/Error" } }
+      }
+    },
+    "/organizations/{organizationId}/invitations": {
+      "parameters": [{ "$ref": "#/components/parameters/OrganizationId" }],
+      "post": {
+        "tags": ["Organizations"],
+        "operationId": "createInvitation",
+        "x-required-roles": ["owner", "admin"],
+        "x-idempotent": true,
+        "x-audit-action": "member.invite",
+        "parameters": [{ "$ref": "#/components/parameters/IdempotencyKey" }],
+        "requestBody": {
+          "required": true,
+          "content": { "application/json": { "schema": { "$ref": "#/components/schemas/CreateInvitationRequest" } } }
+        },
+        "responses": { "201": { "$ref": "#/components/responses/Success" }, "default": { "$ref": "#/components/responses/Error" } }
+      }
+    },
+    "/invitations/accept": {
+      "post": {
+        "tags": ["Organizations"],
+        "operationId": "acceptInvitation",
+        "x-idempotent": true,
+        "parameters": [{ "$ref": "#/components/parameters/IdempotencyKey" }],
+        "requestBody": {
+          "required": true,
+          "content": { "application/json": { "schema": { "$ref": "#/components/schemas/AcceptInvitationRequest" } } }
+        },
+        "responses": { "200": { "$ref": "#/components/responses/Success" }, "default": { "$ref": "#/components/responses/Error" } }
+      }
+    },
+    "/organizations/{organizationId}/members/{userId}": {
+      "parameters": [
+        { "$ref": "#/components/parameters/OrganizationId" },
+        { "$ref": "#/components/parameters/UserId" }
+      ],
+      "patch": {
+        "tags": ["Organizations"],
+        "operationId": "updateMembership",
+        "x-required-roles": ["owner", "admin"],
+        "x-audit-action": "membership.update",
+        "parameters": [{ "$ref": "#/components/parameters/IfMatch" }],
+        "requestBody": {
+          "required": true,
+          "content": { "application/json": { "schema": { "$ref": "#/components/schemas/UpdateMembershipRequest" } } }
+        },
+        "responses": { "200": { "$ref": "#/components/responses/Success" }, "default": { "$ref": "#/components/responses/Error" } }
+      },
+      "delete": {
+        "tags": ["Organizations"],
+        "operationId": "removeMembership",
+        "x-required-roles": ["owner", "admin"],
+        "x-idempotent": true,
+        "x-audit-action": "membership.remove",
+        "parameters": [
+          { "$ref": "#/components/parameters/IdempotencyKey" },
+          { "$ref": "#/components/parameters/ConfirmationToken" }
+        ],
+        "responses": { "204": { "description": "Membership removed or already absent" }, "default": { "$ref": "#/components/responses/Error" } }
+      }
+    },
+    "/projects/{projectId}/presence": {
+      "parameters": [{ "$ref": "#/components/parameters/ProjectId" }],
+      "get": {
+        "tags": ["Collaboration"],
+        "operationId": "listProjectPresence",
+        "responses": { "200": { "$ref": "#/components/responses/Success" }, "default": { "$ref": "#/components/responses/Error" } }
+      }
+    },
+    "/projects/{projectId}/locks": {
+      "parameters": [{ "$ref": "#/components/parameters/ProjectId" }],
+      "post": {
+        "tags": ["Collaboration"],
+        "operationId": "acquireSoftLock",
+        "x-required-roles": ["owner", "admin", "editor", "operator"],
+        "x-idempotent": true,
+        "parameters": [{ "$ref": "#/components/parameters/IdempotencyKey" }],
+        "requestBody": {
+          "required": true,
+          "content": { "application/json": { "schema": { "$ref": "#/components/schemas/AcquireSoftLockRequest" } } }
+        },
+        "responses": { "201": { "$ref": "#/components/responses/Success" }, "409": { "$ref": "#/components/responses/Error" }, "default": { "$ref": "#/components/responses/Error" } }
+      }
+    },
+    "/projects/{projectId}/locks/{lockId}": {
+      "parameters": [
+        { "$ref": "#/components/parameters/ProjectId" },
+        { "$ref": "#/components/parameters/LockId" }
+      ],
+      "patch": {
+        "tags": ["Collaboration"],
+        "operationId": "renewSoftLock",
+        "x-idempotent": true,
+        "requestBody": {
+          "required": true,
+          "content": { "application/json": { "schema": { "$ref": "#/components/schemas/RenewSoftLockRequest" } } }
+        },
+        "responses": { "200": { "$ref": "#/components/responses/Success" }, "default": { "$ref": "#/components/responses/Error" } }
+      },
+      "delete": {
+        "tags": ["Collaboration"],
+        "operationId": "releaseSoftLock",
+        "x-idempotent": true,
+        "parameters": [{ "$ref": "#/components/parameters/IdempotencyKey" }],
+        "responses": { "204": { "description": "Lease released or expired" }, "default": { "$ref": "#/components/responses/Error" } }
+      }
+    },
+    "/notifications": {
+      "get": {
+        "tags": ["Collaboration"],
+        "operationId": "listNotifications",
+        "parameters": [
+          { "$ref": "#/components/parameters/Cursor" },
+          { "$ref": "#/components/parameters/Limit" }
+        ],
+        "responses": { "200": { "$ref": "#/components/responses/Success" }, "default": { "$ref": "#/components/responses/Error" } }
+      }
+    },
+    "/notifications/{notificationId}": {
+      "parameters": [{ "$ref": "#/components/parameters/NotificationId" }],
+      "patch": {
+        "tags": ["Collaboration"],
+        "operationId": "markNotificationRead",
+        "x-idempotent": true,
+        "requestBody": {
+          "required": true,
+          "content": { "application/json": { "schema": { "$ref": "#/components/schemas/MarkNotificationReadRequest" } } }
+        },
+        "responses": { "200": { "$ref": "#/components/responses/Success" }, "default": { "$ref": "#/components/responses/Error" } }
+      }
+    },
+    "/projects/{projectId}/review-threads": {
+      "parameters": [{ "$ref": "#/components/parameters/ProjectId" }],
+      "get": {
+        "tags": ["Review"],
+        "operationId": "listReviewThreads",
+        "parameters": [
+          { "$ref": "#/components/parameters/Cursor" },
+          { "$ref": "#/components/parameters/Limit" }
+        ],
+        "responses": { "200": { "$ref": "#/components/responses/Success" }, "default": { "$ref": "#/components/responses/Error" } }
+      },
+      "post": {
+        "tags": ["Review"],
+        "operationId": "createReviewThread",
+        "x-required-roles": ["owner", "admin", "editor", "reviewer"],
+        "x-idempotent": true,
+        "parameters": [{ "$ref": "#/components/parameters/IdempotencyKey" }],
+        "requestBody": {
+          "required": true,
+          "content": { "application/json": { "schema": { "$ref": "#/components/schemas/CreateReviewThreadRequest" } } }
+        },
+        "responses": { "201": { "$ref": "#/components/responses/Success" }, "default": { "$ref": "#/components/responses/Error" } }
+      }
+    },
+    "/review-threads/{threadId}/comments": {
+      "parameters": [{ "$ref": "#/components/parameters/ThreadId" }],
+      "post": {
+        "tags": ["Review"],
+        "operationId": "createReviewComment",
+        "x-idempotent": true,
+        "parameters": [{ "$ref": "#/components/parameters/IdempotencyKey" }],
+        "requestBody": {
+          "required": true,
+          "content": { "application/json": { "schema": { "$ref": "#/components/schemas/CreateReviewCommentRequest" } } }
+        },
+        "responses": { "201": { "$ref": "#/components/responses/Success" }, "default": { "$ref": "#/components/responses/Error" } }
+      }
+    },
+    "/review-threads/{threadId}/assignment": {
+      "parameters": [{ "$ref": "#/components/parameters/ThreadId" }],
+      "patch": {
+        "tags": ["Review"],
+        "operationId": "assignReviewThread",
+        "parameters": [{ "$ref": "#/components/parameters/IfMatch" }],
+        "requestBody": {
+          "required": true,
+          "content": { "application/json": { "schema": { "$ref": "#/components/schemas/AssignReviewThreadRequest" } } }
+        },
+        "responses": { "200": { "$ref": "#/components/responses/Success" }, "default": { "$ref": "#/components/responses/Error" } }
+      }
+    },
+    "/review-threads/{threadId}/decisions": {
+      "parameters": [{ "$ref": "#/components/parameters/ThreadId" }],
+      "post": {
+        "tags": ["Review"],
+        "operationId": "createReviewDecision",
+        "x-required-roles": ["owner", "admin", "editor", "reviewer"],
+        "x-audit-action": "review.decision",
+        "parameters": [
+          { "$ref": "#/components/parameters/IdempotencyKey" },
+          { "$ref": "#/components/parameters/IfMatch" }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": { "application/json": { "schema": { "$ref": "#/components/schemas/CreateReviewDecisionRequest" } } }
+        },
+        "responses": { "201": { "$ref": "#/components/responses/Success" }, "default": { "$ref": "#/components/responses/Error" } }
+      }
+    },
+    "/provider-connections": {
+      "get": {
+        "tags": ["Provider Trust"],
+        "operationId": "listProviderConnections",
+        "responses": { "200": { "$ref": "#/components/responses/Success" }, "default": { "$ref": "#/components/responses/Error" } }
+      },
+      "post": {
+        "tags": ["Provider Trust"],
+        "operationId": "createProviderConnection",
+        "x-idempotent": true,
+        "x-audit-action": "provider_connection.create",
+        "parameters": [{ "$ref": "#/components/parameters/IdempotencyKey" }],
+        "requestBody": {
+          "required": true,
+          "content": { "application/json": { "schema": { "$ref": "#/components/schemas/CreateProviderConnectionRequest" } } }
+        },
+        "responses": { "201": { "$ref": "#/components/responses/Success" }, "default": { "$ref": "#/components/responses/Error" } }
+      }
+    },
+    "/provider-connections/{connectionId}/test": {
+      "parameters": [{ "$ref": "#/components/parameters/ConnectionId" }],
+      "post": {
+        "tags": ["Provider Trust"],
+        "operationId": "testProviderConnection",
+        "x-idempotent": true,
+        "description": "Returns only capability and stable error metadata. It must never echo request headers, credentials, raw provider payloads, or user content.",
+        "responses": { "200": { "$ref": "#/components/responses/Success" }, "default": { "$ref": "#/components/responses/Error" } }
+      }
+    },
+    "/provider-connections/{connectionId}/share-requests": {
+      "parameters": [{ "$ref": "#/components/parameters/ConnectionId" }],
+      "post": {
+        "tags": ["Provider Trust"],
+        "operationId": "requestProviderConnectionShare",
+        "x-idempotent": true,
+        "parameters": [{ "$ref": "#/components/parameters/IdempotencyKey" }],
+        "requestBody": {
+          "required": true,
+          "content": { "application/json": { "schema": { "$ref": "#/components/schemas/CreateRelayApprovalRequest" } } }
+        },
+        "responses": { "202": { "$ref": "#/components/responses/Success" }, "default": { "$ref": "#/components/responses/Error" } }
+      }
+    },
+    "/provider-connections/{connectionId}/revoke": {
+      "parameters": [{ "$ref": "#/components/parameters/ConnectionId" }],
+      "post": {
+        "tags": ["Provider Trust"],
+        "operationId": "revokeProviderConnection",
+        "x-idempotent": true,
+        "x-audit-action": "provider_connection.revoke",
+        "parameters": [
+          { "$ref": "#/components/parameters/IdempotencyKey" },
+          { "$ref": "#/components/parameters/ConfirmationToken" }
+        ],
+        "responses": { "200": { "$ref": "#/components/responses/Success" }, "default": { "$ref": "#/components/responses/Error" } }
+      }
+    },
+    "/relay-approvals/{approvalId}/decisions": {
+      "parameters": [{ "$ref": "#/components/parameters/ApprovalId" }],
+      "post": {
+        "tags": ["Provider Trust"],
+        "operationId": "decideRelayApproval",
+        "x-required-roles": ["owner", "admin"],
+        "x-audit-action": "provider_connection.share_decision",
+        "parameters": [
+          { "$ref": "#/components/parameters/IdempotencyKey" },
+          { "$ref": "#/components/parameters/IfMatch" }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": { "application/json": { "schema": { "$ref": "#/components/schemas/RelayApprovalDecisionRequest" } } }
+        },
+        "responses": { "201": { "$ref": "#/components/responses/Success" }, "default": { "$ref": "#/components/responses/Error" } }
+      }
+    },
+    "/model-bindings": {
+      "get": {
+        "tags": ["Provider Trust"],
+        "operationId": "listModelBindings",
+        "responses": { "200": { "$ref": "#/components/responses/Success" }, "default": { "$ref": "#/components/responses/Error" } }
+      },
+      "post": {
+        "tags": ["Provider Trust"],
+        "operationId": "createModelBinding",
+        "x-required-roles": ["owner", "admin"],
+        "parameters": [
+          { "$ref": "#/components/parameters/IdempotencyKey" },
+          { "$ref": "#/components/parameters/IfMatch" }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": { "application/json": { "schema": { "$ref": "#/components/schemas/CreateModelBindingRequest" } } }
+        },
+        "responses": { "201": { "$ref": "#/components/responses/Success" }, "default": { "$ref": "#/components/responses/Error" } }
+      }
+    },
+    "/projects/{projectId}/cost-ledger": {
+      "parameters": [{ "$ref": "#/components/parameters/ProjectId" }],
+      "get": {
+        "tags": ["Cost and Budget"],
+        "operationId": "listCostLedger",
+        "parameters": [
+          { "$ref": "#/components/parameters/Cursor" },
+          { "$ref": "#/components/parameters/Limit" }
+        ],
+        "responses": { "200": { "$ref": "#/components/responses/Success" }, "default": { "$ref": "#/components/responses/Error" } }
+      }
+    },
+    "/projects/{projectId}/budget": {
+      "parameters": [{ "$ref": "#/components/parameters/ProjectId" }],
+      "get": {
+        "tags": ["Cost and Budget"],
+        "operationId": "getProjectBudget",
+        "responses": { "200": { "$ref": "#/components/responses/Success" }, "default": { "$ref": "#/components/responses/Error" } }
+      },
+      "patch": {
+        "tags": ["Cost and Budget"],
+        "operationId": "updateProjectBudget",
+        "x-required-roles": ["owner", "admin"],
+        "x-audit-action": "project_budget.update",
+        "parameters": [
+          { "$ref": "#/components/parameters/IfMatch" },
+          { "$ref": "#/components/parameters/ConfirmationToken" }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": { "application/json": { "schema": { "$ref": "#/components/schemas/UpdateProjectBudgetRequest" } } }
+        },
+        "responses": { "200": { "$ref": "#/components/responses/Success" }, "default": { "$ref": "#/components/responses/Error" } }
+      }
+    }
+  },
+  "components": {
+    "securitySchemes": {
+      "bearerSession": {
+        "type": "http",
+        "scheme": "bearer",
+        "bearerFormat": "OIDC session token"
+      }
+    },
+    "parameters": {
+      "OrganizationId": { "name": "organizationId", "in": "path", "required": true, "schema": { "type": "string", "format": "uuid" } },
+      "ProjectId": { "name": "projectId", "in": "path", "required": true, "schema": { "type": "string", "format": "uuid" } },
+      "UserId": { "name": "userId", "in": "path", "required": true, "schema": { "type": "string", "format": "uuid" } },
+      "LockId": { "name": "lockId", "in": "path", "required": true, "schema": { "type": "string", "format": "uuid" } },
+      "NotificationId": { "name": "notificationId", "in": "path", "required": true, "schema": { "type": "string", "format": "uuid" } },
+      "ThreadId": { "name": "threadId", "in": "path", "required": true, "schema": { "type": "string", "format": "uuid" } },
+      "ConnectionId": { "name": "connectionId", "in": "path", "required": true, "schema": { "type": "string", "format": "uuid" } },
+      "ApprovalId": { "name": "approvalId", "in": "path", "required": true, "schema": { "type": "string", "format": "uuid" } },
+      "IdempotencyKey": { "name": "Idempotency-Key", "in": "header", "required": true, "schema": { "type": "string", "minLength": 16, "maxLength": 200 } },
+      "IfMatch": { "name": "If-Match", "in": "header", "required": true, "schema": { "type": "string", "pattern": "^[1-9][0-9]*$" } },
+      "ConfirmationToken": { "name": "X-Confirmation-Token", "in": "header", "required": true, "schema": { "type": "string", "minLength": 24, "maxLength": 500 } },
+      "Cursor": { "name": "cursor", "in": "query", "required": false, "schema": { "type": "string", "maxLength": 500 } },
+      "Limit": { "name": "limit", "in": "query", "required": false, "schema": { "type": "integer", "minimum": 1, "maximum": 200, "default": 50 } }
+    },
+    "responses": {
+      "Success": {
+        "description": "Successful response",
+        "content": { "application/json": { "schema": { "$ref": "#/components/schemas/SuccessEnvelope" } } }
+      },
+      "Error": {
+        "description": "Stable, redacted error response",
+        "content": { "application/json": { "schema": { "$ref": "./schemas/domain.schema.json#/$defs/ApiErrorResponse" } } }
+      }
+    },
+    "schemas": {
+      "SuccessEnvelope": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["ok", "data", "correlationId"],
+        "properties": {
+          "ok": { "const": true },
+          "data": {},
+          "correlationId": { "type": "string", "minLength": 8, "maxLength": 200 }
+        }
+      },
+      "CreateOrganizationRequest": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["name"],
+        "properties": { "name": { "type": "string", "minLength": 1, "maxLength": 120 } }
+      },
+      "CreateInvitationRequest": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["email", "role", "expiresInHours"],
+        "properties": {
+          "email": { "type": "string", "format": "email", "maxLength": 320 },
+          "role": { "$ref": "./schemas/domain.schema.json#/$defs/Role" },
+          "expiresInHours": { "type": "integer", "minimum": 1, "maximum": 168 }
+        }
+      },
+      "AcceptInvitationRequest": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["token"],
+        "properties": {
+          "token": { "type": "string", "minLength": 32, "maxLength": 500, "writeOnly": true, "x-sensitive": true }
+        }
+      },
+      "UpdateMembershipRequest": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "role": { "$ref": "./schemas/domain.schema.json#/$defs/Role" },
+          "status": { "type": "string", "enum": ["active", "suspended"] }
+        },
+        "minProperties": 1
+      },
+      "AcquireSoftLockRequest": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["entityType", "entityId"],
+        "properties": {
+          "entityType": { "type": "string", "minLength": 1, "maxLength": 80 },
+          "entityId": { "type": "string", "format": "uuid" }
+        }
+      },
+      "RenewSoftLockRequest": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["leaseUntil"],
+        "properties": { "leaseUntil": { "type": "string", "format": "date-time" } }
+      },
+      "MarkNotificationReadRequest": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["read"],
+        "properties": { "read": { "const": true } }
+      },
+      "CreateReviewThreadRequest": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["targetType", "targetId", "targetRevision", "assigneeId"],
+        "properties": {
+          "targetType": { "type": "string", "enum": ["brief", "scene", "shot", "asset", "candidate", "timeline", "export"] },
+          "targetId": { "type": "string", "format": "uuid" },
+          "targetRevision": { "type": "integer", "minimum": 1 },
+          "assigneeId": { "type": "string", "format": "uuid" }
+        }
+      },
+      "CreateReviewCommentRequest": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["body", "mentionUserIds"],
+        "properties": {
+          "body": { "type": "string", "minLength": 1, "maxLength": 8000 },
+          "mentionUserIds": { "type": "array", "maxItems": 50, "uniqueItems": true, "items": { "type": "string", "format": "uuid" } }
+        }
+      },
+      "AssignReviewThreadRequest": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["assigneeId"],
+        "properties": { "assigneeId": { "type": "string", "format": "uuid" } }
+      },
+      "CreateReviewDecisionRequest": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["decision", "targetRevision"],
+        "properties": {
+          "decision": { "type": "string", "enum": ["approve", "request_changes"] },
+          "targetRevision": { "type": "integer", "minimum": 1 },
+          "reason": { "type": "string", "maxLength": 4000 }
+        }
+      },
+      "CreateProviderConnectionRequest": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["scope", "endpointOrigin", "protocol", "credential"],
+        "properties": {
+          "scope": { "type": "string", "enum": ["personal", "project", "team"] },
+          "projectId": { "type": "string", "format": "uuid" },
+          "endpointOrigin": { "type": "string", "format": "uri", "pattern": "^https://" },
+          "protocol": { "type": "string", "enum": ["official", "openai_compatible", "async_polling", "self_hosted_gateway"] },
+          "credential": { "type": "string", "minLength": 1, "maxLength": 10000, "writeOnly": true, "x-sensitive": true }
+        }
+      },
+      "CreateRelayApprovalRequest": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["requestedScope"],
+        "properties": {
+          "requestedScope": { "type": "string", "enum": ["project", "team"] },
+          "projectId": { "type": "string", "format": "uuid" },
+          "reason": { "type": "string", "maxLength": 4000 }
+        }
+      },
+      "RelayApprovalDecisionRequest": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["decision"],
+        "properties": {
+          "decision": { "type": "string", "enum": ["approve", "reject"] },
+          "reason": { "type": "string", "maxLength": 4000 }
+        }
+      },
+      "CreateModelBindingRequest": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["projectId", "capability", "connectionId", "modelId"],
+        "properties": {
+          "projectId": { "type": "string", "format": "uuid" },
+          "capability": { "type": "string", "enum": ["text", "image", "video", "audio"] },
+          "connectionId": { "type": "string", "format": "uuid" },
+          "modelId": { "type": "string", "minLength": 1, "maxLength": 200 }
+        }
+      },
+      "UpdateProjectBudgetRequest": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["currency", "limitMicros", "warningThresholdMicros", "hardStop"],
+        "properties": {
+          "currency": { "type": "string", "pattern": "^[A-Z]{3}$" },
+          "limitMicros": { "type": "integer", "minimum": 0 },
+          "warningThresholdMicros": { "type": "integer", "minimum": 0 },
+          "hardStop": { "type": "boolean" }
+        }
+      }
+    }
+  }
+}

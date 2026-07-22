@@ -1,0 +1,253 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://aigc-director.local/schemas/cloud-v1/events.schema.json",
+  "title": "AIGC Director Studio Cloud v1 event contracts",
+  "description": "Versioned, redacted Socket.IO event envelopes. Delivery is at least once; clients deduplicate by eventId.",
+  "$defs": {
+    "Id": {
+      "type": "string",
+      "format": "uuid"
+    },
+    "IsoDate": {
+      "type": "string",
+      "format": "date-time"
+    },
+    "EntityRef": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["type", "id"],
+      "properties": {
+        "type": { "type": "string", "minLength": 1, "maxLength": 80 },
+        "id": { "$ref": "#/$defs/Id" },
+        "revision": { "type": "integer", "minimum": 1 }
+      }
+    },
+    "BaseEnvelope": {
+      "type": "object",
+      "required": [
+        "eventVersion", "eventId", "sequence", "type", "emittedAt", "organizationId",
+        "payload", "correlationId", "resumeCursor"
+      ],
+      "properties": {
+        "eventVersion": { "const": 1 },
+        "eventId": { "$ref": "#/$defs/Id" },
+        "sequence": { "type": "integer", "minimum": 1 },
+        "type": { "type": "string" },
+        "emittedAt": { "$ref": "#/$defs/IsoDate" },
+        "organizationId": { "$ref": "#/$defs/Id" },
+        "projectId": { "$ref": "#/$defs/Id" },
+        "actorId": { "$ref": "#/$defs/Id" },
+        "entity": { "$ref": "#/$defs/EntityRef" },
+        "payload": { "type": "object" },
+        "correlationId": { "type": "string", "minLength": 8, "maxLength": 200 },
+        "resumeCursor": { "type": "string", "minLength": 8, "maxLength": 500 }
+      }
+    },
+    "PresenceUpdated": {
+      "allOf": [
+        { "$ref": "#/$defs/BaseEnvelope" },
+        {
+          "type": "object",
+          "properties": {
+            "type": { "const": "presence.updated" },
+            "payload": {
+              "type": "object",
+              "additionalProperties": false,
+              "required": ["actorId", "workspace", "lastSeen", "action"],
+              "properties": {
+                "actorId": { "$ref": "#/$defs/Id" },
+                "workspace": { "type": "string", "minLength": 1, "maxLength": 80 },
+                "entityType": { "type": "string", "maxLength": 80 },
+                "entityId": { "$ref": "#/$defs/Id" },
+                "lastSeen": { "$ref": "#/$defs/IsoDate" },
+                "action": { "type": "string", "enum": ["joined", "moved", "left"] }
+              }
+            }
+          }
+        }
+      ],
+      "unevaluatedProperties": false
+    },
+    "LockUpdated": {
+      "allOf": [
+        { "$ref": "#/$defs/BaseEnvelope" },
+        {
+          "type": "object",
+          "properties": {
+            "type": { "const": "lock.updated" },
+            "payload": {
+              "type": "object",
+              "additionalProperties": false,
+              "required": ["lockId", "entityType", "entityId", "holderId", "action"],
+              "properties": {
+                "lockId": { "$ref": "#/$defs/Id" },
+                "entityType": { "type": "string", "minLength": 1, "maxLength": 80 },
+                "entityId": { "$ref": "#/$defs/Id" },
+                "holderId": { "$ref": "#/$defs/Id" },
+                "leaseUntil": { "$ref": "#/$defs/IsoDate" },
+                "action": { "type": "string", "enum": ["acquired", "renewed", "released", "expired", "taken_over"] }
+              }
+            }
+          }
+        }
+      ],
+      "unevaluatedProperties": false
+    },
+    "ReviewUpdated": {
+      "allOf": [
+        { "$ref": "#/$defs/BaseEnvelope" },
+        {
+          "type": "object",
+          "properties": {
+            "type": { "const": "review.updated" },
+            "payload": {
+              "type": "object",
+              "additionalProperties": false,
+              "required": ["threadId", "status", "targetRevision", "revision"],
+              "properties": {
+                "threadId": { "$ref": "#/$defs/Id" },
+                "status": { "type": "string", "enum": ["open", "changes_requested", "approved", "resolved", "stale"] },
+                "assigneeId": { "$ref": "#/$defs/Id" },
+                "targetRevision": { "type": "integer", "minimum": 1 },
+                "revision": { "type": "integer", "minimum": 1 }
+              }
+            }
+          }
+        }
+      ],
+      "unevaluatedProperties": false
+    },
+    "TaskUpdated": {
+      "allOf": [
+        { "$ref": "#/$defs/BaseEnvelope" },
+        {
+          "type": "object",
+          "properties": {
+            "type": { "const": "task.updated" },
+            "payload": {
+              "type": "object",
+              "additionalProperties": false,
+              "required": ["taskId", "stage", "status", "progress", "attempt", "revision"],
+              "properties": {
+                "taskId": { "$ref": "#/$defs/Id" },
+                "stage": { "type": "string", "minLength": 1, "maxLength": 120 },
+                "status": { "type": "string", "enum": ["queued", "running", "partial", "failed", "unknown", "reconciling", "succeeded", "canceled"] },
+                "progress": { "type": "number", "minimum": 0, "maximum": 1 },
+                "attempt": { "type": "integer", "minimum": 1 },
+                "revision": { "type": "integer", "minimum": 1 },
+                "errorCode": { "type": "string", "minLength": 1, "maxLength": 120 }
+              }
+            }
+          }
+        }
+      ],
+      "unevaluatedProperties": false
+    },
+    "CostUpdated": {
+      "allOf": [
+        { "$ref": "#/$defs/BaseEnvelope" },
+        {
+          "type": "object",
+          "properties": {
+            "type": { "const": "cost.updated" },
+            "payload": {
+              "type": "object",
+              "additionalProperties": false,
+              "required": ["taskId", "estimateMicros", "actualMicros", "currency", "billed"],
+              "properties": {
+                "taskId": { "$ref": "#/$defs/Id" },
+                "estimateMicros": { "type": "integer", "minimum": 0 },
+                "actualMicros": { "type": "integer", "minimum": 0 },
+                "currency": { "type": "string", "pattern": "^[A-Z]{3}$" },
+                "billed": { "type": "boolean" }
+              }
+            }
+          }
+        }
+      ],
+      "unevaluatedProperties": false
+    },
+    "NotificationCreated": {
+      "allOf": [
+        { "$ref": "#/$defs/BaseEnvelope" },
+        {
+          "type": "object",
+          "properties": {
+            "type": { "const": "notification.created" },
+            "payload": {
+              "type": "object",
+              "additionalProperties": false,
+              "required": ["notificationId", "notificationType", "targetType", "targetId"],
+              "properties": {
+                "notificationId": { "$ref": "#/$defs/Id" },
+                "notificationType": { "type": "string", "enum": ["mention", "assignment", "review_decision", "task_attention", "provider_approval"] },
+                "targetType": { "type": "string", "minLength": 1, "maxLength": 80 },
+                "targetId": { "$ref": "#/$defs/Id" }
+              }
+            }
+          }
+        }
+      ],
+      "unevaluatedProperties": false
+    },
+    "ProviderConnectionUpdated": {
+      "allOf": [
+        { "$ref": "#/$defs/BaseEnvelope" },
+        {
+          "type": "object",
+          "properties": {
+            "type": { "const": "provider.connection.updated" },
+            "payload": {
+              "type": "object",
+              "additionalProperties": false,
+              "required": ["connectionId", "scope", "status", "capabilities", "revision"],
+              "properties": {
+                "connectionId": { "$ref": "#/$defs/Id" },
+                "scope": { "type": "string", "enum": ["personal", "project", "team"] },
+                "status": { "type": "string", "enum": ["draft", "testing", "pending_approval", "active", "rejected", "revoked"] },
+                "capabilities": { "type": "array", "uniqueItems": true, "items": { "type": "string" } },
+                "revision": { "type": "integer", "minimum": 1 }
+              }
+            }
+          }
+        }
+      ],
+      "unevaluatedProperties": false
+    },
+    "MemberAccessUpdated": {
+      "allOf": [
+        { "$ref": "#/$defs/BaseEnvelope" },
+        {
+          "type": "object",
+          "properties": {
+            "type": { "const": "member.access.updated" },
+            "payload": {
+              "type": "object",
+              "additionalProperties": false,
+              "required": ["userId", "role", "status", "revision"],
+              "properties": {
+                "userId": { "$ref": "#/$defs/Id" },
+                "role": { "$ref": "domain.schema.json#/$defs/Role" },
+                "status": { "type": "string", "enum": ["active", "suspended", "removed"] },
+                "revision": { "type": "integer", "minimum": 1 }
+              }
+            }
+          }
+        }
+      ],
+      "unevaluatedProperties": false
+    },
+    "CloudEvent": {
+      "oneOf": [
+        { "$ref": "#/$defs/PresenceUpdated" },
+        { "$ref": "#/$defs/LockUpdated" },
+        { "$ref": "#/$defs/ReviewUpdated" },
+        { "$ref": "#/$defs/TaskUpdated" },
+        { "$ref": "#/$defs/CostUpdated" },
+        { "$ref": "#/$defs/NotificationCreated" },
+        { "$ref": "#/$defs/ProviderConnectionUpdated" },
+        { "$ref": "#/$defs/MemberAccessUpdated" }
+      ]
+    }
+  }
+}

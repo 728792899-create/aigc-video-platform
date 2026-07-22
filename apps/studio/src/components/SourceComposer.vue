@@ -1,6 +1,6 @@
 <template>
   <DialogRoot v-model:open="open">
-    <span class="source-composer-trigger" @click="open = true"><slot /></span>
+    <DialogTrigger as-child><slot /></DialogTrigger>
     <DialogPortal>
       <DialogOverlay class="dialog-overlay" />
       <DialogContent class="dialog dialog--source">
@@ -58,9 +58,9 @@
 </template>
 
 <script setup lang="ts">
-import { ref, watch } from 'vue'
+import { nextTick, ref, watch } from 'vue'
 import { FilePenLine, FileUp, ShieldCheck, WandSparkles, X } from 'lucide-vue-next'
-import { DialogClose, DialogContent, DialogDescription, DialogOverlay, DialogPortal, DialogRoot, DialogTitle } from 'reka-ui'
+import { DialogClose, DialogContent, DialogDescription, DialogOverlay, DialogPortal, DialogRoot, DialogTitle, DialogTrigger } from 'reka-ui'
 import type { SourceImportPreview } from '@aigc-director/contracts'
 import { useStudioStore } from '../stores/studio.js'
 
@@ -70,6 +70,14 @@ const mode = ref<'paste' | 'file'>('paste')
 const title = ref('旧剧院试播集')
 const content = ref('第一章 门后\n阿澈推开停用剧院的侧门。舞台上的工作灯突然亮起。她听见黑暗中有人说：别回头。\n\n第二章 回声\n阿澈没有离开，而是举起相机。镜头里出现了十年前失踪的导演。')
 const preview = ref<SourceImportPreview>()
+
+async function openComposer(): Promise<void> {
+  open.value = true
+  await nextTick()
+  document.getElementById('source-title')?.focus()
+}
+
+defineExpose({ openComposer })
 
 watch(open, (next) => {
   if (!next && preview.value) {

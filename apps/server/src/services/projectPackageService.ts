@@ -210,7 +210,7 @@ function entityIds(snapshot: ProjectSnapshot): Set<string> {
 }
 
 function normalizeImportedTasks(tasks: GenerationTask[]): { tasks: GenerationTask[]; interrupted: number } {
-  const nonTerminal = new Set(['queued', 'running', 'waiting_approval', 'retrying', 'cancel_requested', 'reconciling'])
+  const nonTerminal = new Set(['queued', 'running', 'waiting_approval', 'retrying', 'cancel_requested', 'reconciling', 'outcome_unknown'])
   let interrupted = 0
   return {
     tasks: tasks.map((task) => {
@@ -226,6 +226,19 @@ function normalizeImportedTasks(tasks: GenerationTask[]): { tasks: GenerationTas
     }),
     interrupted,
   }
+}
+
+function stripNonPortableProviderEvidence(snapshot: ProjectSnapshot): ProjectSnapshot {
+  return ProjectSnapshotSchema.parse({
+    ...snapshot,
+    tasks: snapshot.tasks.map(({ providerTaskId: _providerTaskId, ...task }) => task),
+    attempts: snapshot.attempts.map(({ receiptId: _receiptId, ...attempt }) => attempt),
+    providerReceipts: [],
+    promptRuns: snapshot.promptRuns.map((run) => ({
+      ...run,
+      compiled: { ...run.compiled, system: '[excluded-system-policy]' },
+    })),
+  })
 }
 
 function validateDeclaredEntries(entries: Map<string, Buffer>, manifest: ProjectPackageManifest): number {
@@ -309,10 +322,10 @@ export class ProjectPackageService {
       ...(original.episode.nextHookArtifactId ? { nextHookArtifactId: original.episode.nextHookArtifactId } : {}),
       revision: original.episode.revision, createdAt: original.episode.createdAt, updatedAt: original.episode.updatedAt,
     } : undefined
-    return { snapshot: ProjectSnapshotSchema.parse({
+    return { snapshot: stripNonPortableProviderEvidence(ProjectSnapshotSchema.parse({
       ...original, ...(episode ? { episode } : {}), series: undefined, assets, variants, assetBindings, media,
       resolvedAssets: [],
-    }), sharedMediaSources }
+    })), sharedMediaSources }
   }
 
   async exportProject(projectId: string): Promise<{ fileName: string; buffer: Buffer; manifest: ProjectPackageManifest }> {
@@ -376,7 +389,7 @@ export class ProjectPackageService {
       ...asset,
       ...(asset.selectedVariantId ? { selectedVariantId: portableVariantIds.get(asset.selectedVariantId) ?? asset.selectedVariantId } : {}),
     }))
-    const projects = sourceProjects.map((snapshot) => ProjectSnapshotSchema.parse({
+    const projects = sourceProjects.map((snapshot) => stripNonPortableProviderEvidence(ProjectSnapshotSchema.parse({
       ...snapshot,
       resolvedAssets: [],
       assetBindings: snapshot.assetBindings.map((binding) => binding.assetKind === 'shared' ? {
@@ -385,7 +398,7 @@ export class ProjectPackageService {
         variantId: portableVariantIds.get(binding.variantId) ?? binding.variantId,
         originScope: 'series', originScopeId: seriesId,
       } : binding),
-    }))
+    })))
     const sharedMediaIds = new Set(sharedVariants.flatMap((variant) => variant.mediaSnapshot ? [variant.mediaSnapshot.sharedMediaId] : []))
     const sharedMediaReferences = [...sharedMediaIds].map((id) => this.database.getSharedMediaReference(id))
       .filter((reference): reference is SharedMediaReference => Boolean(reference))

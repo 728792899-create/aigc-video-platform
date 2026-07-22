@@ -1,7 +1,7 @@
 <template>
   <DialogRoot v-model:open="open">
     <DialogTrigger as-child>
-      <button class="project-trigger" type="button">
+      <button class="project-trigger" data-guide-target="project-switcher" type="button">
         <FolderKanban :size="16" />
         <span>{{ store.currentProject?.name ?? '选择或创建项目' }}</span>
         <ChevronDown :size="14" />
@@ -25,6 +25,7 @@
           <label for="project-name">新项目名称</label>
           <div><input id="project-name" v-model="name" maxlength="120" required placeholder="例如：旧剧院试播集" /><button class="primary-button" :disabled="store.loading" type="submit"><Plus :size="16" />创建</button></div>
         </form>
+        <button class="primary-button primary-button--wide project-demo" type="button" :disabled="store.loading" @click="createDemo"><Sparkles :size="16" />打开零 Key Demo 项目</button>
         <div class="project-package-actions">
           <input ref="packageInput" class="visually-hidden" type="file" accept=".aigcproj,application/vnd.aigc-director.project+zip" @change="importPackage" />
           <button class="secondary-button" type="button" :disabled="store.loading" @click="packageInput?.click()"><Upload :size="16" />导入项目包</button>
@@ -38,21 +39,31 @@
 </template>
 
 <script setup lang="ts">
-import { ref } from 'vue'
-import { Archive, Check, ChevronDown, FolderKanban, Plus, Upload, X } from 'lucide-vue-next'
+import { nextTick, ref } from 'vue'
+import { Archive, Check, ChevronDown, FolderKanban, Plus, Sparkles, Upload, X } from 'lucide-vue-next'
 import { DialogClose, DialogContent, DialogDescription, DialogOverlay, DialogPortal, DialogRoot, DialogTitle, DialogTrigger } from 'reka-ui'
-import { useRouter } from 'vue-router'
+import { useRoute, useRouter } from 'vue-router'
+import { workspaceById } from '../workspaces.js'
 import { useStudioStore } from '../stores/studio.js'
 
 const store = useStudioStore()
 const router = useRouter()
+const route = useRoute()
 const open = ref(false)
 const name = ref('')
 const packageInput = ref<HTMLInputElement>()
 
+async function openSwitcher(): Promise<void> {
+  open.value = true
+  await nextTick()
+  document.getElementById('project-name')?.focus()
+}
+
+defineExpose({ openSwitcher })
+
 async function select(id: string): Promise<void> {
   await store.loadProject(id)
-  await router.replace({ name: 'studio', params: { projectId: id }, query: { view: store.view } })
+  await router.replace({ name: 'studio', params: { projectId: id }, query: { ...route.query, view: store.view } })
   open.value = false
 }
 
@@ -60,7 +71,18 @@ async function create(): Promise<void> {
   const project = await store.createProject(name.value)
   if (!project) return
   name.value = ''
-  await router.replace({ name: 'studio', params: { projectId: project.id }, query: { view: 'story' } })
+  const next = workspaceById('brief')
+  await router.replace({ name: 'studio', params: { projectId: project.id }, query: { ...route.query, workspace: next.id, view: next.domainView } })
+  open.value = false
+}
+
+async function createDemo(): Promise<void> {
+  const project = await store.createProject('零 Key Demo · 灯塔来信', '本地确定性 Demo：不需要 API Key，不发送付费请求。')
+  if (!project) return
+  await store.importSource('灯塔来信', '暴风雨前夜，守塔人林岚收到一封没有署名的来信。信中写着：午夜钟响三次后，不要点亮主灯。林岚检查记录，发现十年前同一天也出现过相同警告。她决定保留主灯熄灭，并沿着旧维修梯前往地下机房。')
+  await store.createPlan()
+  const next = workspaceById('brief')
+  await router.replace({ name: 'studio', params: { projectId: project.id }, query: { ...route.query, workspace: next.id, view: next.domainView } })
   open.value = false
 }
 
@@ -71,7 +93,7 @@ async function importPackage(event: Event): Promise<void> {
   if (!file) return
   await store.importProjectPackage(file)
   if (!store.currentProjectId) return
-  await router.replace({ name: 'studio', params: { projectId: store.currentProjectId }, query: { view: store.view } })
+  await router.replace({ name: 'studio', params: { projectId: store.currentProjectId }, query: { ...route.query, view: store.view } })
   open.value = false
 }
 
