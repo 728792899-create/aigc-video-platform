@@ -1,0 +1,77 @@
+{
+  "version": 1,
+  "status": "proposed",
+  "roles": ["owner", "admin", "editor", "reviewer", "operator", "viewer"],
+  "actions": {
+    "organization.delete": {
+      "allow": ["owner"],
+      "conditional": [],
+      "audit": true
+    },
+    "ownership.transfer": {
+      "allow": ["owner"],
+      "conditional": [],
+      "audit": true
+    },
+    "membership.manage": {
+      "allow": ["owner", "admin"],
+      "conditional": ["admin cannot create, delete, demote, or replace the owner"],
+      "audit": true
+    },
+    "project.content.write": {
+      "allow": ["owner", "admin", "editor"],
+      "conditional": ["operator may perform task-linked repair actions without editing story content"],
+      "audit": false
+    },
+    "generation.submit": {
+      "allow": ["owner", "admin", "editor"],
+      "conditional": ["operator may retry or reconcile existing tasks but cannot originate story changes"],
+      "audit": false
+    },
+    "review.comment": {
+      "allow": ["owner", "admin", "editor", "reviewer", "operator"],
+      "conditional": [],
+      "audit": false
+    },
+    "review.decide": {
+      "allow": ["owner", "admin", "editor", "reviewer"],
+      "conditional": ["decision must reference the exact target revision"],
+      "audit": true
+    },
+    "provider.personal.configure": {
+      "allow": ["owner", "admin", "editor"],
+      "conditional": ["connection is visible and usable only by its owner until approved for sharing"],
+      "audit": false
+    },
+    "provider.shared.approve": {
+      "allow": ["owner", "admin"],
+      "conditional": ["admin cannot approve a connection that would grant ownership-only billing scope"],
+      "audit": true
+    },
+    "task.operate": {
+      "allow": ["owner", "admin", "editor", "operator"],
+      "conditional": ["unknown outcomes require reconciliation before retry"],
+      "audit": false
+    },
+    "project.export": {
+      "allow": ["owner", "admin", "editor", "operator"],
+      "conditional": ["export requires preflight, selected candidates, rights checks, and confirmation"],
+      "audit": true
+    },
+    "backup.verify": {
+      "allow": ["owner", "admin", "operator"],
+      "conditional": [],
+      "audit": false
+    },
+    "backup.restore": {
+      "allow": ["owner", "admin"],
+      "conditional": ["operator may prepare and verify a restore, but owner or admin approval is required before cutover"],
+      "audit": true
+    },
+    "security.audit.read": {
+      "allow": ["owner", "admin", "operator"],
+      "conditional": ["operator receives redacted operational fields only"],
+      "audit": false
+    }
+  }
+}

@@ -1,5 +1,5 @@
-import { createHash, randomUUID } from 'node:crypto'
-import { mkdir, writeFile } from 'node:fs/promises'
+import { createHash, randomBytes, randomUUID, timingSafeEqual } from 'node:crypto'
+import { mkdir, rename, unlink, writeFile } from 'node:fs/promises'
 import { basename, extname, join, resolve } from 'node:path'
 import cors from 'cors'
 import express, { type NextFunction, type Request, type Response } from 'express'
@@ -14,49 +14,46 @@ import {
   AssetBatchBindingDraftSchema,
   AssetTypeSchema,
   AssetUnitSchema,
+  CandidateBatchRetryRequestSchema,
   CandidateSchema,
-  DenoRuntimeCancelRequestSchema,
-  DenoRuntimeCancelReportSchema,
-  DenoRuntimeInstallRequestSchema,
-  DenoRuntimeStatusSchema,
-  EgressRequestDescriptorSchema,
+  CreativeBriefCandidateRequestSchema,
+  CreativeBriefCandidateReviewRequestSchema,
+  CreativeBriefRevisionRequestSchema,
+  EpisodeContinuitySummaryRequestSchema,
   ReconcileDecisionSchema,
+  ExportApprovalRequestSchema,
   ExportRequestSchema,
   GraphCommandSchema,
   HealthSchema,
   IdSchema,
   JsonObjectSchema,
   MediaReferenceSchema,
-  ProviderPluginDisableRequestSchema,
-  ProviderPluginEnableRequestSchema,
-  ProviderPluginInstallRequestSchema,
-  ProviderPluginTestRequestSchema,
-  ProviderPublisherRevokeRequestSchema,
-  ProviderPublisherTrustRequestSchema,
+  ProviderConnectionCreateRequestSchema,
+  ProviderCredentialUpdateRequestSchema,
+  ProviderRoutePolicyUpdateRequestSchema,
+  RoutedCandidateGenerationRequestSchema,
+  PromptPolishRequestSchema,
+  ProjectGenerationPolicyUpdateRequestSchema,
   ScopedRegenerationRequestSchema,
+  ScenePatchApplyRequestSchema,
   SourceImportCommitSchema,
+  TaskRetryRequestSchema,
   type ApiEnvelope,
   type AppErrorPayload,
   type Candidate,
   type CandidateBatch,
-  type DenoRuntimeStatus,
   type GenerationTask,
   type GraphProjection,
   type MediaReference,
   type ProjectSnapshot,
+  type Shot,
+  parseAssetMetadata,
 } from '@aigc-director/contracts'
 import {
-  DENO_PLUGIN_RUNTIME_VERSION,
-  DenoRuntimeInstallError,
-  DenoRuntimeInstaller,
   EgressBroker,
   FakeProvider,
-  ProviderPluginProcessSupervisor,
-  resolveDenoRuntimeArtifact,
-  type DenoRuntimeInstallProgress,
-  type DenoRuntimeInstallReceipt,
-  type DenoRuntimeInspection,
   type EgressRuntimePolicy,
+  type ProviderRouter,
 } from '@aigc-director/providers'
 import { createDemoPackProvider } from '@aigc-director/agents'
 import { getModel, listModels } from '@aigc-director/model-catalog'
@@ -70,7 +67,9 @@ import { SourceImportService } from '../services/sourceImportService.js'
 import { SharedAssetMediaService } from '../services/sharedAssetMediaService.js'
 import { PromptOperationsService } from '../services/promptOperationsService.js'
 import { MemoryService } from '../services/memoryService.js'
-import { ProviderPluginService, type ProviderPluginLifecycleRunner } from '../services/providerPluginService.js'
+import { SecurityAuditService } from '../services/securityAuditService.js'
+import { createCredentialVault, type CredentialVault } from '../services/credentialVault.js'
+import { BrokerProviderConnectionProbe, ProviderConnectionService, type ProviderConnectionProbe } from '../services/providerConnectionService.js'
 
 const createProjectInput = z.object({ name: z.string().trim().min(1).max(120), description: z.string().max(2_000).optional() })
 const defaultEgressPolicies = [
@@ -159,26 +158,67 @@ interface AppOptions {
   databasePath: string
   dataDirectory: string
   sessionToken: string
+  bootstrapToken?: string
   allowedOrigins?: string[]
   studioDirectory?: string
   packProviderFactory?: () => ReturnType<typeof createDemoPackProvider>
   onTaskEvent?: (event: TaskEvent) => void
   onUnhandledError?: (error: unknown) => void
   providerNetworkDisabled?: boolean
-  denoRuntimeInstaller?: Pick<DenoRuntimeInstaller, 'inspect' | 'install'>
-  trustedProviderPluginKeys?: Readonly<Record<string, string | Buffer>>
-  providerPluginsEnabled?: boolean
-  providerPluginLifecycleRunner?: ProviderPluginLifecycleRunner
+  maxConcurrentTasks?: number
+  credentialVault?: CredentialVault
+  providerConnectionProbe?: ProviderConnectionProbe
+  providerRouter?: ProviderRouter
 }
 
-interface RequestWithCorrelation extends Request { correlationId?: string }
+interface RequestWithCorrelation extends Request {
+  correlationId?: string
+  localAuthMode?: 'bearer' | 'cookie'
+}
+
+const browserSessionCookie = 'aigc_director_session'
+const unsafeMethods = new Set(['POST', 'PUT', 'PATCH', 'DELETE'])
+
+function secretEquals(actual: unknown, expected: string): boolean {
+  if (typeof actual !== 'string') return false
+  const actualBytes = Buffer.from(actual)
+  const expectedBytes = Buffer.from(expected)
+  return actualBytes.byteLength === expectedBytes.byteLength && timingSafeEqual(actualBytes, expectedBytes)
+}
+
+function cookieValue(rawCookie: string | undefined, name: string): string | undefined {
+  for (const item of rawCookie?.split(';') ?? []) {
+    const separator = item.indexOf('=')
+    if (separator < 1) continue
+    if (item.slice(0, separator).trim() !== name) continue
+    try { return decodeURIComponent(item.slice(separator + 1).trim()) } catch { return undefined }
+  }
+  return undefined
+}
+
+function safeStudioReturnPath(raw: unknown): string {
+  if (typeof raw !== 'string') return '/studio'
+  return /^\/studio(?:[/?#][^\r\n]*)?$/u.test(raw) ? raw : '/studio'
+}
 
 const errorMap: Readonly<Record<string, { status: number; code: string; message: string; retryable: boolean }>> = {
   PROJECT_NOT_FOUND: { status: 404, code: 'PROJECT_NOT_FOUND', message: '项目不存在。', retryable: false },
+  PROVIDER_CONNECTION_NOT_FOUND: { status: 404, code: 'PROVIDER_CONNECTION_NOT_FOUND', message: 'Provider 连接不存在。', retryable: false },
+  PROVIDER_CONNECTION_REVISION_CONFLICT: { status: 409, code: 'PROVIDER_CONNECTION_REVISION_CONFLICT', message: 'Provider 连接已被更新，请刷新后重试。', retryable: true },
+  PROVIDER_CREDENTIAL_KEY_IN_USE: { status: 409, code: 'PROVIDER_CREDENTIAL_KEY_IN_USE', message: '凭据别名已被其他连接使用。', retryable: false },
+  PROVIDER_CREDENTIAL_UNSUPPORTED: { status: 422, code: 'PROVIDER_CREDENTIAL_UNSUPPORTED', message: '此连接不使用外部凭据。', retryable: false },
+  CREDENTIAL_STORE_READ_ONLY: { status: 409, code: 'CREDENTIAL_STORE_READ_ONLY', message: 'Docker 凭据为只读 Secret，请在宿主凭据文件中更新。', retryable: false },
+  PROVIDER_ROUTE_REVISION_CONFLICT: { status: 409, code: 'PROVIDER_ROUTE_REVISION_CONFLICT', message: 'Provider 路由已被更新，请刷新后重试。', retryable: true },
+  PROVIDER_ROUTE_CONNECTION_NOT_FOUND: { status: 422, code: 'PROVIDER_ROUTE_CONNECTION_NOT_FOUND', message: '路由引用了不存在的 Provider 连接。', retryable: false },
+  PROVIDER_ROUTE_CONNECTION_NOT_READY: { status: 409, code: 'PROVIDER_ROUTE_CONNECTION_NOT_READY', message: '路由中的 Provider 连接尚未通过测试。', retryable: true },
+  PROVIDER_ROUTE_CAPABILITY_MISMATCH: { status: 422, code: 'PROVIDER_ROUTE_CAPABILITY_MISMATCH', message: 'Provider 连接不支持该生成模态。', retryable: false },
   SERIES_NOT_FOUND: { status: 404, code: 'SERIES_NOT_FOUND', message: '系列不存在。', retryable: false },
   SERIES_EPISODES_REQUIRED: { status: 422, code: 'SERIES_EPISODES_REQUIRED', message: '系列至少需要一个分集才能打包。', retryable: false },
   SERIES_REFERENCED: { status: 409, code: 'SERIES_REFERENCED', message: '系列仍包含分集，不能删除。', retryable: false },
   EPISODE_NOT_FOUND: { status: 404, code: 'EPISODE_NOT_FOUND', message: '分集不存在。', retryable: false },
+  EPISODE_CONTINUITY_SOURCE_REQUIRED: { status: 422, code: 'EPISODE_CONTINUITY_SOURCE_REQUIRED', message: '当前分集没有可生成连续性摘要的来源内容。', retryable: false },
+  EPISODE_CONTINUITY_SOURCE_CHANGED: { status: 409, code: 'EPISODE_CONTINUITY_SOURCE_CHANGED', message: '来源内容已在审阅后变化，请刷新并重新确认。', retryable: true },
+  EPISODE_CONTINUITY_IDEMPOTENCY_CORRUPT: { status: 500, code: 'EPISODE_CONTINUITY_IDEMPOTENCY_CORRUPT', message: '跨集摘要幂等记录不完整，请使用关联 ID 诊断。', retryable: false },
   ASSET_NOT_FOUND: { status: 404, code: 'ASSET_NOT_FOUND', message: '资产不存在。', retryable: false },
   ASSET_VARIANT_NOT_FOUND: { status: 404, code: 'ASSET_VARIANT_NOT_FOUND', message: '资产版本不存在或不属于该资产。', retryable: false },
   ASSET_REFERENCED: { status: 409, code: 'ASSET_REFERENCED', message: '资产仍被镜头或任务引用，请先处理影响项。', retryable: false },
@@ -201,16 +241,57 @@ const errorMap: Readonly<Record<string, { status: number; code: string; message:
   APPROVAL_EXPIRED: { status: 409, code: 'APPROVAL_EXPIRED', message: '审批已过期，请重新生成计划。', retryable: true },
   APPROVAL_TOKEN_INVALID: { status: 403, code: 'APPROVAL_TOKEN_INVALID', message: '审批凭证无效。', retryable: false },
   GRAPH_REVISION_CONFLICT: { status: 409, code: 'GRAPH_REVISION_CONFLICT', message: '画布已在其他操作中更新，请刷新后重试。', retryable: true },
+  BRIEF_REVISION_CONFLICT: { status: 409, code: 'BRIEF_REVISION_CONFLICT', message: '创意简报已被其他操作更新，请刷新后对比重试。', retryable: true },
+  BRIEF_CANDIDATE_NOT_FOUND: { status: 404, code: 'BRIEF_CANDIDATE_NOT_FOUND', message: '创意简报候选不存在或不属于当前项目。', retryable: false },
+  BRIEF_CANDIDATE_ALREADY_REVIEWED: { status: 409, code: 'BRIEF_CANDIDATE_ALREADY_REVIEWED', message: '该创意简报候选已经审阅，不能重复改变结论。', retryable: false },
+  BRIEF_CANDIDATE_IDEMPOTENCY_CORRUPT: { status: 500, code: 'BRIEF_CANDIDATE_IDEMPOTENCY_CORRUPT', message: '创意简报候选的幂等记录不完整，请使用关联 ID 诊断。', retryable: false },
+  SCENE_PATCH_NOT_FOUND: { status: 404, code: 'SCENE_PATCH_NOT_FOUND', message: '场景修订不存在或不属于当前项目。', retryable: false },
+  SCENE_PATCH_REVISION_CONFLICT: { status: 409, code: 'SCENE_PATCH_REVISION_CONFLICT', message: '场景已在修订生成后变更，请重新生成 patch。', retryable: true },
+  SCENE_PATCH_ALREADY_APPLIED: { status: 409, code: 'SCENE_PATCH_ALREADY_APPLIED', message: '该场景修订已应用，不能重放。', retryable: false },
+  SHOT_PATCH_SCENE_MISMATCH: { status: 409, code: 'SHOT_PATCH_SCENE_MISMATCH', message: '镜头修订不属于当前场景，未应用任何变更。', retryable: false },
+  SHOT_PATCH_REVISION_CONFLICT: { status: 409, code: 'SHOT_PATCH_REVISION_CONFLICT', message: '镜头已在修订生成后变更，请重新生成 patch。', retryable: true },
+  SHOT_PATCH_INVALID: { status: 422, code: 'SHOT_PATCH_INVALID', message: '镜头修订与时长、Beat 或字段契约不一致，未应用任何变更。', retryable: false },
   SHOT_NOT_FOUND: { status: 404, code: 'SHOT_NOT_FOUND', message: '镜头不存在。', retryable: false },
   PREVIOUS_SHOT_MISSING: { status: 422, code: 'PREVIOUS_SHOT_MISSING', message: '第一个镜头没有可沿用的上一镜头。', retryable: false },
   PREVIOUS_END_FRAME_MISSING: { status: 409, code: 'PREVIOUS_END_FRAME_MISSING', message: '上一镜头尚未绑定尾帧，请先生成或选择尾帧。', retryable: true },
   BOUNDARY_FRAME_MEDIA_INVALID: { status: 409, code: 'BOUNDARY_FRAME_MEDIA_INVALID', message: '边界帧媒体丢失或已变化，请重新绑定。', retryable: true },
   BOUNDARY_EXTRACTION_REQUIRES_VIDEO: { status: 422, code: 'BOUNDARY_EXTRACTION_REQUIRES_VIDEO', message: '只有已完成的视频候选可以提取真实尾帧。', retryable: false },
+  EXPORT_REQUIRES_SHOTS: { status: 422, code: 'EXPORT_REQUIRES_SHOTS', message: '当前项目没有可导出镜头。', retryable: false },
+  EXPORT_REQUIRES_SELECTED_CANDIDATES: { status: 409, code: 'EXPORT_REQUIRES_SELECTED_CANDIDATES', message: '每个镜头都必须先明确选定候选。', retryable: true },
+  EXPORT_CANDIDATE_INVALID: { status: 409, code: 'EXPORT_CANDIDATE_INVALID', message: '已选候选不存在、已归档或不属于相应镜头。', retryable: true },
+  EXPORT_MEDIA_MISSING: { status: 409, code: 'EXPORT_MEDIA_MISSING', message: '已选候选的媒体引用缺失。', retryable: true },
+  EXPORT_MEDIA_CHANGED: { status: 409, code: 'EXPORT_MEDIA_CHANGED', message: '导出快照中的媒体已变化，请修复后创建新导出。', retryable: true },
+  EXPORT_MEDIA_LOCATOR_INVALID: { status: 422, code: 'EXPORT_MEDIA_LOCATOR_INVALID', message: '导出媒体定位不符合受管路径约束。', retryable: false },
+  EXPORT_ARCHIVE_INTEGRITY_FAILED: { status: 500, code: 'EXPORT_ARCHIVE_INTEGRITY_FAILED', message: '成片归档完整性校验失败，原导出文件未被覆盖。', retryable: true },
+  EXPORT_PREFLIGHT_NOT_FOUND: { status: 404, code: 'EXPORT_PREFLIGHT_NOT_FOUND', message: '导出预检不存在，请重新选择目录并预检。', retryable: true },
+  EXPORT_PREFLIGHT_EXPIRED: { status: 409, code: 'EXPORT_PREFLIGHT_EXPIRED', message: '导出预检已过期，请重新检查当前项目。', retryable: true },
+  EXPORT_PREFLIGHT_STALE: { status: 409, code: 'EXPORT_PREFLIGHT_STALE', message: '镜头或候选已在预检后变化，请重新预检。', retryable: true },
+  EXPORT_PREFLIGHT_IDEMPOTENCY_CORRUPT: { status: 500, code: 'EXPORT_PREFLIGHT_IDEMPOTENCY_CORRUPT', message: '导出预检的幂等记录不完整，请使用关联 ID 诊断。', retryable: false },
   PLAN_REQUIRES_EVENTS: { status: 422, code: 'PLAN_REQUIRES_EVENTS', message: '请先导入内容并生成章节事件。', retryable: false },
   PRODUCTION_REQUIRES_SHOTS: { status: 422, code: 'PRODUCTION_REQUIRES_SHOTS', message: '计划批准后才能进入生产。', retryable: false },
   TASK_NOT_FOUND: { status: 404, code: 'TASK_NOT_FOUND', message: '任务不存在。', retryable: false },
+  TASK_RECONCILE_REQUIRED: { status: 409, code: 'TASK_RECONCILE_REQUIRED', message: '任务结果未知，必须先对账，不能直接重试。', retryable: true },
+  TASK_RECONCILE_UNSUPPORTED: { status: 409, code: 'TASK_RECONCILE_UNSUPPORTED', message: '缺少可验证的 Provider receipt，请人工检查任务。', retryable: false },
+  TASK_NOT_RETRYABLE: { status: 409, code: 'TASK_NOT_RETRYABLE', message: '任务当前状态不允许重试。', retryable: false },
+  TASK_CONCURRENCY_LIMIT: { status: 429, code: 'TASK_CONCURRENCY_LIMIT', message: '项目并发任务已达安全上限，请等待或处理未知任务。', retryable: true },
+  CANDIDATE_POLICY_LIMIT: { status: 422, code: 'CANDIDATE_POLICY_LIMIT', message: '候选数量超过当前项目安全策略，请减少批次规模。', retryable: false },
+  EXPORT_DURATION_POLICY_LIMIT: { status: 422, code: 'EXPORT_DURATION_POLICY_LIMIT', message: '导出总时长超过当前项目安全策略，请调整时间线或策略。', retryable: false },
+  PAID_BUDGET_EXCEEDED: { status: 403, code: 'PAID_BUDGET_EXCEEDED', message: '该操作超过项目当日外部 Provider 成本上限，请调整预算或等待下一周期。', retryable: false },
+  GENERATION_POLICY_REVISION_CONFLICT: { status: 409, code: 'GENERATION_POLICY_REVISION_CONFLICT', message: '项目生成策略已更新，请刷新后重新确认。', retryable: true },
+  GENERATION_POLICY_REVISION_INVALID: { status: 409, code: 'GENERATION_POLICY_REVISION_INVALID', message: '项目生成策略 revision 无效。', retryable: false },
+  GENERATION_POLICY_RUNTIME_LIMIT: { status: 422, code: 'GENERATION_POLICY_RUNTIME_LIMIT', message: '并发上限不能超过当前运行时安全上限。', retryable: false },
+  PAID_PROVIDER_DISABLED: { status: 403, code: 'PAID_PROVIDER_DISABLED', message: '项目尚未显式启用用户自付 Provider，当前只允许零 Key Demo。', retryable: false },
+  PROVIDER_ROUTE_NOT_CONFIGURED: { status: 409, code: 'PROVIDER_ROUTE_NOT_CONFIGURED', message: '项目尚未配置对应模态的可用 Provider 路由。', retryable: false },
+  PROVIDER_ROUTER_UNAVAILABLE: { status: 503, code: 'PROVIDER_ROUTER_UNAVAILABLE', message: 'Provider 路由运行时当前不可用。', retryable: true },
+  EXECUTABLE_PROVIDER_ADAPTERS_DISABLED: { status: 410, code: 'EXECUTABLE_PROVIDER_ADAPTERS_DISABLED', message: '可执行 Provider 插件已永久停用。请改用内置适配器或声明式 HTTPS 连接。', retryable: false },
+  TASK_RETRY_UNSUPPORTED: { status: 409, code: 'TASK_RETRY_UNSUPPORTED', message: '该任务必须从对应工作区局部重新生成，不能在任务中心盲目重提。', retryable: false },
+  TASK_RETRY_INPUT_INVALID: { status: 409, code: 'TASK_RETRY_INPUT_INVALID', message: '任务输入快照不完整，无法安全重试。', retryable: false },
+  TASK_RETRY_IDEMPOTENCY_CORRUPT: { status: 500, code: 'TASK_RETRY_IDEMPOTENCY_CORRUPT', message: '重试记录不完整，请使用关联 ID 诊断。', retryable: false },
   CANDIDATE_NOT_FOUND: { status: 404, code: 'CANDIDATE_NOT_FOUND', message: '候选不存在。', retryable: false },
   CANDIDATE_BATCH_NOT_FOUND: { status: 404, code: 'CANDIDATE_BATCH_NOT_FOUND', message: '候选批次不存在。', retryable: false },
+  CANDIDATE_BATCH_HAS_NO_FAILED_ITEMS: { status: 409, code: 'CANDIDATE_BATCH_HAS_NO_FAILED_ITEMS', message: '该批次没有可安全重试的失败项。', retryable: false },
+  CANDIDATE_BATCH_RETRY_UNSUPPORTED: { status: 409, code: 'CANDIDATE_BATCH_RETRY_UNSUPPORTED', message: '该批次不具备可验证的本地重试快照，请从领域工作区重新生成。', retryable: false },
+  CANDIDATE_BATCH_RETRY_IDEMPOTENCY_CORRUPT: { status: 500, code: 'CANDIDATE_BATCH_RETRY_IDEMPOTENCY_CORRUPT', message: '候选重试记录不完整，请使用关联 ID 诊断。', retryable: false },
   MEDIA_REFERENCE_NOT_FOUND: { status: 404, code: 'MEDIA_REFERENCE_NOT_FOUND', message: '媒体引用不存在。', retryable: false },
   MODEL_NOT_FOUND: { status: 404, code: 'MODEL_NOT_FOUND', message: '模型目录中不存在该模型。', retryable: false },
   MODEL_CAPABILITY_UNSUPPORTED: { status: 422, code: 'MODEL_CAPABILITY_UNSUPPORTED', message: '模型不支持所需能力或输入形式。', retryable: false },
@@ -221,8 +302,14 @@ const errorMap: Readonly<Record<string, { status: number; code: string; message:
   MEDIA_SIZE_LIMIT_EXCEEDED: { status: 422, code: 'MEDIA_SIZE_LIMIT_EXCEEDED', message: '媒体大小超过模型限制。', retryable: false },
   MEDIA_MIME_UNSUPPORTED: { status: 422, code: 'MEDIA_MIME_UNSUPPORTED', message: '模型不支持该媒体类型。', retryable: false },
   MEDIA_LOCATOR_INVALID: { status: 422, code: 'MEDIA_LOCATOR_INVALID', message: '媒体定位信息不安全。', retryable: false },
+  UPLOAD_FILE_REQUIRED: { status: 400, code: 'UPLOAD_FILE_REQUIRED', message: '请选择要上传的图片。', retryable: false },
+  UPLOAD_TYPE_REJECTED: { status: 422, code: 'UPLOAD_TYPE_REJECTED', message: '文件扩展、声明 MIME 与实际内容不一致。', retryable: false },
+  UPLOAD_CONTENT_INVALID: { status: 422, code: 'UPLOAD_CONTENT_INVALID', message: '图片内容损坏、尺寸异常或无法安全解码。', retryable: false },
+  UPLOAD_ANIMATION_UNSUPPORTED: { status: 422, code: 'UPLOAD_ANIMATION_UNSUPPORTED', message: '当前参考素材只接受静态图片，请导出单帧后重试。', retryable: false },
   MEMORY_NOT_FOUND: { status: 404, code: 'MEMORY_NOT_FOUND', message: '记忆记录不存在。', retryable: false },
   TASK_NOT_CANCELLABLE: { status: 409, code: 'TASK_NOT_CANCELLABLE', message: '任务当前状态不能取消。', retryable: false },
+  TASK_CANCEL_UNSUPPORTED: { status: 409, code: 'TASK_CANCEL_UNSUPPORTED', message: 'Provider 不支持或无法确认取消，请继续对账。', retryable: false },
+  TASK_CANCEL_OUTCOME_UNKNOWN: { status: 409, code: 'TASK_CANCEL_OUTCOME_UNKNOWN', message: '取消结果未知，不能重新提交任务。', retryable: true },
   STORY_GRAPH_INVALID: { status: 422, code: 'STORY_GRAPH_INVALID', message: '事件关系不符合图谱约束。', retryable: false },
   SOURCE_IMPORT_FILE_REQUIRED: { status: 400, code: 'SOURCE_IMPORT_FILE_REQUIRED', message: '请选择 TXT 或 Markdown 文件。', retryable: false },
   SOURCE_IMPORT_FILE_TOO_LARGE: { status: 413, code: 'SOURCE_IMPORT_FILE_TOO_LARGE', message: '文本文件超过 6 MB 安全限制。', retryable: false },
@@ -262,6 +349,9 @@ const errorMap: Readonly<Record<string, { status: number; code: string; message:
   PROJECT_PACKAGE_CRC_MISMATCH: { status: 422, code: 'PROJECT_PACKAGE_CRC_MISMATCH', message: '项目包 CRC 校验失败。', retryable: false },
   PROJECT_PACKAGE_MEDIA_MANIFEST_MISMATCH: { status: 422, code: 'PROJECT_PACKAGE_MEDIA_MANIFEST_MISMATCH', message: '项目包媒体清单与引用不匹配。', retryable: false },
   PROMPT_REVISION_NOT_FOUND: { status: 404, code: 'PROMPT_REVISION_NOT_FOUND', message: 'Prompt 版本不存在。', retryable: false },
+  PROMPT_POLISH_REQUIRES_PROJECT_SCOPE: { status: 422, code: 'PROMPT_POLISH_REQUIRES_PROJECT_SCOPE', message: '交互式润色必须在具体项目的 Prompt override 中进行。', retryable: false },
+  PROMPT_REVISION_CONFLICT: { status: 409, code: 'PROMPT_REVISION_CONFLICT', message: 'Prompt 已产生较新 revision，请刷新后重新审阅。', retryable: true },
+  PROMPT_POLISH_IDEMPOTENCY_CONFLICT: { status: 409, code: 'PROMPT_POLISH_IDEMPOTENCY_CONFLICT', message: '相同幂等键已绑定另一份润色输入。', retryable: false },
   PROMPT_VARIABLE_MISSING: { status: 422, code: 'PROMPT_VARIABLE_MISSING', message: 'Prompt 缺少必需变量。', retryable: false },
   PROMPT_PUBLISH_GATE_FAILED: { status: 409, code: 'PROMPT_PUBLISH_GATE_FAILED', message: 'Prompt 尚未通过变量校验和黄金样例。', retryable: true },
   PROMPT_REVISION_NOT_PUBLISHED: { status: 409, code: 'PROMPT_REVISION_NOT_PUBLISHED', message: '只有已发布的 Prompt revision 可以进入生产任务。', retryable: true },
@@ -316,9 +406,16 @@ const correlationId = (request: RequestWithCorrelation): string => request.corre
 const success = <T>(request: RequestWithCorrelation, data: T): ApiEnvelope<T> => ({ ok: true, data, correlationId: correlationId(request) })
 
 function publicTask(task: GenerationTask): GenerationTask {
-  const inputSnapshot = { ...task.inputSnapshot }
-  if ('outputDirectory' in inputSnapshot) inputSnapshot.outputDirectory = '[protected-local-directory]'
-  return { ...task, inputSnapshot }
+  const sensitiveKey = /(?:api[-_]?key|secret|token|authorization|cookie|password|credential|signed[-_]?url|output[-_]?directory|file[-_]?path|absolute[-_]?path)/iu
+  const localPath = /^(?:\/(?:Users|home|private|var\/folders)\/|[a-z]:\\|\\\\)/iu
+  const sanitize = (value: unknown, key = ''): unknown => {
+    if (sensitiveKey.test(key)) return '[redacted]'
+    if (typeof value === 'string') return localPath.test(value) ? '[protected-local-path]' : value
+    if (Array.isArray(value)) return value.map((item) => sanitize(item))
+    if (value && typeof value === 'object') return Object.fromEntries(Object.entries(value).map(([childKey, child]) => [childKey, sanitize(child, childKey)]))
+    return value
+  }
+  return { ...task, inputSnapshot: JsonObjectSchema.parse(sanitize(task.inputSnapshot)) }
 }
 
 function publicSnapshot(snapshot: ProjectSnapshot): ProjectSnapshot {
@@ -359,21 +456,38 @@ function asAppError(error: unknown, request: RequestWithCorrelation): { status: 
   }
 }
 
+function stableAuditErrorCode(error: unknown): string {
+  if (error instanceof ZodError) return 'VALIDATION_FAILED'
+  if (error instanceof multer.MulterError) return error.code === 'LIMIT_FILE_SIZE' ? 'UPLOAD_FILE_TOO_LARGE' : 'UPLOAD_REJECTED'
+  const raw = error instanceof Error ? error.message : 'UNKNOWN_ERROR'
+  const prefix = raw.split(':')[0] ?? 'UNKNOWN_ERROR'
+  return errorMap[prefix]?.code ?? 'INTERNAL_ERROR'
+}
+
 export function createDirectorApp(options: AppOptions): {
   app: express.Express; httpServer: HttpServer; io: SocketServer; db: DirectorDatabase;
-  service: DirectorService; memory: MemoryService; egress: EgressBroker; providerPlugins: ProviderPluginService;
+  service: DirectorService; memory: MemoryService; egress: EgressBroker;
+  providerConnections: ProviderConnectionService;
   allowOrigin: (origin: string) => void;
 } {
   const app = express()
   const httpServer = createServer(app)
+  const browserSessionToken = randomBytes(32).toString('base64url')
+  const csrfToken = randomBytes(32).toString('base64url')
+  let bootstrapAvailable = Boolean(options.bootstrapToken)
   const allowedOrigins = new Set(options.allowedOrigins ?? ['http://127.0.0.1:5173', 'http://localhost:5173'])
   const originAllowed = (origin: string | undefined, callback: (error: Error | null, allowed?: boolean) => void): void => {
     if (!origin || allowedOrigins.has(origin)) callback(null, true)
-    else callback(new Error('CORS_ORIGIN_REJECTED'))
+    else callback(null, false)
   }
   const io = new SocketServer(httpServer, { path: '/studio-v2/socket.io', cors: { origin: originAllowed } })
   const studioNamespace = io.of('/studio-v2')
   const db = new DirectorDatabase(options.databasePath)
+  const providerNetworkDisabled = options.providerNetworkDisabled ?? process.env.PROVIDER_NETWORK_DISABLED !== '0'
+  const credentialVault = options.credentialVault ?? createCredentialVault()
+  const providerConnections = new ProviderConnectionService(
+    db, credentialVault, providerNetworkDisabled, options.providerConnectionProbe ?? new BrokerProviderConnectionProbe(),
+  )
   const service = new DirectorService(
     db,
     options.dataDirectory,
@@ -382,6 +496,9 @@ export function createDirectorApp(options: AppOptions): {
       options.onTaskEvent?.({ task: publicTask(event.task) })
     },
     options.packProviderFactory ?? (() => createDemoPackProvider()),
+    options.maxConcurrentTasks ?? 4,
+    providerNetworkDisabled,
+    options.providerRouter ?? providerConnections.router(),
   )
   const projectPackages = new ProjectPackageService(db, options.dataDirectory)
   const sourceImports = new SourceImportService(db, service, options.dataDirectory)
@@ -389,70 +506,8 @@ export function createDirectorApp(options: AppOptions): {
   const sharedAssetMedia = new SharedAssetMediaService(db, options.dataDirectory)
   const promptOperations = new PromptOperationsService(db)
   const memory = new MemoryService(db)
+  const securityAudit = new SecurityAuditService(db)
   const egress = new EgressBroker({ policies: defaultEgressPolicies })
-  const providerNetworkDisabled = options.providerNetworkDisabled ?? process.env.PROVIDER_NETWORK_DISABLED !== '0'
-  const denoRuntimeInstaller = options.denoRuntimeInstaller ?? new DenoRuntimeInstaller({ rootDirectory: join(resolve(options.dataDirectory), 'runtimes', 'deno') })
-  let denoRuntimeInstall: Promise<DenoRuntimeInstallReceipt> | undefined
-  let denoRuntimeAbort: AbortController | undefined
-  let denoRuntimeProgress: DenoRuntimeInstallProgress | undefined
-
-  const defaultPluginLifecycleRunner: ProviderPluginLifecycleRunner = {
-    test: async (record, bundlePath) => {
-      const inspection = await denoRuntimeInstaller.inspect(process.platform, process.arch)
-      if (inspection.state !== 'ready' || !inspection.receipt?.executablePath) throw new Error('PROVIDER_PLUGIN_RUNTIME_NOT_READY')
-      const supervisor = new ProviderPluginProcessSupervisor({
-        pluginId: record.pluginId, pluginVersion: record.version,
-        runtimePath: inspection.receipt.executablePath, bundlePath, mode: 'test',
-        handleHostRequest: async (_method, params, signal) => {
-          const result = await egress.execute(EgressRequestDescriptorSchema.parse(params), signal)
-          if (result.body.byteLength > 32 * 1024) throw new Error('EGRESS_RESPONSE_TOO_LARGE')
-          return { status: result.status, headers: result.headers, bodyBase64: Buffer.from(result.body).toString('base64') }
-        },
-      })
-      try {
-        supervisor.start()
-        const result = await supervisor.request('provider.health', { apiVersion: 1 })
-        if (result.healthy !== true) throw new Error('PROVIDER_PLUGIN_HEALTH_FAILED')
-        return { healthy: true, apiVersion: 1, toolCalls: supervisor.snapshot().toolCalls }
-      } finally { supervisor.stop() }
-    },
-  }
-  const providerPlugins = new ProviderPluginService({
-    database: db, dataDirectory: options.dataDirectory,
-    trustedPublisherKeys: options.trustedProviderPluginKeys ?? {},
-    pluginsEnabled: options.providerPluginsEnabled === true,
-    lifecycleRunner: options.providerPluginLifecycleRunner ?? defaultPluginLifecycleRunner,
-  })
-
-  const publicDenoRuntimeStatus = (
-    inspection?: DenoRuntimeInspection,
-    forcedState?: DenoRuntimeStatus['state'],
-  ): DenoRuntimeStatus => {
-    let artifact: ReturnType<typeof resolveDenoRuntimeArtifact> | undefined
-    try { artifact = inspection?.artifact ?? resolveDenoRuntimeArtifact(process.platform, process.arch) } catch (error) {
-      if (!(error instanceof DenoRuntimeInstallError) || error.code !== 'DENO_RUNTIME_PLATFORM_UNSUPPORTED') throw error
-    }
-    const state = forcedState ?? inspection?.state ?? (artifact ? 'not-installed' : 'unsupported')
-    return DenoRuntimeStatusSchema.parse({
-      version: DENO_PLUGIN_RUNTIME_VERSION,
-      platform: process.platform,
-      arch: process.arch,
-      supported: Boolean(artifact),
-      state,
-      ...(artifact ? { assetName: artifact.assetName, downloadBytes: artifact.size, archiveSha256: artifact.sha256 } : {}),
-      ...(inspection?.receipt ? { binarySha256: inspection.receipt.binarySha256, installedAt: inspection.receipt.installedAt } : {}),
-      networkDisabled: providerNetworkDisabled,
-      installAllowed: Boolean(artifact) && !providerNetworkDisabled && state === 'not-installed',
-      ...(state === 'installing' && denoRuntimeProgress ? { progress: denoRuntimeProgress } : {}),
-    })
-  }
-  const inspectDenoRuntime = async (): Promise<DenoRuntimeStatus> => {
-    if (denoRuntimeInstall) return publicDenoRuntimeStatus(undefined, 'installing')
-    try { return publicDenoRuntimeStatus(await denoRuntimeInstaller.inspect(process.platform, process.arch)) } catch (error) {
-      if (error instanceof DenoRuntimeInstallError && error.code === 'DENO_RUNTIME_PLATFORM_UNSUPPORTED') return publicDenoRuntimeStatus()
-      throw error
-    }
-  }
 
   app.disable('x-powered-by')
   app.use((request: RequestWithCorrelation, response, next) => {
@@ -462,16 +517,48 @@ export function createDirectorApp(options: AppOptions): {
     response.setHeader('x-content-type-options', 'nosniff')
     response.setHeader('x-frame-options', 'DENY')
     response.setHeader('referrer-policy', 'no-referrer')
+    if (request.path.startsWith('/api/')) response.setHeader('cache-control', 'no-store')
     response.setHeader('content-security-policy', request.path.startsWith('/api')
       ? "default-src 'none'; frame-ancestors 'none'"
       : "default-src 'self'; connect-src 'self' ws:; img-src 'self' blob: data:; media-src 'self' blob:; style-src 'self' 'unsafe-inline'; script-src 'self'; font-src 'self'; frame-ancestors 'none'; base-uri 'self'; form-action 'self'")
     next()
   })
+  app.use((request: RequestWithCorrelation, response, next) => {
+    const origin = request.header('origin')
+    if (!origin || allowedOrigins.has(origin)) {
+      next()
+      return
+    }
+    response.status(403).json({
+      ok: false,
+      error: {
+        code: 'ORIGIN_REJECTED', userMessage: '请从本地工作台打开此操作。', retryable: false,
+        correlationId: correlationId(request), timestamp: new Date().toISOString(),
+      },
+    })
+  })
   app.use(cors({
-    credentials: false,
+    credentials: true,
     origin: originAllowed,
   }))
   app.use(express.json({ limit: '2mb' }))
+
+  app.get('/local-session/bootstrap', (request, response) => {
+    const supplied = typeof request.query.token === 'string' ? request.query.token : undefined
+    if (!bootstrapAvailable || !options.bootstrapToken || !secretEquals(supplied, options.bootstrapToken)) {
+      response.status(404).type('text/plain').send('Not found')
+      return
+    }
+    bootstrapAvailable = false
+    response.setHeader('cache-control', 'no-store')
+    response.cookie(browserSessionCookie, browserSessionToken, {
+      httpOnly: true,
+      sameSite: 'strict',
+      path: '/',
+      maxAge: 12 * 60 * 60 * 1_000,
+    })
+    response.redirect(303, safeStudioReturnPath(request.query.return))
+  })
 
   app.get('/api/v2/health', (request: RequestWithCorrelation, response) => {
     response.json(success(request, HealthSchema.parse({
@@ -480,18 +567,46 @@ export function createDirectorApp(options: AppOptions): {
     })))
   })
 
-  app.use('/api/v2', (request, response, next) => {
-    const authorization = request.header('authorization')
-    if (authorization !== `Bearer ${options.sessionToken}`) {
-      const rid = correlationId(request as RequestWithCorrelation)
-      response.status(401).json({ ok: false, error: { code: 'UNAUTHORIZED', userMessage: '本地会话已失效，请重新启动应用。', retryable: false, correlationId: rid, timestamp: new Date().toISOString() } })
+  app.get('/api/v2/session', (request: RequestWithCorrelation, response) => {
+    const bearerAuthorized = secretEquals(request.header('authorization'), `Bearer ${options.sessionToken}`)
+    const cookieAuthorized = secretEquals(cookieValue(request.header('cookie'), browserSessionCookie), browserSessionToken)
+    if (!bearerAuthorized && !cookieAuthorized) {
+      const rid = correlationId(request)
+      response.status(401).json({ ok: false, error: { code: 'UNAUTHORIZED', userMessage: '本地会话已失效，请重新启动本地服务并刷新页面。', retryable: false, correlationId: rid, timestamp: new Date().toISOString() } })
       return
     }
+    response.json(success(request, { authMode: bearerAuthorized ? 'bearer' : 'cookie', csrfToken }))
+  })
+
+  app.use('/api/v2', (request: RequestWithCorrelation, response, next) => {
+    const authorization = request.header('authorization')
+    if (secretEquals(authorization, `Bearer ${options.sessionToken}`)) {
+      request.localAuthMode = 'bearer'
+      next()
+      return
+    }
+    const browserCookie = cookieValue(request.header('cookie'), browserSessionCookie)
+    if (!secretEquals(browserCookie, browserSessionToken)) {
+      const rid = correlationId(request as RequestWithCorrelation)
+      response.status(401).json({ ok: false, error: { code: 'UNAUTHORIZED', userMessage: '本地会话已失效，请重新启动本地服务并刷新页面。', retryable: false, correlationId: rid, timestamp: new Date().toISOString() } })
+      return
+    }
+    if (unsafeMethods.has(request.method)) {
+      const origin = request.header('origin')
+      if (!origin || !allowedOrigins.has(origin) || !secretEquals(request.header('x-csrf-token'), csrfToken)) {
+        const rid = correlationId(request)
+        response.status(403).json({ ok: false, error: { code: 'CSRF_REJECTED', userMessage: '安全校验失败，请刷新页面后重试。', retryable: true, correlationId: rid, timestamp: new Date().toISOString() } })
+        return
+      }
+    }
+    request.localAuthMode = 'cookie'
     next()
   })
 
   studioNamespace.use((socket, next) => {
-    next(socket.handshake.auth.token === options.sessionToken ? undefined : new Error('UNAUTHORIZED'))
+    const bearerAuthorized = secretEquals(socket.handshake.auth.token, options.sessionToken)
+    const cookieAuthorized = secretEquals(cookieValue(socket.request.headers.cookie, browserSessionCookie), browserSessionToken)
+    next(bearerAuthorized || cookieAuthorized ? undefined : new Error('UNAUTHORIZED'))
   })
   studioNamespace.on('connection', (socket) => {
     socket.on('project:subscribe', (rawProjectId: unknown) => {
@@ -507,6 +622,31 @@ export function createDirectorApp(options: AppOptions): {
     response.status(201).json(success(request, project))
   })
   app.get('/api/v2/projects/:projectId', (request: RequestWithCorrelation, response) => response.json(success(request, publicSnapshot(db.snapshot(IdSchema.parse(request.params.projectId))))))
+  app.get('/api/v2/projects/:projectId/brief', (request: RequestWithCorrelation, response) => {
+    response.json(success(request, service.creativeBrief(IdSchema.parse(request.params.projectId))))
+  })
+  app.put('/api/v2/projects/:projectId/brief', (request: RequestWithCorrelation, response) => {
+    response.json(success(request, service.reviseCreativeBrief(
+      IdSchema.parse(request.params.projectId), CreativeBriefRevisionRequestSchema.parse(request.body),
+    )))
+  })
+  app.post('/api/v2/projects/:projectId/brief/candidates', (request: RequestWithCorrelation, response) => {
+    response.status(201).json(success(request, service.createCreativeBriefCandidates(
+      IdSchema.parse(request.params.projectId), CreativeBriefCandidateRequestSchema.parse(request.body),
+    )))
+  })
+  app.post('/api/v2/projects/:projectId/brief/candidates/:artifactId/review', async (request: RequestWithCorrelation, response, next) => {
+    try {
+      const projectId = IdSchema.parse(request.params.projectId)
+      const artifactId = IdSchema.parse(request.params.artifactId)
+      const result = await securityAudit.capture({
+        projectId, action: 'creative_brief.review', targetType: 'artifact', targetId: artifactId, correlationId: correlationId(request),
+      }, () => service.reviewCreativeBriefCandidate(
+        projectId, artifactId, CreativeBriefCandidateReviewRequestSchema.parse(request.body),
+      ), stableAuditErrorCode)
+      response.json(success(request, result))
+    } catch (error) { next(error) }
+  })
 
   app.get('/api/v2/series', (request: RequestWithCorrelation, response) => response.json(success(request, db.listSeries())))
   app.post('/api/v2/series', (request: RequestWithCorrelation, response) => {
@@ -532,6 +672,14 @@ export function createDirectorApp(options: AppOptions): {
   })
   app.get('/api/v2/episodes/:episodeId/context', (request: RequestWithCorrelation, response) => {
     response.json(success(request, db.getEpisodeContext(IdSchema.parse(request.params.episodeId))))
+  })
+  app.get('/api/v2/episodes/:episodeId/continuity', (request: RequestWithCorrelation, response) => {
+    response.json(success(request, service.episodeContinuity(IdSchema.parse(request.params.episodeId))))
+  })
+  app.post('/api/v2/episodes/:episodeId/continuity-summary', (request: RequestWithCorrelation, response) => {
+    response.status(201).json(success(request, service.createEpisodeContinuitySummary(
+      IdSchema.parse(request.params.episodeId), EpisodeContinuitySummaryRequestSchema.parse(request.body),
+    )))
   })
   app.post('/api/v2/episodes/:episodeId/reconcile/preview', (request: RequestWithCorrelation, response) => {
     const input = reconcilePreviewInput.parse(request.body)
@@ -604,11 +752,35 @@ export function createDirectorApp(options: AppOptions): {
   app.post('/api/v2/prompt-revisions/:revisionId/compile', (request: RequestWithCorrelation, response) => {
     response.json(success(request, promptOperations.compilePrompt(IdSchema.parse(request.params.revisionId), JsonObjectSchema.parse(request.body?.variables ?? {}))))
   })
-  app.post('/api/v2/prompt-revisions/:revisionId/restore', (request: RequestWithCorrelation, response) => {
-    response.status(201).json(success(request, promptOperations.restorePrompt(IdSchema.parse(request.params.revisionId))))
+  app.post('/api/v2/prompt-revisions/:revisionId/polish', (request: RequestWithCorrelation, response) => {
+    response.status(201).json(success(request, promptOperations.polishPrompt(
+      IdSchema.parse(request.params.revisionId),
+      PromptPolishRequestSchema.parse(request.body),
+    )))
   })
-  app.post('/api/v2/prompt-revisions/:revisionId/publish', (request: RequestWithCorrelation, response) => {
-    response.status(201).json(success(request, promptOperations.publishPrompt(IdSchema.parse(request.params.revisionId))))
+  app.post('/api/v2/prompt-revisions/:revisionId/restore', async (request: RequestWithCorrelation, response, next) => {
+    try {
+      const revisionId = IdSchema.parse(request.params.revisionId)
+      const revision = db.getPromptRevision(revisionId)
+      const result = revision?.projectId
+        ? await securityAudit.capture({
+            projectId: revision.projectId, action: 'prompt.rollback', targetType: 'prompt', targetId: revisionId, correlationId: correlationId(request),
+          }, () => promptOperations.restorePrompt(revisionId), stableAuditErrorCode)
+        : promptOperations.restorePrompt(revisionId)
+      response.status(201).json(success(request, result))
+    } catch (error) { next(error) }
+  })
+  app.post('/api/v2/prompt-revisions/:revisionId/publish', async (request: RequestWithCorrelation, response, next) => {
+    try {
+      const revisionId = IdSchema.parse(request.params.revisionId)
+      const revision = db.getPromptRevision(revisionId)
+      const result = revision?.projectId
+        ? await securityAudit.capture({
+            projectId: revision.projectId, action: 'prompt.publish', targetType: 'prompt', targetId: revisionId, correlationId: correlationId(request),
+          }, () => promptOperations.publishPrompt(revisionId), stableAuditErrorCode)
+        : promptOperations.publishPrompt(revisionId)
+      response.status(201).json(success(request, result))
+    } catch (error) { next(error) }
   })
   app.post('/api/v2/prompt-revisions/:revisionId/evaluations', (request: RequestWithCorrelation, response) => {
     response.status(201).json(success(request, promptOperations.evaluateGolden({
@@ -622,6 +794,16 @@ export function createDirectorApp(options: AppOptions): {
       const compiled = promptOperations.compilePrompt(input.promptRevisionId, input.variables)
       const result = await service.runScopedRegeneration(projectId, input, compiled)
       response.status(201).json(success(request, { ...result, task: publicTask(result.task) }))
+    } catch (error) { next(error) }
+  })
+  app.post('/api/v2/projects/:projectId/scene-patches/:artifactId/apply', async (request: RequestWithCorrelation, response, next) => {
+    try {
+      const projectId = IdSchema.parse(request.params.projectId)
+      const artifactId = IdSchema.parse(request.params.artifactId)
+      const result = await securityAudit.capture({
+        projectId, action: 'scene_patch.apply', targetType: 'artifact', targetId: artifactId, correlationId: correlationId(request),
+      }, () => service.applyScenePatch(projectId, artifactId, ScenePatchApplyRequestSchema.parse(request.body)), stableAuditErrorCode)
+      response.json(success(request, result))
     } catch (error) { next(error) }
   })
 
@@ -645,11 +827,29 @@ export function createDirectorApp(options: AppOptions): {
       targetType: 'skill', targetVersionId: IdSchema.parse(request.params.versionId), ...goldenInput.parse(request.body),
     })))
   })
-  app.post('/api/v2/skills/:versionId/publish', (request: RequestWithCorrelation, response) => {
-    response.status(201).json(success(request, promptOperations.publishSkill(IdSchema.parse(request.params.versionId))))
+  app.post('/api/v2/skills/:versionId/publish', async (request: RequestWithCorrelation, response, next) => {
+    try {
+      const versionId = IdSchema.parse(request.params.versionId)
+      const version = db.getSkillPackageVersion(versionId)
+      const result = version?.projectId
+        ? await securityAudit.capture({
+            projectId: version.projectId, action: 'skill.publish', targetType: 'skill', targetId: versionId, correlationId: correlationId(request),
+          }, () => promptOperations.publishSkill(versionId), stableAuditErrorCode)
+        : promptOperations.publishSkill(versionId)
+      response.status(201).json(success(request, result))
+    } catch (error) { next(error) }
   })
-  app.post('/api/v2/skills/:versionId/rollback', (request: RequestWithCorrelation, response) => {
-    response.status(201).json(success(request, promptOperations.rollbackSkill(IdSchema.parse(request.params.versionId))))
+  app.post('/api/v2/skills/:versionId/rollback', async (request: RequestWithCorrelation, response, next) => {
+    try {
+      const versionId = IdSchema.parse(request.params.versionId)
+      const version = db.getSkillPackageVersion(versionId)
+      const result = version?.projectId
+        ? await securityAudit.capture({
+            projectId: version.projectId, action: 'skill.rollback', targetType: 'skill', targetId: versionId, correlationId: correlationId(request),
+          }, () => promptOperations.rollbackSkill(versionId), stableAuditErrorCode)
+        : promptOperations.rollbackSkill(versionId)
+      response.status(201).json(success(request, result))
+    } catch (error) { next(error) }
   })
 
   app.get('/api/v2/artifacts/:scopeType/:scopeId/versions', (request: RequestWithCorrelation, response) => {
@@ -666,10 +866,15 @@ export function createDirectorApp(options: AppOptions): {
       IdSchema.parse(request.query.projectId), IdSchema.parse(request.query.from), IdSchema.parse(request.query.to), scope,
     )))
   })
-  app.post('/api/v2/artifacts/:scopeType/:scopeId/rollback', (request: RequestWithCorrelation, response) => {
-    const scope = { type: artifactScopeType.parse(request.params.scopeType), id: IdSchema.parse(request.params.scopeId) }
-    const input = z.object({ projectId: IdSchema, targetVersionId: IdSchema, expectedHeadRevision: z.number().int().nonnegative() }).parse(request.body)
-    response.status(201).json(success(request, promptOperations.rollbackArtifact(input.projectId, input.targetVersionId, input.expectedHeadRevision, scope)))
+  app.post('/api/v2/artifacts/:scopeType/:scopeId/rollback', async (request: RequestWithCorrelation, response, next) => {
+    try {
+      const scope = { type: artifactScopeType.parse(request.params.scopeType), id: IdSchema.parse(request.params.scopeId) }
+      const input = z.object({ projectId: IdSchema, targetVersionId: IdSchema, expectedHeadRevision: z.number().int().nonnegative() }).parse(request.body)
+      const result = await securityAudit.capture({
+        projectId: input.projectId, action: 'artifact.rollback', targetType: 'artifact', targetId: input.targetVersionId, correlationId: correlationId(request),
+      }, () => promptOperations.rollbackArtifact(input.projectId, input.targetVersionId, input.expectedHeadRevision, scope), stableAuditErrorCode)
+      response.status(201).json(success(request, result))
+    } catch (error) { next(error) }
   })
 
   app.get('/api/v2/projects/:projectId/package', async (request: RequestWithCorrelation, response, next) => {
@@ -711,9 +916,11 @@ export function createDirectorApp(options: AppOptions): {
   })
   app.post('/api/v2/projects/:projectId/source-imports/:importId/commit', async (request: RequestWithCorrelation, response, next) => {
     try {
-      const result = await sourceImports.commit(
-        IdSchema.parse(request.params.projectId), IdSchema.parse(request.params.importId), SourceImportCommitSchema.parse(request.body),
-      )
+      const projectId = IdSchema.parse(request.params.projectId)
+      const importId = IdSchema.parse(request.params.importId)
+      const result = await securityAudit.capture({
+        projectId, action: 'source_import.commit', targetType: 'source_import', targetId: importId, correlationId: correlationId(request),
+      }, () => sourceImports.commit(projectId, importId, SourceImportCommitSchema.parse(request.body)), stableAuditErrorCode)
       response.status(result.repeated ? 200 : 201).json(success(request, publicSnapshot(result.snapshot)))
     } catch (error) { next(error) }
   })
@@ -725,9 +932,18 @@ export function createDirectorApp(options: AppOptions): {
   app.get('/api/v2/projects/:projectId/graph', (request: RequestWithCorrelation, response) => {
     response.json(success(request, service.graph(IdSchema.parse(request.params.projectId), viewSchema.parse(request.query.view ?? 'story'))))
   })
-  app.post('/api/v2/projects/:projectId/graph/commands', (request: RequestWithCorrelation, response) => {
-    const view = viewSchema.parse(request.query.view ?? 'story')
-    response.json(success(request, service.applyGraphCommand(IdSchema.parse(request.params.projectId), view, GraphCommandSchema.parse(request.body))))
+  app.post('/api/v2/projects/:projectId/graph/commands', async (request: RequestWithCorrelation, response, next) => {
+    try {
+      const view = viewSchema.parse(request.query.view ?? 'story')
+      const projectId = IdSchema.parse(request.params.projectId)
+      const command = GraphCommandSchema.parse(request.body)
+      const result = command.type === 'clear_boundary_frame'
+        ? await securityAudit.capture({
+          projectId, action: 'graph.clear_boundary', targetType: 'shot', targetId: command.shotId, correlationId: correlationId(request),
+        }, () => service.applyGraphCommand(projectId, view, command), stableAuditErrorCode)
+        : service.applyGraphCommand(projectId, view, command)
+      response.json(success(request, result))
+    } catch (error) { next(error) }
   })
 
   app.post('/api/v2/projects/:projectId/agent-plans', (request: RequestWithCorrelation, response) => {
@@ -748,6 +964,17 @@ export function createDirectorApp(options: AppOptions): {
       response.json(success(request, publicSnapshot(await service.runDemoProduction(IdSchema.parse(request.params.projectId), idempotencyKey))))
     } catch (error) { next(error) }
   })
+  app.post('/api/v2/shots/:shotId/provider-candidates', async (request: RequestWithCorrelation, response, next) => {
+    try {
+      const shotId = IdSchema.parse(request.params.shotId)
+      const shot = db.get<Shot>('shots', shotId)
+      if (!shot) throw new Error('SHOT_NOT_FOUND')
+      const task = await securityAudit.capture({
+        projectId: shot.projectId, action: 'provider_candidate.submit', targetType: 'shot', targetId: shotId, correlationId: correlationId(request),
+      }, () => service.startRoutedCandidateGeneration(shotId, RoutedCandidateGenerationRequestSchema.parse(request.body)), stableAuditErrorCode)
+      response.status(202).json(success(request, publicTask(task)))
+    } catch (error) { next(error) }
+  })
 
   app.get('/api/v2/projects/:projectId/assets', (request: RequestWithCorrelation, response) => response.json(success(request, db.list('assets', IdSchema.parse(request.params.projectId)))))
   app.post('/api/v2/projects/:projectId/assets', (request: RequestWithCorrelation, response) => {
@@ -755,7 +982,7 @@ export function createDirectorApp(options: AppOptions): {
     const input = createAssetInput.parse(request.body)
     const timestamp = new Date().toISOString()
     const id = randomUUID()
-    const asset = AssetUnitSchema.parse({ ...input, id, logicalId: id, projectId, revision: 1, archived: false, createdAt: timestamp, updatedAt: timestamp })
+    const asset = AssetUnitSchema.parse({ ...input, metadata: parseAssetMetadata(input.type, input.metadata), id, logicalId: id, projectId, revision: 1, archived: false, createdAt: timestamp, updatedAt: timestamp })
     db.put('assets', projectId, asset)
     db.bumpGraphRevision(projectId)
     response.status(201).json(success(request, asset))
@@ -763,6 +990,17 @@ export function createDirectorApp(options: AppOptions): {
   app.get('/api/v2/projects/:projectId/storyboards', (request: RequestWithCorrelation, response) => response.json(success(request, db.snapshot(IdSchema.parse(request.params.projectId)).shots)))
   app.get('/api/v2/projects/:projectId/candidates', (request: RequestWithCorrelation, response) => response.json(success(request, db.snapshot(IdSchema.parse(request.params.projectId)).candidates)))
   app.get('/api/v2/projects/:projectId/candidate-batches', (request: RequestWithCorrelation, response) => response.json(success(request, db.list<CandidateBatch>('candidate_batches', IdSchema.parse(request.params.projectId)))))
+  app.post('/api/v2/candidate-batches/:batchId/retry-failed', async (request: RequestWithCorrelation, response, next) => {
+    try {
+      const batchId = IdSchema.parse(request.params.batchId)
+      const batch = db.get<CandidateBatch>('candidate_batches', batchId)
+      if (!batch) throw new Error('CANDIDATE_BATCH_NOT_FOUND')
+      const result = await securityAudit.capture({
+        projectId: batch.projectId, action: 'candidate_batch.retry_failed', targetType: 'candidate_batch', targetId: batchId, correlationId: correlationId(request),
+      }, () => service.retryFailedCandidates(batchId, CandidateBatchRetryRequestSchema.parse(request.body)), stableAuditErrorCode)
+      response.status(201).json(success(request, result))
+    } catch (error) { next(error) }
+  })
   app.patch('/api/v2/candidates/:candidateId', (request: RequestWithCorrelation, response) => {
     const candidateId = IdSchema.parse(request.params.candidateId)
     const current = db.get<Candidate>('candidates', candidateId)
@@ -820,21 +1058,44 @@ export function createDirectorApp(options: AppOptions): {
   app.post('/api/v2/projects/:projectId/media', upload.single('file'), async (request: RequestWithCorrelation, response, next) => {
     try {
       const projectId = IdSchema.parse(request.params.projectId)
+      db.snapshot(projectId)
       if (!request.file) throw new Error('UPLOAD_FILE_REQUIRED')
       const detected = await fileTypeFromBuffer(request.file.buffer)
       const allowed = new Set(['image/png', 'image/jpeg', 'image/webp'])
       if (!detected || !allowed.has(detected.mime) || detected.mime !== request.file.mimetype) throw new Error('UPLOAD_TYPE_REJECTED')
-      await sharpRuntime(request.file.buffer, { failOn: 'error', limitInputPixels: 40_000_000 }).metadata()
+      let sanitizedBuffer: Buffer
+      try {
+        const metadata = await sharpRuntime(request.file.buffer, {
+          failOn: 'error', limitInputPixels: 40_000_000, animated: true,
+        }).metadata()
+        const pages = metadata.pages ?? 1
+        const frameHeight = metadata.pageHeight ?? metadata.height
+        if (pages !== 1) throw new Error('UPLOAD_ANIMATION_UNSUPPORTED')
+        if (!metadata.width || !frameHeight || metadata.width * frameHeight * pages > 40_000_000) throw new Error('UPLOAD_CONTENT_INVALID')
+        const decoder = sharpRuntime(request.file.buffer, { failOn: 'error', limitInputPixels: 40_000_000 }).rotate()
+        sanitizedBuffer = detected.mime === 'image/jpeg'
+          ? await decoder.jpeg({ quality: 95, mozjpeg: true }).toBuffer()
+          : detected.mime === 'image/png'
+            ? await decoder.png({ compressionLevel: 9 }).toBuffer()
+            : await decoder.webp({ quality: 95 }).toBuffer()
+        if (sanitizedBuffer.byteLength === 0 || sanitizedBuffer.byteLength > 25 * 1024 * 1024) throw new Error('UPLOAD_CONTENT_INVALID')
+      } catch (error) {
+        if (error instanceof Error && error.message === 'UPLOAD_ANIMATION_UNSUPPORTED') throw error
+        throw new Error('UPLOAD_CONTENT_INVALID')
+      }
       const id = randomUUID()
       const directory = join(resolve(options.dataDirectory), 'media', projectId)
       await mkdir(directory, { recursive: true })
       const locator = `${id}.${detected.ext}`
-      await writeFile(join(directory, locator), request.file.buffer, { flag: 'wx' })
+      const finalPath = join(directory, locator)
+      const stagingPath = join(directory, `.${id}.upload`)
+      await writeFile(stagingPath, sanitizedBuffer, { flag: 'wx' })
+      await rename(stagingPath, finalPath).catch(async (error) => { await unlink(stagingPath).catch(() => undefined); throw error })
       const media: MediaReference = MediaReferenceSchema.parse({
         id, projectId, kind: 'image', storage: 'managed-file', locator, mime: detected.mime,
-        size: request.file.size, sha256: createHash('sha256').update(request.file.buffer).digest('hex'), createdAt: new Date().toISOString(),
+        size: sanitizedBuffer.byteLength, sha256: createHash('sha256').update(sanitizedBuffer).digest('hex'), createdAt: new Date().toISOString(),
       })
-      db.put('media_references', projectId, media)
+      try { db.put('media_references', projectId, media) } catch (error) { await unlink(finalPath).catch(() => undefined); throw error }
       response.status(201).json(success(request, media))
     } catch (error) { next(error) }
   })
@@ -874,8 +1135,19 @@ export function createDirectorApp(options: AppOptions): {
     response.json(success(request, previewMediaResolution(input.projectId, getModel(input.modelId), media)))
   })
 
-  app.post('/api/v2/exports', (request: RequestWithCorrelation, response) => {
-    response.status(202).json(success(request, publicTask(service.startExport(ExportRequestSchema.parse(request.body)))))
+  app.post('/api/v2/exports/preflight', (request: RequestWithCorrelation, response) => {
+    response.status(201).json(success(request, service.prepareExport(ExportRequestSchema.parse(request.body))))
+  })
+  app.post('/api/v2/exports', async (request: RequestWithCorrelation, response, next) => {
+    try {
+      const input = ExportApprovalRequestSchema.parse(request.body)
+      const preflight = db.getIdempotent<{ projectId: string }>(`export-preflight:${input.preflightId}`)
+      if (!preflight) throw new Error('EXPORT_PREFLIGHT_NOT_FOUND')
+      const task = await securityAudit.capture({
+        projectId: preflight.projectId, action: 'export.approve', targetType: 'export', targetId: input.preflightId, correlationId: correlationId(request),
+      }, () => service.approveExport(input), stableAuditErrorCode)
+      response.status(202).json(success(request, publicTask(task)))
+    } catch (error) { next(error) }
   })
   app.post('/api/v2/shots/:shotId/boundary/extract', (request: RequestWithCorrelation, response) => {
     const input = boundaryExtractionInput.parse(request.body)
@@ -884,12 +1156,74 @@ export function createDirectorApp(options: AppOptions): {
     }))))
   })
   app.get('/api/v2/projects/:projectId/tasks', (request: RequestWithCorrelation, response) => response.json(success(request, db.list<GenerationTask>('generation_tasks', IdSchema.parse(request.params.projectId)).map(publicTask))))
+  app.get('/api/v2/projects/:projectId/task-admission', (request: RequestWithCorrelation, response) => {
+    response.json(success(request, service.taskAdmission(IdSchema.parse(request.params.projectId))))
+  })
+  app.get('/api/v2/projects/:projectId/generation-policy', (request: RequestWithCorrelation, response) => {
+    response.json(success(request, service.generationPolicy(IdSchema.parse(request.params.projectId))))
+  })
+  app.put('/api/v2/projects/:projectId/generation-policy', async (request: RequestWithCorrelation, response, next) => {
+    try {
+      const projectId = IdSchema.parse(request.params.projectId)
+      const policy = await securityAudit.capture({
+        projectId, action: 'generation_policy.update', targetType: 'project', targetId: projectId, correlationId: correlationId(request),
+      }, () => service.updateGenerationPolicy(projectId, ProjectGenerationPolicyUpdateRequestSchema.parse(request.body)), stableAuditErrorCode)
+      response.json(success(request, policy))
+    } catch (error) { next(error) }
+  })
+  app.get('/api/v2/projects/:projectId/security-audit', (request: RequestWithCorrelation, response) => {
+    const projectId = IdSchema.parse(request.params.projectId)
+    const limit = z.coerce.number().int().min(1).max(500).default(100).parse(request.query.limit)
+    response.json(success(request, securityAudit.list(projectId, limit)))
+  })
+  app.get('/api/v2/projects/:projectId/diagnostic-bundle', (request: RequestWithCorrelation, response) => {
+    response.json(success(request, service.projectDiagnosticBundle(IdSchema.parse(request.params.projectId))))
+  })
+  app.get('/api/v2/projects/:projectId/recovery', (request: RequestWithCorrelation, response) => {
+    response.json(success(request, service.projectRecoveryReport(IdSchema.parse(request.params.projectId))))
+  })
   app.get('/api/v2/tasks/:taskId', (request: RequestWithCorrelation, response) => {
     const task = db.get<GenerationTask>('generation_tasks', IdSchema.parse(request.params.taskId))
     if (!task) throw new Error('TASK_NOT_FOUND')
     response.json(success(request, publicTask(task)))
   })
-  app.post('/api/v2/tasks/:taskId/cancel', (request: RequestWithCorrelation, response) => response.json(success(request, publicTask(service.cancelTask(IdSchema.parse(request.params.taskId))))))
+  app.post('/api/v2/tasks/:taskId/cancel', async (request: RequestWithCorrelation, response, next) => {
+    try {
+      const taskId = IdSchema.parse(request.params.taskId)
+      const task = db.get<GenerationTask>('generation_tasks', taskId)
+      if (!task) throw new Error('TASK_NOT_FOUND')
+      const cancelled = await securityAudit.capture({
+        projectId: task.projectId, action: 'task.cancel', targetType: 'task', targetId: taskId, correlationId: correlationId(request),
+      }, () => service.cancelTask(taskId), stableAuditErrorCode)
+      response.json(success(request, publicTask(cancelled)))
+    } catch (error) { next(error) }
+  })
+  app.get('/api/v2/tasks/:taskId/diagnostic', (request: RequestWithCorrelation, response) => {
+    response.json(success(request, service.diagnoseTask(IdSchema.parse(request.params.taskId))))
+  })
+  app.post('/api/v2/tasks/:taskId/retry', async (request: RequestWithCorrelation, response, next) => {
+    try {
+      const taskId = IdSchema.parse(request.params.taskId)
+      const task = db.get<GenerationTask>('generation_tasks', taskId)
+      if (!task) throw new Error('TASK_NOT_FOUND')
+      const result = await securityAudit.capture({
+        projectId: task.projectId, action: 'task.retry', targetType: 'task', targetId: taskId, correlationId: correlationId(request),
+      }, () => service.retryTask(taskId, TaskRetryRequestSchema.parse(request.body)), stableAuditErrorCode)
+      response.status(202).json(success(request, { ...result, task: publicTask(result.task) }))
+    } catch (error) { next(error) }
+  })
+  app.post('/api/v2/tasks/:taskId/reconcile', async (request: RequestWithCorrelation, response) => {
+    const taskId = IdSchema.parse(request.params.taskId)
+    const task = db.get<GenerationTask>('generation_tasks', taskId)
+    if (!task) throw new Error('TASK_NOT_FOUND')
+    const result = await securityAudit.capture({
+      projectId: task.projectId, action: 'task.reconcile', targetType: 'task', targetId: taskId, correlationId: correlationId(request),
+    }, async () => {
+      z.object({}).strict().parse(request.body)
+      return await service.reconcileTask(taskId)
+    }, stableAuditErrorCode)
+    response.json(success(request, { ...result, task: publicTask(result.task) }))
+  })
 
   app.get('/api/v2/providers/catalog', (request: RequestWithCorrelation, response) => {
     const provider = new FakeProvider()
@@ -900,83 +1234,48 @@ export function createDirectorApp(options: AppOptions): {
   })
   app.get('/api/v2/models/catalog', (request: RequestWithCorrelation, response) => response.json(success(request, { models: listModels() })))
   app.get('/api/v2/systems/egress/status', (request: RequestWithCorrelation, response) => response.json(success(request, egress.status())))
-  app.get('/api/v2/provider-plugins/runtime', async (request: RequestWithCorrelation, response, next) => {
-    try { response.json(success(request, await inspectDenoRuntime())) } catch (error) { next(error) }
+  app.all(/^\/api\/v2\/provider-(?:plugins(?:\/.*)?|plugin-publishers(?:\/.*)?)$/u, (_request, _response, next) => {
+    next(new Error('EXECUTABLE_PROVIDER_ADAPTERS_DISABLED'))
   })
-  app.post('/api/v2/provider-plugins/runtime/install', async (request: RequestWithCorrelation, response, next) => {
+  app.get('/api/v2/provider-connections', async (request: RequestWithCorrelation, response, next) => {
+    try { response.json(success(request, await providerConnections.list())) } catch (error) { next(error) }
+  })
+  app.post('/api/v2/provider-connections', async (request: RequestWithCorrelation, response, next) => {
     try {
-      DenoRuntimeInstallRequestSchema.parse(request.body)
-      if (providerNetworkDisabled) throw new Error('PROVIDER_NETWORK_DISABLED')
-      const current = await inspectDenoRuntime()
-      if (!current.supported) throw new Error('DENO_RUNTIME_PLATFORM_UNSUPPORTED')
-      if (current.state === 'invalid') throw new Error('DENO_RUNTIME_INSTALL_CONFLICT')
-      if (!denoRuntimeInstall) {
-        denoRuntimeAbort = new AbortController()
-        denoRuntimeProgress = { phase: 'downloading', receivedBytes: 0, totalBytes: current.downloadBytes ?? 1 }
-        denoRuntimeInstall = denoRuntimeInstaller.install(
-          process.platform,
-          process.arch,
-          denoRuntimeAbort.signal,
-          (progress) => { denoRuntimeProgress = progress },
-        )
-      }
-      const activeInstall = denoRuntimeInstall
-      try { await activeInstall } finally {
-        if (denoRuntimeInstall === activeInstall) { denoRuntimeInstall = undefined; denoRuntimeAbort = undefined; denoRuntimeProgress = undefined }
-      }
-      response.json(success(request, await inspectDenoRuntime()))
+      response.status(201).json(success(request, await providerConnections.create(ProviderConnectionCreateRequestSchema.parse(request.body))))
     } catch (error) { next(error) }
   })
-  app.post('/api/v2/provider-plugins/runtime/install/cancel', async (request: RequestWithCorrelation, response, next) => {
+  app.put('/api/v2/provider-connections/:connectionId/credential', async (request: RequestWithCorrelation, response, next) => {
     try {
-      DenoRuntimeCancelRequestSchema.parse(request.body)
-      const activeInstall = denoRuntimeInstall
-      const activeAbort = denoRuntimeAbort
-      if (!activeInstall || !activeAbort) throw new Error('DENO_RUNTIME_INSTALL_NOT_RUNNING')
-      activeAbort.abort(new DenoRuntimeInstallError('DENO_RUNTIME_ABORTED'))
-      try { await activeInstall } catch (error) {
-        if (!(error instanceof DenoRuntimeInstallError) || error.code !== 'DENO_RUNTIME_ABORTED') throw error
-      } finally {
-        if (denoRuntimeInstall === activeInstall) { denoRuntimeInstall = undefined; denoRuntimeAbort = undefined; denoRuntimeProgress = undefined }
-      }
-      response.json(success(request, DenoRuntimeCancelReportSchema.parse({ status: 'cancelled', runtime: await inspectDenoRuntime() })))
+      response.json(success(request, await providerConnections.replaceCredential(
+        IdSchema.parse(request.params.connectionId), ProviderCredentialUpdateRequestSchema.parse(request.body),
+      )))
     } catch (error) { next(error) }
   })
-  app.get('/api/v2/provider-plugin-publishers', (request: RequestWithCorrelation, response) => {
-    response.json(success(request, providerPlugins.listPublishers()))
+  app.post('/api/v2/provider-connections/:connectionId/test', async (request: RequestWithCorrelation, response, next) => {
+    try {
+      response.json(success(request, await providerConnections.test(IdSchema.parse(request.params.connectionId), request.body)))
+    } catch (error) { next(error) }
   })
-  app.post('/api/v2/provider-plugin-publishers', (request: RequestWithCorrelation, response) => {
-    response.status(201).json(success(request, providerPlugins.trustPublisher(ProviderPublisherTrustRequestSchema.parse(request.body))))
+  app.get('/api/v2/projects/:projectId/provider-route', (request: RequestWithCorrelation, response) => {
+    response.json(success(request, providerConnections.routePolicy(IdSchema.parse(request.params.projectId))))
   })
-  app.post('/api/v2/provider-plugin-publishers/:id/revoke', (request: RequestWithCorrelation, response) => {
-    response.json(success(request, providerPlugins.revokePublisher(
-      IdSchema.parse(request.params.id),
-      ProviderPublisherRevokeRequestSchema.parse(request.body),
+  app.put('/api/v2/projects/:projectId/provider-route', (request: RequestWithCorrelation, response) => {
+    response.json(success(request, providerConnections.updateRoutePolicy(
+      IdSchema.parse(request.params.projectId), ProviderRoutePolicyUpdateRequestSchema.parse(request.body),
     )))
   })
-  app.get('/api/v2/provider-plugins', (request: RequestWithCorrelation, response) => response.json(success(request, providerPlugins.list())))
-  app.post('/api/v2/provider-plugins', async (request: RequestWithCorrelation, response, next) => {
-    try { response.status(201).json(success(request, await providerPlugins.install(ProviderPluginInstallRequestSchema.parse(request.body)))) } catch (error) { next(error) }
-  })
-  app.post('/api/v2/provider-plugins/:pluginRecordId/test', async (request: RequestWithCorrelation, response, next) => {
-    try {
-      const input = ProviderPluginTestRequestSchema.parse(request.body)
-      response.json(success(request, await providerPlugins.test(IdSchema.parse(request.params.pluginRecordId), input.expectedRevision)))
-    } catch (error) { next(error) }
-  })
-  app.post('/api/v2/provider-plugins/:pluginRecordId/enable', async (request: RequestWithCorrelation, response, next) => {
-    try {
-      const input = ProviderPluginEnableRequestSchema.parse(request.body)
-      response.json(success(request, await providerPlugins.enable(IdSchema.parse(request.params.pluginRecordId), input.expectedRevision)))
-    } catch (error) { next(error) }
-  })
-  app.post('/api/v2/provider-plugins/:pluginRecordId/disable', (request: RequestWithCorrelation, response) => {
-    const input = ProviderPluginDisableRequestSchema.parse(request.body)
-    response.json(success(request, providerPlugins.disable(IdSchema.parse(request.params.pluginRecordId), input.expectedRevision)))
+  app.get('/api/v2/projects/:projectId/provider-costs', (request: RequestWithCorrelation, response) => {
+    const projectId = IdSchema.parse(request.params.projectId)
+    if (!db.getProject(projectId)) throw new Error('PROJECT_NOT_FOUND')
+    response.json(success(request, db.listProviderCosts(projectId)))
   })
   app.get('/api/v2/systems', (request: RequestWithCorrelation, response) => response.json(success(request, {
     schemaVersion: db.schemaVersion(), dataMode: 'local', demoMode: process.env.DEMO_MODE === '1', providerNetworkDisabled,
-    capabilities: { storyGraph: true, multiFormatSourceImport: true, agentApproval: true, durableTasks: true, localExport: true },
+    capabilities: {
+      storyGraph: true, multiFormatSourceImport: true, agentApproval: true, durableTasks: true, localExport: true,
+      declarativeProviderConnections: true, executableProviderAdapters: false,
+    },
   })))
 
   app.use('/api', (request: RequestWithCorrelation, response) => {
@@ -984,6 +1283,16 @@ export function createDirectorApp(options: AppOptions): {
   })
   if (options.studioDirectory) {
     const studioDirectory = resolve(options.studioDirectory)
+    app.get('/', (request, response) => {
+      response.setHeader('cache-control', 'no-store')
+      response.cookie(browserSessionCookie, browserSessionToken, {
+        httpOnly: true,
+        sameSite: 'strict',
+        path: '/',
+        maxAge: 12 * 60 * 60 * 1_000,
+      })
+      response.redirect(302, safeStudioReturnPath(request.query.return ?? '/studio?workspace=project_center'))
+    })
     app.use(express.static(studioDirectory, { index: false, dotfiles: 'deny', fallthrough: true }))
     app.get(['/studio', '/studio/*path'], (_request, response) => response.sendFile(join(studioDirectory, 'index.html')))
   }
@@ -993,5 +1302,5 @@ export function createDirectorApp(options: AppOptions): {
     response.status(mapped.status).json({ ok: false, error: mapped.payload })
   })
 
-  return { app, httpServer, io, db, service, memory, egress, providerPlugins, allowOrigin: (origin: string) => { allowedOrigins.add(origin) } }
+  return { app, httpServer, io, db, service, memory, egress, providerConnections, allowOrigin: (origin: string) => { allowedOrigins.add(origin) } }
 }

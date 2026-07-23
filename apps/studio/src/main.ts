@@ -4,6 +4,7 @@ import App from './App.vue'
 import { router } from './router.js'
 import '@vue-flow/core/dist/style.css'
 import '@vue-flow/core/dist/theme-default.css'
+import './theme.css'
 import './styles.css'
 
 createApp(App).use(createPinia()).use(router).mount('#app')

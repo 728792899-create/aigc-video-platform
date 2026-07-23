@@ -12,6 +12,7 @@
 | --- | --- | --- |
 | Health | `GET /api/v2/health` | Demo、网络门禁与 schema 状态 |
 | Projects | `GET/POST /api/v2/projects` | 列表与创建 |
+| Projects | `GET/PUT /api/v2/projects/:id/generation-policy` | 读取或用 revision/CAS 与精确确认更新并发、批次、导出和用户自付预算边界 |
 | Series | `GET/POST /api/v2/series` | 系列列表与创建 |
 | Series | `POST /api/v2/series/:id/episodes` | 将 Project 作为有序 Episode 加入 Series |
 | Series | `GET /api/v2/episodes/:id/context` | 前后集、默认配置与分层资产上下文 |
@@ -28,14 +29,23 @@
 | Agents | `GET /api/v2/agent-runs/:id/checkpoint` | 读取计划签发时的脱敏记忆/Artifact provenance |
 | Agents | `POST /api/v2/plans/:id/approve` | 消费一次性审批 token |
 | Production | `POST /api/v2/projects/:id/demo-production` | 零付费 Candidate 生产 |
+| Production | `POST /api/v2/shots/:id/provider-candidates` | 使用项目路由提交外部候选；要求用户自付专用确认、路由/策略 revision、最大成本和幂等键 |
 | Candidates | `GET /api/v2/projects/:id/candidates|candidate-batches` | 候选及持久批次 lineage |
 | Candidates | `PATCH /api/v2/candidates/:id` | 独立更新 label、tags 与 favorite，不改变最终选择 |
+| Candidates | `POST /api/v2/candidate-batches/:id/retry-failed` | 精确确认后仅重跑失败项；创建新 batch/new attempt，保留原批次和候选 |
+| Continuity | `GET /api/v2/episodes/:id/continuity` | 返回本集与上一集摘要、固定 Source revision/hash 和动态 stale 原因 |
+| Continuity | `POST /api/v2/episodes/:id/continuity-summary` | 精确确认后创建不可变跨集摘要，并更新相邻 Episode 引用 |
 | Prompt Pack | `GET /api/v2/projects/:id/prompts|skills|workflows` | 固定版本定义清单 |
 | Prompt Pack | `GET /api/v2/systems/prompt-pack` | 运行时版本、数量与内容 hash 摘要 |
 | Prompt operations | `GET/POST /api/v2/prompt-definitions` | 列出或追加项目/Global Prompt revision |
 | Prompt operations | `GET /api/v2/prompt-revisions/:id/diff` | 字段级版本 diff |
+| Prompt operations | `POST /api/v2/prompt-revisions/:id/polish` | 对项目 Prompt 追加确定性 Demo 润色 revision，返回 diff 与 last-known-good |
 | Prompt operations | `POST /api/v2/prompt-revisions/:id/compile|evaluations|publish|restore` | 变量编译、Fake 黄金样例、发布和追加式恢复 |
 | Prompt operations | `POST /api/v2/projects/:id/scoped-regenerations` | 固定已发布 Prompt revision，对单个 Event/Scene/Shot 追加局部产物 |
+| Creative brief | `GET/PUT /api/v2/projects/:id/brief` | 读取或使用 expected revision 保存不可变 Brief Artifact，按字段标记下游 stale |
+| Creative brief | `POST /api/v2/projects/:id/brief/candidates` | 使用本地确定性运行生成 2–3 个 draft 候选；锁定字段保持不变，当前批准稿不移动 |
+| Creative brief | `POST /api/v2/projects/:id/brief/candidates/:artifactId/review` | 精确确认批准或拒绝候选；批准才追加当前 Brief revision，拒绝不污染下游 |
+| Scene patch | `POST /api/v2/projects/:id/scene-patches/:artifactId/apply` | 审阅后显式应用 Scene/Shot 字段 patch；需项目/场景/镜头 CAS、精确确认与幂等键，整批冲突时全部回滚 |
 | Skill operations | `GET/POST /api/v2/skills` | 列出或创建受限 Skill package version |
 | Skill operations | `POST /api/v2/skills/:id/fork|evaluations|publish|rollback` | 安全 fork、Fake 黄金样例、发布和追加式回滚 |
 | Skill operations | `GET /api/v2/skills/:id/validate` | 资源类型、路径与黄金样例门禁 |
@@ -56,36 +66,74 @@
 | Memory | `GET /api/v2/memory/search` | 关键词检索，返回 scope、revision 和采用原因 |
 | Memory | `PATCH/DELETE /api/v2/memory/:id` | 禁用召回或删除可重建索引，不删 canonical source |
 | Memory | `GET /api/v2/memory/model-status` | 关键词降级与按需 ONNX 状态 |
-| Tasks | `GET /api/v2/tasks/:id` | 持久任务诊断 |
+| Tasks | `GET /api/v2/tasks/:id` | 脱敏后的持久任务 |
+| Tasks | `GET /api/v2/projects/:id/task-admission` | 返回当前并发、策略 revision、候选/导出边界、零预算与稳定拒绝原因 |
+| Tasks | `GET /api/v2/tasks/:id/diagnostic` | 结果确定性、取消语义和建议动作 |
+| Tasks | `POST /api/v2/tasks/:id/reconcile` | 对账已有任务；永不提交新任务 |
+| Tasks | `POST /api/v2/tasks/:id/retry` | 显式确认后创建新的幂等 attempt |
 | Tasks | `POST /api/v2/tasks/:id/cancel` | 请求取消 |
-| Export | `POST /api/v2/exports` | 启动本地 MP4 导出 |
+| Security audit | `GET /api/v2/projects/:id/security-audit?limit=` | 返回项目高风险动作的 append-only started/terminal 证据；只含固定动作、哈希引用、correlation ID 和稳定错误码 |
+| Diagnostics | `GET /api/v2/projects/:id/diagnostic-bundle` | 返回项目计数、哈希化任务证据与引用完整性问题；排除原文、Prompt、凭据、Provider payload 和本机路径 |
+| Recovery | `GET /api/v2/projects/:id/recovery` | authenticated 本地 UI 报告：实际实体/任务 ID、可定位引用与允许的恢复动作；不包含正文、Prompt、Provider payload 或路径 |
+| Export | `POST /api/v2/exports/preflight` | 冻结镜头 revision 与已选 Candidate/Media hash，返回不含目标目录的短期预检和一次性 token，不启动 FFmpeg |
+| Export | `POST /api/v2/exports` | 消费 `START_LOCAL_EXPORT` 精确确认；assembly 变化时拒绝，幂等重放复用同一任务 |
 | Systems | `GET /api/v2/providers/catalog` | Provider 与账单边界 |
 | Systems | `GET /api/v2/models/catalog` | 确定性静态模型能力目录 |
 | Systems | `GET /api/v2/systems/egress/status` | 只读返回三通道网络门禁、allowlist 计数和凭据配置状态 |
-| Provider plugins | `GET /api/v2/provider-plugins/runtime` | 返回固定 Deno 版本、平台支持、下载体积、受限安装进度与本地校验状态，不返回路径 |
-| Provider plugins | `POST /api/v2/provider-plugins/runtime/install` | 精确确认后安装固定 Deno；默认网络门禁关闭时在下载前拒绝 |
-| Provider plugins | `POST /api/v2/provider-plugins/runtime/install/cancel` | 精确确认后取消当前安装；无进行中安装时返回稳定 409，不伪造成功 |
-| Provider plugins | `GET/POST /api/v2/provider-plugin-publishers` | 列出脱敏指纹或精确确认信任 Ed25519 SPKI 公钥 |
-| Provider plugins | `POST /api/v2/provider-plugin-publishers/:id/revoke` | expected revision + 精确确认撤销；仍有 enabled 插件时拒绝 |
-| Provider plugins | `GET/POST /api/v2/provider-plugins` | 列出或安装受信 Ed25519 签名包；响应不返回 bundle 或绝对路径 |
-| Provider plugins | `POST /api/v2/provider-plugins/:id/test` | 精确确认后在无权限 Deno 进程中测试；只保存脱敏证据 hash |
-| Provider plugins | `POST /api/v2/provider-plugins/:id/enable|disable` | expected revision 状态转换；enable 还要求全局功能门禁与精确确认 |
+| Provider connections | `GET/POST /api/v2/provider-connections` | 列出连接或用精确确认创建 OpenAI-compatible/声明式 HTTPS 连接；响应只含 `credentialRef` |
+| Provider connections | `PUT /api/v2/provider-connections/:id/credential` | 用 expected revision 与专用确认替换系统凭证库中的秘密；响应不回显秘密 |
+| Provider connections | `POST /api/v2/provider-connections/:id/test` | 执行受限 `/v1/models` 脱敏探测；返回 ready/timeout/rate-limited/invalid-response 等稳定结果 |
+| Provider route | `GET/PUT /api/v2/projects/:id/provider-route` | 按模态配置主连接、降级链、模型、最大尝试数、超时和预算；revision/CAS 更新 |
+| Provider costs | `GET /api/v2/projects/:id/provider-costs` | 返回不可变本地成本账本，不含付款信息或 Provider payload |
+| Executable adapters | `/api/v2/provider-plugins*`, `/api/v2/provider-plugin-publishers*` | 已封存；所有方法稳定返回 HTTP 410 `EXECUTABLE_PROVIDER_ADAPTERS_DISABLED` |
 
 旧 `/api/*` 有意返回 404，不提供 1.x 兼容层。
 
-`/systems/egress/status` 不返回 secret reference、DNS 结果、原始审计或任意请求入口。当前三条策略均 `enabled=false`、`allowedHosts=[]`；没有对外的 Broker execute 接口，真实 Provider 仍不可用。
+安全审计只覆盖可归属到项目的高风险操作，包括 Creative Brief 审阅、Scene patch 应用、原著提交、边界帧解除、失败批次重试、导出批准、生成策略更新、任务取消/重试/对账，以及项目级 Prompt、Skill、Artifact 的发布或回滚。每次操作先追加 `started`，成功或拒绝后再追加 terminal 事件；进程在两者之间异常退出时会保留 started-only 证据。响应从不包含目标原始 ID、请求 body、用户正文、Prompt、凭据、Provider payload 或路径。Global Prompt/Skill 没有项目归属，因此当前不写入项目审计流。
 
-运行时安装请求必须是 `{ "confirmation": "INSTALL_DENO_2.9.2" }`，取消请求必须是 `{ "confirmation": "CANCEL_DENO_2.9.2_INSTALL" }`。Server 只接受固定官方资产目录，校验压缩大小、SHA-256、单文件 ZIP、二进制 hash 和精确版本后原子发布；失败或取消不留下可执行目录。`installing` 状态只暴露 downloading/verifying/extracting/probing/publishing、已接收字节和固定总字节，不含 URL 或临时路径。响应只返回脱敏状态和 hash，不含 URL token、本机安装目录或可执行路径。插件测试与启用分别要求 `TEST_SIGNED_PROVIDER_PLUGIN` 与 `ENABLE_SIGNED_PROVIDER_PLUGIN`，且携带 `expectedRevision`。
+Creative Brief 读取只接受 `status=approved` 且完整通过 `CreativeBriefSchema` 的 Artifact。旧版本中缺字段或夹带未声明字段的产物会列入 `invalidArtifactIds`，不会被 UI 默认值伪装成当前事实。候选生成要求独立 idempotency key；批准使用 `APPROVE_CREATIVE_BRIEF`，拒绝使用 `REJECT_CREATIVE_BRIEF`，两种确认不可互换。
 
-发布者信任请求需要 `TRUST_PROVIDER_PLUGIN_PUBLISHER`，撤销需要 `REVOKE_PROVIDER_PLUGIN_PUBLISHER`。Server 会解析公钥并强制 Ed25519，持久规范化 SPKI PEM，但 API 只返回 SHA-256 指纹。相同 key ID 不能静默替换指纹；由启动配置管理的信任不能被 UI 改写。
+导出采用两阶段协议。Preflight 保存服务端私有的目标目录与不可变装配快照，公开响应只包含文件名、镜头/时长/规格、`assemblyHash`、已验证的 Demo 零成本、过期时间和一次性 approval token。正式请求必须提交 `START_LOCAL_EXPORT`；token 只保存 hash，未消费的预检在 Shot/Candidate/Media 发生变化后返回 `EXPORT_PREFLIGHT_STALE`。已成功消费的同一确认可安全重放并返回原任务，不重复启动 FFmpeg。
+
+项目诊断包不是项目备份，也不包含可恢复业务内容。Task ID 与 Provider task ID 均只以 SHA-256 引用出现；任务输入、结果 payload、原始错误、项目名称、用户文本、Prompt、媒体 locator 和绝对路径均不会进入响应。
+
+`/projects/:id/recovery` 与可下载诊断包用途不同。它只对持有本地 session token 的 Studio 返回实际 Shot/Candidate/Task ID，使 UI 能定位断裂引用、批量执行只读 reconcile，或在二次确认后解除引用不存在媒体的边界帧。它不会自动选择新候选、删除历史 Candidate、重新提交 Provider 任务或返回任何用户正文/Prompt/Provider payload/媒体路径；给外部支持人员的文件仍必须使用只含 hash 的 diagnostic bundle。
+
+## 项目生成策略与任务准入
+
+`GET /projects/:id/generation-policy` 返回持久化的项目策略；尚未保存过的项目返回 revision 0 的确定性默认值。`PUT` 只接受以下严格请求，额外字段会被拒绝：
+
+```json
+{
+  "expectedRevision": 0,
+  "maxConcurrentTasks": 4,
+  "maxCandidatesPerBatch": 4,
+  "maxExportDurationMs": 3600000,
+  "billingMode": "demo-only",
+  "dailyPaidBudgetMicros": 0,
+  "confirmation": "UPDATE_GENERATION_POLICY"
+}
+```
+
+默认响应为 `billingMode=demo-only`、`paidProviders=blocked`、`dailyPaidBudgetMicros=0`。切换 `user-funded` 或设置正预算时，确认必须改为 `ENABLE_USER_FUNDED_PROVIDERS`；并发仍不能超过 Server 启动时的运行时安全上限。过期 revision 返回 `GENERATION_POLICY_REVISION_CONFLICT`，而不是覆盖另一窗口的修改。
+
+`GET /projects/:id/task-admission` 是只读快照，返回 active/max concurrency、单批候选与导出时长边界、policy revision、三个值均为 0 的 paid budget facts，以及 `concurrency_limit / candidate_limit / export_duration_limit / paid_budget_exceeded / paid_provider_disabled / provider_network_disabled` 中实际命中的原因。Demo production、失败批次重试、任务 retry 和导出都会在 Server 内再次执行同一准入，因此该 GET 不能被当作预授权 token。
+
+`/systems/egress/status` 不返回 secret reference、DNS 结果、原始审计或任意请求入口。全局三通道仍默认关闭；外部 Provider 只能通过 `ProviderConnectionService` 为精确 HTTPS origin 创建受限单连接策略，没有对外的 Broker execute 接口。
+
+创建连接必须使用 `CREATE_LOCAL_PROVIDER_CONNECTION`；替换凭据使用 `REPLACE_PROVIDER_CREDENTIAL`；测试使用 `TEST_PROVIDER_CONNECTION`；更新路由使用 `UPDATE_PROVIDER_ROUTE_POLICY`。声明式 manifest 只接受固定 submit/poll/cancel 路径和终态映射，拒绝脚本、任意 header 与额外字段。旧插件 API 不接受任何安装、信任、测试或启用操作。
 
 ## Prompt / Skill / Artifact 版本契约
 
 Prompt 与 Skill 的 create、publish、restore 和 rollback 都返回新 ID/版本，不修改旧记录。Prompt 发布前必须满足变量 Schema 并存在通过的 Fake Provider `GoldenEvaluation`；Skill 还必须只包含白名单资源类型。内置 Skill 不能原地修改，fork 后的来源标记为 `user-fork`/`original-clean-room`。
 
+`polish` 只接受当前最新的项目级 Prompt revision、`expectedRevision`、用户反馈、方向和幂等键。Demo Mode 使用确定性本地规则生成中文审阅稿和英文执行稿，不调用 Provider；响应携带字段 diff、`lastKnownGoodRevisionId` 和请求 hash。相同键/相同输入返回原 revision，相同键更换输入或对过期 revision 操作返回 409，旧 draft 和已发布兜底均不会被覆盖。
+
 Artifact rollback 要求客户端传入 `expectedHeadRevision`。Server 会先校验当前 head，再在单一事务中追加 ArtifactVersion 并使用 CAS 更新 `ArtifactHead`；竞争修改返回稳定冲突错误，不会覆盖他人新版本。
 
-局部重生成只接受 `published` Prompt revision。请求必须携带目标类型、稳定目标 ID、变量和幂等键；任务输入快照会固定 Prompt revision/content hash、目标 revision 与发起时 graph revision。Event/Scene 只追加作用域 Artifact，Shot 只追加 Candidate，均不改写 canonical Event/Scene/Shot，也不覆盖 `selectedCandidateId`。相同幂等键与相同输入返回原任务；复用该键改换目标会返回 409。
+局部重生成只接受 `published` Prompt revision。请求必须携带目标类型、稳定目标 ID、变量和幂等键；任务输入快照会固定 Prompt revision/content hash、目标 revision 与发起时 graph revision。Event/Scene 生成阶段只追加作用域 Artifact，Shot 只追加 Candidate，均不会在生成响应中直接改写 canonical 数据或覆盖 `selectedCandidateId`。Scene Artifact 可以保存受 Schema 约束的 `changes` 与 `shotPatches`；只有后续调用 apply、携带 `APPLY_SCENE_PATCH`、通过 project/scene/每个 shot revision CAS 后，才在一个事务内更新 canonical Scene/Shot 并批准 Artifact。任一镜头不属于场景、revision 过期，或 duration/Beat 组合不合法时整批不落库。相同幂等键与相同输入返回原任务；复用该键改换目标会返回 409。
+
+字段级 stale 由 Server 计算并随 `changedFields` 返回：`dialogue` 仅影响 voice/subtitle/timeline/export，`videoPrompt` 不污染 image，`durationMs` 影响 subtitle/timeline/export，`beats` 影响 image/video/voice/subtitle/timeline/export；Scene title/synopsis 只传播给所属镜头。旧 Candidate、人工选择、媒体和 Artifact 历史不会被删除。
 
 ## 项目包契约
 

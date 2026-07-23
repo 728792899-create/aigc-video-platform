@@ -1,50 +1,65 @@
 # AIGC Director Studio
 
-A local-first, recoverable AI video production workspace built around domain graphs, evidence-linked story events, reviewable agents, durable tasks, and real MP4 export.
+A local-first, recoverable AIGC video production workspace. It runs without an account or cloud database and provides 16 deep-linkable workspaces for brief, script, assets, shots, continuity, generation, review, timeline, export, tasks, Prompt/Skill operations, Provider connections, and local recovery.
 
-> An independently implemented AI-director capability superset based on public behavior research and a clean-room process.
+The current product uses the dark **Obsidian Atelier** design system, a single collapsible sidebar, and one horizontal eight-stage project journey. Story, Production, and Delivery graphs remain local views of the same schema v12 canonical snapshot rather than separate navigation layers.
 
-Version 2.0 replaces the previous dashboard, phase pages, API, and database. `/studio` is the only product surface. Schema v9 persists exact Prompt/Skill revisions, CandidateBatch lineage, redacted media receipts, durable task evidence, traceable Episode → Series → Global memory, immutable AgentRun memory checkpoints, signed Provider plugin lifecycle state, and revocable Ed25519 publisher trust fingerprints. Checkpoints contain only memory IDs, hashes, source revisions, and retrieval reasons—never copied memory content.
+The single current source of truth for runtime scope, validation, and remaining release gates is the [2026-07-23 project status](docs/current-status.md).
 
-Published Prompt revisions can be pinned to one Event, Scene, or Shot. Event/Scene runs append scoped Artifacts; Shot runs append Candidates without changing the selected result or touching another scene. The task snapshot records both Prompt and target revisions, and conflicting idempotency-key reuse fails closed.
+![AIGC Director Studio project center at 1440px](docs/screenshots/v2-studio.jpg)
 
-## Quick start
+The current implementation has one collapsible desktop sidebar and one bottom navigation layer at widths up to 768px. The [Product Design runtime audit](docs/product-design-audit-2026-07-23.md) records the measured breakpoints, screenshots, and the remaining Figma-access limitation.
 
-Requirements: Node.js 24, pnpm 11, and system `ffmpeg` / `ffprobe`.
+## One-command local service
+
+Requirements: Node.js 22.20+ (24 recommended), pnpm 11, `ffmpeg`, and `ffprobe`.
 
 ```bash
 corepack enable
-pnpm install
-pnpm quality
-pnpm dev
+pnpm install --frozen-lockfile
+pnpm start
 ```
 
-Open `http://127.0.0.1:5173/studio`. Demo Mode disables provider networking and never submits a paid request.
+`pnpm start` is the user-facing entrypoint (`pnpm local` remains an alias). It builds the embedded Studio and Server, starts one production service on `127.0.0.1:33100`, creates an ephemeral local session, and opens the project hub in the default browser. Stop it with `Ctrl+C`. Data stays in the operating system application-data directory. Demo Mode is the default and never submits a paid request.
+
+For development, use `pnpm dev`. The deterministic acceptance flow is:
 
 ```bash
 pnpm test:smoke
 ```
 
-The smoke test creates a project, imports a chapter, extracts an event graph, approves an agent plan, creates shots and candidates, exports a valid MP4, restarts the service, and verifies recovery in a temporary directory.
+It creates a temporary project, imports source text, approves an Agent plan, produces candidates, injects one partial failure, retries only that failed item with idempotent replay, exports a valid MP4, restarts the service, and verifies complete recovery. Provider networking remains disabled.
 
-Current local acceptance: 148/148 workspace tests, strict type checking, lint, clean-room and security scans, valid FFmpeg output, production build, Electron preflight, package leakage scan, and packaged macOS arm64 launch smoke. Demo paid requests remain zero. Production signing/notarization, Windows clean-machine acceptance, live Provider verification, and online updater E2E remain external gates.
+## One-command Docker deployment
 
-The project switcher can export a self-contained `.aigcproj` backup and import it as an isolated copy. The package validates its manifest, schema, paths, quotas, and every media SHA-256; credentials, logs, and absolute local paths are excluded.
+```bash
+pnpm start:docker
+pnpm docker:logs
+pnpm stop:docker
+```
 
-Story Graph accepts pasted text plus `.txt`, `.md`, and `.markdown`. Files are validated as bounded UTF-8, shown as non-executable plaintext in a cancellable quarantine preview, and committed transactionally only after the user confirms the content hash and chapter list.
+Compose binds only to `127.0.0.1:33100`, runs as a non-root user with a read-only root filesystem and dropped capabilities, persists data in a named volume, and mounts Provider credentials through a read-only Docker Secret.
 
-## Stack
+Both deployment modes serve the built frontend and API from one origin and open the browser automatically; Electron is not required. See the [local Web deployment guide](docs/local-web-deployment.md) for ports, lifecycle, and data locations.
 
-- Vue 3, Pinia, Vue Router, Vue Flow, Reka UI
-- Express 5, Socket.IO, Zod, better-sqlite3
-- Electron 40 with isolated preload and encrypted credential vault
-- TypeScript strict monorepo managed by pnpm
-- Fixed-version clean-room Prompt Pack: 26 prompts, 31 skills, and 2 workflows
-- Deterministic Model Catalog, validated media resolution, batch candidate review, and revision-pinned boundary-frame continuity
-- Traceable scoped memory with source revisions, retrieval reasons, stale history, and a no-network keyword fallback
-- A default-off three-channel Egress Broker with per-hop DNS/IP validation, pinned-address transport, bounded streaming, host/path-hash audit, and host-only credential injection
-- An optional Deno 2.9.2 installer with pinned release assets, size/SHA-256/ZIP/version verification, atomic publication, and explicit confirmation; Deno is not bundled and custom plugins remain disabled
-- Atomic extraction of the last decodable video frame through system FFmpeg
-- System FFmpeg; no bundled nonfree binary
+## Provider boundary
 
-See the [Chinese README](README.md), [documentation center](docs/README.md), [architecture](docs/architecture-v2.md), and [security policy](SECURITY.md).
+- Built-in zero-key Demo Provider.
+- OpenAI-compatible HTTPS connections.
+- Declarative HTTP submit/poll/cancel manifests.
+- Per-modality primary and fallback routing, timeouts, budgets, and an immutable local cost ledger.
+- Credentials stored in the system Keychain/Credential Manager for native local service, or Docker Secrets in containers.
+- No arbitrary JavaScript, Python, or Deno Provider adapter execution. Legacy executable-plugin endpoints are tombstoned with HTTP 410.
+- Unknown remote outcomes must be reconciled before retry, preventing duplicate paid submissions.
+
+Users pay providers directly. The Studio never sells credits; it enforces user-defined local limits and records only redacted cost evidence.
+
+## Stack and status
+
+- Vue 3, Pinia, Vue Router, Vue Flow, and Reka UI.
+- Express 5, Socket.IO, Zod, better-sqlite3 schema v12.
+- Fixed-version clean-room Prompt Pack, deterministic Model Catalog, durable tasks, checkpoint recovery, and real FFmpeg MP4 export.
+- Electron 40 remains an optional development shell; signed installers, notarization, Authenticode, and automatic updates are external release gates.
+- All automated tests run with `DEMO_MODE=1` and `PROVIDER_NETWORK_DISABLED=1`; paid requests must remain zero.
+
+See the [Chinese README](README.md), [documentation center](docs/README.md), [architecture](docs/architecture-v2.md), [API reference](docs/api-v2.md), and [security design](docs/security-v2.md).

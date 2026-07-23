@@ -11,21 +11,26 @@ import {
   denoPluginCommand,
   DenoRuntimeInstallError,
   DenoRuntimeInstaller,
+  DeclarativeHttpProvider,
   EgressBroker,
   EgressBrokerError,
   FakeProvider,
+  OpenAiCompatibleProvider,
   isPublicNetworkAddress,
   isSafeBrokerUrl,
   parseProviderPluginRpcLine,
   parseProviderPluginRpcMessageLine,
   ProviderPluginProcessError,
   ProviderPluginProcessSupervisor,
+  ProviderExecutionError,
+  ProviderRouter,
   providerPluginSignaturePayload,
   resolveDenoRuntimeArtifact,
   verifyProviderPluginBundle,
   type EgressRuntimePolicy,
   type EgressTransportResponse,
   type PluginChildProcess,
+  type ProviderAdapter,
 } from '../src/index.js'
 
 async function runtimeZip(entries: ReadonlyArray<{ name: string; body: string }>): Promise<Buffer> {
@@ -67,6 +72,131 @@ const brokerRequest = (): EgressRequestDescriptor => ({
 })
 
 describe('Provider 安全契约', () => {
+  it('OpenAI-compatible 只通过 Broker 注入凭据并解析文本响应', async () => {
+    const transport = vi.fn(async (request: { headers: Record<string, string>; body?: Uint8Array }) => {
+      expect(request.headers.authorization).toBe('Bearer provider-secret')
+      expect(JSON.parse(Buffer.from(request.body ?? []).toString('utf8'))).toMatchObject({ model: 'text-model' })
+      return transportResponse(200, { 'content-type': 'application/json' }, [JSON.stringify({ choices: [{ message: { content: '结构化结果' } }], usage: { total_tokens: 12 } })])
+    })
+    const broker = new EgressBroker({
+      policies: [{ ...brokerPolicy, maxResponseBytes: 1024 }], testNetworkEnabled: true, resolveHost: async () => ['8.8.8.8'],
+      resolveSecret: async () => 'provider-secret', transport,
+    })
+    const adapter = new OpenAiCompatibleProvider({ id: 'relay.test', endpointOrigin: 'https://api.example.com/', broker })
+    const result = await adapter.execute({ model: 'text-model', prompt: '生成结果', modality: 'text' }, {
+      projectId: crypto.randomUUID(), taskId: crypto.randomUUID(), outputDirectory: '/tmp', signal: new AbortController().signal,
+    })
+    expect(result).toMatchObject({ provider: 'relay.test', text: '结构化结果', metadata: { billed: 'provider-account', protocol: 'openai-compatible', usage: { total_tokens: 12 } } })
+    expect(JSON.stringify(result)).not.toContain('provider-secret')
+  })
+
+  it('OpenAI-compatible 验证 Base64 媒体类型并以幂等文件落盘', async () => {
+    const output = await mkdtemp(join(tmpdir(), 'director-openai-compatible-'))
+    const png = Buffer.concat([Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]), Buffer.from('offline-test')])
+    const broker = new EgressBroker({
+      policies: [brokerPolicy], testNetworkEnabled: true, resolveHost: async () => ['8.8.8.8'], resolveSecret: async () => 'provider-secret',
+      transport: async () => transportResponse(200, { 'content-type': 'application/json' }, [JSON.stringify({ data: [{ b64_json: png.toString('base64') }] })]),
+    })
+    const adapter = new OpenAiCompatibleProvider({ id: 'relay.image', endpointOrigin: 'https://api.example.com/', broker })
+    const context = { projectId: crypto.randomUUID(), taskId: crypto.randomUUID(), outputDirectory: output, signal: new AbortController().signal }
+    const result = await adapter.execute({ model: 'image-model', prompt: '原创画面', modality: 'image' }, context)
+    expect(result.media).toMatchObject({ mime: 'image/png', locator: `${context.taskId}.png`, size: png.length })
+    expect(await readFile(join(output, result.media?.locator ?? ''))).toEqual(png)
+  })
+
+  it('外部协议将限流、异常格式和提交结果未知映射为稳定语义', async () => {
+    const createAdapter = (response: EgressTransportResponse) => new OpenAiCompatibleProvider({
+      id: 'relay.errors', endpointOrigin: 'https://api.example.com/', broker: new EgressBroker({
+        policies: [brokerPolicy], testNetworkEnabled: true, resolveHost: async () => ['8.8.8.8'], resolveSecret: async () => 'provider-secret', transport: async () => response,
+      }),
+    })
+    const context = { projectId: crypto.randomUUID(), taskId: crypto.randomUUID(), outputDirectory: '/tmp', signal: new AbortController().signal }
+    await expect(createAdapter(transportResponse(429, { 'content-type': 'application/json' }, ['{}'])).execute({ model: 'm', prompt: 'p', modality: 'text' }, context))
+      .rejects.toMatchObject({ code: 'PROVIDER_RATE_LIMITED', retryable: true, outcomeKnown: true })
+    await expect(createAdapter(transportResponse(200, { 'content-type': 'application/json' }, ['{"choices":[]}'])).execute({ model: 'm', prompt: 'p', modality: 'text' }, context))
+      .rejects.toMatchObject({ code: 'PROVIDER_RESPONSE_INVALID', retryable: false, outcomeKnown: true })
+    await expect(createAdapter(transportResponse(503, { 'content-type': 'application/json' }, ['{}'])).execute({ model: 'm', prompt: 'p', modality: 'text' }, context))
+      .rejects.toMatchObject({ code: 'PROVIDER_OUTCOME_UNKNOWN', retryable: false, outcomeKnown: false })
+  })
+
+  it('声明式 HTTP 只提交固定 JSON，异步任务携带远端 ID 并强制先对账', async () => {
+    const responses = [
+      transportResponse(202, { 'content-type': 'application/json' }, ['{"job":"remote-123","state":"queued"}']),
+      transportResponse(200, { 'content-type': 'application/json' }, ['{"state":"done","output":"ready"}']),
+      transportResponse(202, { 'content-type': 'application/json' }, ['{}']),
+    ]
+    const transport = vi.fn(async () => responses.shift()!)
+    const policy: EgressRuntimePolicy = { ...brokerPolicy, allowedMethods: ['GET', 'POST'], maxResponseBytes: 1024 }
+    const adapter = new DeclarativeHttpProvider({
+      id: 'relay.declarative', endpointOrigin: 'https://api.example.com/',
+      broker: new EgressBroker({ policies: [policy], testNetworkEnabled: true, resolveHost: async () => ['8.8.8.8'], resolveSecret: async () => 'provider-secret', transport }),
+      manifest: {
+        version: 1,
+        submit: { method: 'POST', path: '/jobs', response: { jobId: 'job', status: 'state' } },
+        poll: { method: 'GET', pathTemplate: '/jobs/{jobId}', response: { status: 'state', outputUrl: 'output' } },
+        cancel: { method: 'POST', pathTemplate: '/jobs/{jobId}/cancel' },
+        terminalStates: { succeeded: ['done'], failed: ['failed'] },
+      },
+    })
+    const context = { projectId: crypto.randomUUID(), taskId: crypto.randomUUID(), outputDirectory: '/tmp', signal: new AbortController().signal }
+    await expect(adapter.execute({ model: 'remote-image', prompt: '受限声明式任务', modality: 'image' }, context))
+      .rejects.toMatchObject({ code: 'PROVIDER_OUTCOME_UNKNOWN', outcomeKnown: false, providerTaskId: 'remote-123' })
+    const reconciled = await adapter.reconcile?.('remote-123', context)
+    expect(reconciled).toMatchObject({ status: 'succeeded', result: { providerTaskId: 'remote-123' } })
+    await expect(adapter.cancel?.('remote-123', context)).resolves.toEqual({ status: 'requested' })
+    expect(JSON.stringify(reconciled)).not.toContain('provider-secret')
+  })
+
+  it('路由只在结果已知且可重试时降级，未知结果必须先对账', async () => {
+    const calls: string[] = []
+    const retryable = {
+      id: 'retryable', models: [],
+      execute: async () => { calls.push('retryable'); throw new ProviderExecutionError('PROVIDER_RATE_LIMITED', true, true) },
+    }
+    const fallback = {
+      id: 'fallback', models: [],
+      execute: async (input: { model: string }) => { calls.push('fallback'); return { provider: 'fallback', model: input.model, text: 'ok', metadata: { billed: false } } },
+    }
+    const fallbackConnectionId = crypto.randomUUID()
+    const route = {
+      modality: 'text' as const, primaryConnectionId: crypto.randomUUID(), fallbackConnectionIds: [fallbackConnectionId],
+      fallbackConnectionModels: { [fallbackConnectionId]: 'fallback-text-v2' }, model: 'text-v1', maxAttempts: 2, timeoutMs: 20_000,
+    }
+    const adapters = new Map<string, ProviderAdapter>([[route.primaryConnectionId, retryable], [route.fallbackConnectionIds[0]!, fallback]])
+    const routed = new ProviderRouter((id) => adapters.get(id))
+    const result = await routed.execute(route, { prompt: 'demo', modality: 'text' }, {
+      projectId: crypto.randomUUID(), taskId: crypto.randomUUID(), outputDirectory: '/tmp', signal: new AbortController().signal,
+    })
+    expect(result).toMatchObject({ provider: 'fallback', model: 'fallback-text-v2', metadata: { fallbackCount: 1 } })
+    expect(calls).toEqual(['retryable', 'fallback'])
+
+    calls.length = 0
+    const unknown = { ...retryable, execute: async () => { calls.push('unknown'); throw new ProviderExecutionError('PROVIDER_OUTCOME_UNKNOWN', true, false) } }
+    const blocked = new ProviderRouter((id) => id === route.primaryConnectionId ? unknown : fallback)
+    await expect(blocked.execute(route, { prompt: 'demo', modality: 'text' }, {
+      projectId: crypto.randomUUID(), taskId: crypto.randomUUID(), outputDirectory: '/tmp', signal: new AbortController().signal,
+    })).rejects.toMatchObject({ code: 'PROVIDER_RECONCILE_REQUIRED' })
+    expect(calls).toEqual(['unknown'])
+  })
+
+  it('路由超时会中止当前适配器并要求对账，不会盲目执行降级链', async () => {
+    const primaryId = crypto.randomUUID()
+    const fallbackId = crypto.randomUUID()
+    const fallback = vi.fn(async (input: { model: string }) => ({ provider: 'fallback', model: input.model, text: 'should-not-run', metadata: {} }))
+    const router = new ProviderRouter((id) => id === primaryId ? {
+      id: 'slow', models: [], execute: async (_input, context) => await new Promise((_resolve, reject) => {
+        context.signal.addEventListener('abort', () => reject(new DOMException('timeout', 'AbortError')), { once: true })
+      }),
+    } : { id: 'fallback', models: [], execute: fallback })
+    await expect(router.execute({
+      modality: 'text', primaryConnectionId: primaryId, fallbackConnectionIds: [fallbackId],
+      model: 'slow-v1', maxAttempts: 2, timeoutMs: 5,
+    }, { prompt: 'timeout', modality: 'text' }, {
+      projectId: crypto.randomUUID(), taskId: crypto.randomUUID(), outputDirectory: '/tmp', signal: new AbortController().signal,
+    })).rejects.toMatchObject({ code: 'PROVIDER_RECONCILE_REQUIRED', outcomeKnown: false, providerId: primaryId })
+    expect(fallback).not.toHaveBeenCalled()
+  })
+
   it('Demo Provider 无密钥、无网络地产生可审计候选', async () => {
     const output = await mkdtemp(join(tmpdir(), 'director-provider-'))
     const result = await new FakeProvider().execute(
@@ -75,6 +205,20 @@ describe('Provider 安全契约', () => {
     )
     expect(result.metadata).toMatchObject({ demo: true, billed: false })
     expect(await readFile(join(output, result.media?.locator ?? ''), 'utf8')).toContain('Demo local candidate')
+  })
+
+  it('优先复制经过清单验证的原创 Demo 素材且保持零计费', async () => {
+    const output = await mkdtemp(join(tmpdir(), 'director-provider-output-'))
+    const assets = await mkdtemp(join(tmpdir(), 'director-provider-assets-'))
+    const original = Buffer.from('original-demo-png')
+    await writeFile(join(assets, 'candidate-01.png'), original)
+    const result = await new FakeProvider(assets).execute(
+      { model: 'demo-frame-v1', prompt: '使用原创视觉', modality: 'image' },
+      { projectId: crypto.randomUUID(), taskId: crypto.randomUUID(), outputDirectory: output, signal: new AbortController().signal },
+    )
+    expect(result.media).toMatchObject({ mime: 'image/png', size: original.length })
+    expect(await readFile(join(output, result.media?.locator ?? ''))).toEqual(original)
+    expect(result.metadata).toMatchObject({ demo: true, billed: false, demoAsset: 'candidate-01.png' })
   })
 
   it('按顺序消费首尾帧快照且不支持时 fail fast', async () => {

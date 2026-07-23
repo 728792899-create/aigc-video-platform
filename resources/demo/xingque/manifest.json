@@ -1,0 +1,25 @@
+{
+  "collection": "星阙回声",
+  "version": 1,
+  "generatedAt": "2026-07-21",
+  "licenseStatus": "original-project-asset",
+  "restrictions": ["no-text", "no-logo", "no-watermark", "no-third-party-ui"],
+  "assets": [
+    { "file": "hero-archive-discovery.png", "role": "hero", "width": 1672, "height": 941, "sha256": "3d4c9580d5c6f60bc833657fc831ad97eb077c475a682bae9a4c4184c720bebb", "source": "GPT built-in ImageGen", "reference": "Figma 14:123" },
+    { "file": "character-su-ling.png", "role": "character-master", "width": 1024, "height": 1536, "sha256": "17f056e4e058e0207a706b6f7f635772f2084409570834dcc94513a0bdcd105c", "source": "Figma export", "reference": "14:123" },
+    { "file": "character-xuan-ge.png", "role": "character-master", "width": 864, "height": 1821, "sha256": "64e6875ba739cefd6a9832d5cfc836aeb7608713da64443b112d833776d031c9", "source": "Figma export", "reference": "14:123" },
+    { "file": "character-lingwei.png", "role": "character-master", "width": 1024, "height": 1536, "sha256": "5f1aded12c61919d5144d093f5a7b5eb2094ce732e475a636924e4777e86ecd8", "source": "Figma export", "reference": "14:123" },
+    { "file": "location-archive-tower.png", "role": "location-master", "width": 1536, "height": 1024, "sha256": "308a1c2b068278d9f2c8df6336920be6ce25b9964e623200d691b681b28c45f5", "source": "Figma export", "reference": "14:123" },
+    { "file": "location-cloudsea-market.png", "role": "location-master", "width": 1536, "height": 1024, "sha256": "5abf26843d6d62886ca4986836e7435579632777a0a836589f5b43f9820a77c7", "source": "Figma export", "reference": "14:123" },
+    { "file": "prop-sinan-star-core.png", "role": "prop-master", "width": 1536, "height": 1024, "sha256": "ae7f8cfc2c75410acaaf45d172ab7589dcc66a8232bf504209a12be65d088984", "source": "Figma export", "reference": "14:123" },
+    { "file": "candidate-01.png", "role": "candidate", "width": 941, "height": 1672, "sha256": "bfeda8b454cab1893fdbcc17e633956edaff9728ce126809363993edb663fcc1", "source": "Figma export", "reference": "19:2" },
+    { "file": "candidate-02.png", "role": "candidate", "width": 941, "height": 1672, "sha256": "c19dc54300fd3eb5c1c0cdf5c0244eb95322d949bdf73d79fad33c0f8cbdf154", "source": "Figma export", "reference": "19:2" },
+    { "file": "candidate-03.png", "role": "candidate", "width": 941, "height": 1672, "sha256": "8a8dafe6eaa8d2d484ed52f8da54a33c1aa9daed88d95c863d6d5058ec190cc2", "source": "Figma export", "reference": "19:2" },
+    { "file": "storyboard-01.png", "role": "storyboard", "width": 941, "height": 1672, "sha256": "779b46e8ea0408f329db0057e01a260d1e256edb8140d06776379ed619afd368", "source": "Figma export", "reference": "14:184" },
+    { "file": "storyboard-02.png", "role": "storyboard", "width": 941, "height": 1672, "sha256": "addec02b7cc2e41bfdaad053440b5155832dbfaac89072a78a800d62c10a47ab", "source": "Figma export", "reference": "16:2" },
+    { "file": "storyboard-03.png", "role": "storyboard", "width": 941, "height": 1672, "sha256": "d0b6b6d7ccbc2a672f1b501b096ddcadaa1e25b6e877019d418e09eec5fc3305", "source": "Figma export", "reference": "16:2" },
+    { "file": "storyboard-04.png", "role": "storyboard", "width": 941, "height": 1672, "sha256": "7ac49be118ae5c2b3047daa5faff6d6cd3465372e5bfbb4181e86f150483889a", "source": "Figma export", "reference": "16:2" },
+    { "file": "storyboard-05.png", "role": "storyboard", "width": 941, "height": 1672, "sha256": "e53343dc32da6ef2362cfed363adf2b060ec915054b71756d712e69e7ec77f03", "source": "Figma export", "reference": "19:55" },
+    { "file": "storyboard-06.png", "role": "storyboard", "width": 1672, "height": 941, "sha256": "0472fc8694580046c295cdc8ac78d70804d9c7389e845f12bcd9d2e7e408675f", "source": "GPT built-in ImageGen", "reference": "Figma 14:123" }
+  ]
+}

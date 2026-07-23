@@ -48,6 +48,40 @@ describe('Prompt、Artifact 与 Skill 版本运营', () => {
     expect(database.getPromptRevision(first.id)?.status).toBe('draft')
   })
 
+  it('项目 Prompt 润色固定父 revision、幂等复用并保留 last-known-good', () => {
+    const project = database.createProject({ name: 'Prompt 润色' })
+    const draft = service.createPromptRevision({
+      projectId: project.id, stableKey: 'script.project-polish', title: '项目场景 Prompt', role: 'execution',
+      languageDrafts: { original: '写 {{topic}}', zhReview: '写 {{topic}}', enExecution: 'Write {{topic}}' },
+      variablesSchema: { type: 'object', properties: { topic: { type: 'string' } }, required: ['topic'] },
+      outputSchema: { type: 'object', required: ['scene'] }, source: 'project-override',
+    })
+    service.evaluateGolden({
+      targetType: 'prompt', targetVersionId: draft.id, name: '结构输出', input: { topic: '雨夜' },
+      expectedSchema: { required: ['scene'] }, fakeOutput: { scene: { title: '相遇' } },
+    })
+    const published = service.publishPrompt(draft.id)
+    const input = {
+      expectedRevision: published.revision,
+      feedback: '保留原始约束，并强化空间调度',
+      direction: 'cinematic' as const,
+      idempotencyKey: 'prompt-polish-service-0001',
+    }
+    const polished = service.polishPrompt(published.id, input)
+    expect(polished).toMatchObject({
+      sourceRevisionId: published.id,
+      revision: { revision: published.revision + 1, parentRevisionId: published.id, status: 'draft' },
+      lastKnownGoodRevisionId: published.id,
+      mode: 'demo-deterministic',
+      reused: false,
+    })
+    expect(polished.diff.changes.map((change) => change.field)).toEqual(expect.arrayContaining(['zhReview', 'enExecution', 'feedback', 'modelPolicy', 'status']))
+    expect(polished.revision.languageDrafts.zhReview).toContain(input.feedback)
+    expect(service.polishPrompt(published.id, input)).toMatchObject({ revision: { id: polished.revision.id }, reused: true })
+    expect(() => service.polishPrompt(published.id, { ...input, feedback: '不同输入' })).toThrow('PROMPT_POLISH_IDEMPOTENCY_CONFLICT')
+    expect(() => service.polishPrompt(published.id, { ...input, idempotencyKey: 'prompt-polish-service-0002' })).toThrow('PROMPT_REVISION_CONFLICT')
+  })
+
   it('Artifact rollback 追加新版本并用 CAS 更新 head', () => {
     const project = database.createProject({ name: 'Artifact 项目' })
     const now = new Date().toISOString()

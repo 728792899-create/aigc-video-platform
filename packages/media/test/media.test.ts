@@ -20,7 +20,15 @@ describe('媒体导出', () => {
     const result = await exportProjectVideo({ projectId, outputDirectory: directory, fileName: 'demo.mp4', width: 320, height: 320, fps: 12 }, [shot])
     const probe = await probeMedia(result.outputPath)
     expect(result.media.mime).toBe('video/mp4')
+    expect(['h264', 'mpeg4']).toContain(result.videoCodec)
+    expect(result.audioCodec).toBe('aac')
     expect(probe.durationSeconds).toBeGreaterThan(0.5)
+    const assembled = await exportProjectVideo(
+      { projectId, outputDirectory: directory, fileName: 'selected-visual.mp4', width: 320, height: 320, fps: 12 },
+      [shot],
+      { visualInputs: [{ path: result.outputPath, kind: 'video' }] },
+    )
+    expect((await probeMedia(assembled.outputPath)).durationSeconds).toBeGreaterThan(0.5)
   }, 30_000)
 
   it('从最后可解码视频帧原子发布 PNG，失败时不留下半成品', async () => {

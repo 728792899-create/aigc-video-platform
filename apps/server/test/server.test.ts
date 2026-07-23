@@ -1,15 +1,17 @@
-import { createHash, generateKeyPairSync, sign } from 'node:crypto'
-import { mkdtemp } from 'node:fs/promises'
+import { createHash } from 'node:crypto'
+import { mkdir, mkdtemp, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import { afterEach, beforeEach, describe, expect, it } from 'vitest'
-import { CandidateSchema, type AgentRunCheckpoint, type ExecutionPlan, type GenerationTask, type GraphProjection, type Project, type ProjectPackageImportReport, type ProjectSnapshot, type ProviderPluginRecord, type ProviderPublisherTrust, type SourceImportPreview } from '@aigc-director/contracts'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
+import { CandidateSchema, type AgentRunCheckpoint, type ExecutionPlan, type ExportPreflight, type ExportRequest, type GenerationTask, type GraphProjection, type Project, type ProjectPackageImportReport, type ProjectSnapshot, type ProviderConnection, type ProviderConnectionTestReport, type ProviderRoutePolicy, type SourceImportPreview } from '@aigc-director/contracts'
 import { createDemoPackProvider } from '@aigc-director/agents'
-import { DenoRuntimeInstallError, providerPluginSignaturePayload, resolveDenoRuntimeArtifact } from '@aigc-director/providers'
+import { ProviderRouter, type ProviderAdapter } from '@aigc-director/providers'
 import { createDirectorApp } from '../src/http/app.js'
+import { InMemoryCredentialVault } from '../src/services/credentialVault.js'
 import { inject, jsonBody, multipartFile, type InjectResponse } from './http-inject.js'
 
 const token = 'server-test-session-token-with-enough-entropy'
+const bootstrapToken = 'server-test-bootstrap-token-with-enough-entropy'
 const auth = { authorization: `Bearer ${token}` }
 type TestRuntime = ReturnType<typeof createDirectorApp>
 
@@ -31,28 +33,24 @@ async function api<T = unknown>(
   })
 }
 
+async function prepareAndStartExport(runtime: TestRuntime, request: ExportRequest): Promise<{
+  preflight: InjectResponse<{ data: ExportPreflight }>
+  task: InjectResponse<{ data: GenerationTask }>
+}> {
+  const preflight = await api<{ data: ExportPreflight }>(runtime, 'POST', '/api/v2/exports/preflight', request)
+  const task = await api<{ data: GenerationTask }>(runtime, 'POST', '/api/v2/exports', {
+    preflightId: preflight.body.data.id,
+    approvalToken: preflight.body.data.approvalToken,
+    confirmation: 'START_LOCAL_EXPORT',
+  })
+  return { preflight, task }
+}
+
 function stopRuntime(runtime: TestRuntime): void {
   runtime.io.disconnectSockets(true)
   runtime.io.removeAllListeners()
   runtime.httpServer.removeAllListeners()
   runtime.db.close()
-}
-
-function signedPluginRequest() {
-  const bundle = Buffer.from('export const plugin = { apiVersion: 1 }\n', 'utf8')
-  const { publicKey, privateKey } = generateKeyPairSync('ed25519')
-  const unsigned = {
-    id: 'provider.api-test', version: '1.0.0', apiVersion: 1 as const, displayName: 'API test provider',
-    publisherKeyId: 'publisher.api-test', bundleSha256: createHash('sha256').update(bundle).digest('hex'),
-    channels: ['model-api' as const], runtime: { name: 'deno' as const, version: '2.9.2' as const },
-  }
-  return {
-    request: {
-      manifest: { ...unsigned, signature: sign(null, providerPluginSignaturePayload(unsigned), privateKey).toString('base64') },
-      bundleBase64: bundle.toString('base64'),
-    },
-    trusted: { 'publisher.api-test': publicKey.export({ type: 'spki', format: 'pem' }).toString() },
-  }
 }
 
 describe('AIGC 导演工作室 API v2', () => {
@@ -63,10 +61,15 @@ describe('AIGC 导演工作室 API v2', () => {
 
   beforeEach(async () => {
     directory = await mkdtemp(join(tmpdir(), 'aigc-director-server-'))
+    const studioDirectory = join(directory, 'studio')
+    await mkdir(studioDirectory)
+    await writeFile(join(studioDirectory, 'index.html'), '<!doctype html><title>AIGC Director Studio</title>')
     taskEvents = []
     unhandledErrors = []
     runtime = createDirectorApp({
       databasePath: join(directory, 'director.sqlite'), dataDirectory: directory, sessionToken: token,
+      bootstrapToken,
+      studioDirectory,
       onTaskEvent: ({ task }) => taskEvents.push(task),
       onUnhandledError: (error) => unhandledErrors.push(error),
     })
@@ -75,164 +78,210 @@ describe('AIGC 导演工作室 API v2', () => {
   afterEach(() => stopRuntime(runtime))
 
   it('旧接口返回 404，新接口要求本地会话', async () => {
+    const root = await inject(runtime.app, { method: 'GET', path: '/' })
+    expect(root.status).toBe(302)
+    expect(root.headers.location).toBe('/studio?workspace=project_center')
+    const rootSetCookie = root.headers['set-cookie']
+    const rootCookie = (Array.isArray(rootSetCookie) ? rootSetCookie[0] : String(rootSetCookie)) ?? ''
+    expect(rootCookie).toContain('aigc_director_session=')
+    expect(rootCookie).toContain('HttpOnly')
+    expect(rootCookie).toContain('SameSite=Strict')
+    const studio = await inject(runtime.app, { method: 'GET', path: '/studio' })
+    expect(studio.status).toBe(200)
+    expect(studio.text).toContain('AIGC Director Studio')
     const health = await api(runtime, 'GET', '/api/v2/health', undefined, false)
     expect(health.status).toBe(200)
     expect(health.headers['content-security-policy']).toContain("default-src 'none'")
+    expect(health.headers['cache-control']).toBe('no-store')
     expect(runtime.io.of('/studio-v2').name).toBe('/studio-v2')
     expect((await api(runtime, 'GET', '/api/v2/projects', undefined, false)).status).toBe(401)
     expect((await api(runtime, 'GET', '/api/projects', undefined, false)).status).toBe(404)
   })
 
-  it('Deno 运行时默认只读且网络关闭时拒绝安装', async () => {
-    const status = await api<{ data: Record<string, unknown> }>(runtime, 'GET', '/api/v2/provider-plugins/runtime')
-    expect(status.status).toBe(200)
-    expect(status.body.data).toMatchObject({ version: '2.9.2', state: 'not-installed', networkDisabled: true, installAllowed: false })
-    expect(JSON.stringify(status.body.data)).not.toContain(directory)
-    expect((await api(runtime, 'POST', '/api/v2/provider-plugins/runtime/install', { confirmation: 'yes' })).status).toBe(400)
-    const blocked = await api<{ error: { code: string } }>(runtime, 'POST', '/api/v2/provider-plugins/runtime/install', { confirmation: 'INSTALL_DENO_2.9.2' })
-    expect(blocked.status).toBe(403)
-    expect(blocked.body.error.code).toBe('PROVIDER_NETWORK_DISABLED')
+  it('一次性引导令牌只能换取 HttpOnly Cookie 一次，且写操作要求同源 CSRF', async () => {
+    const bootstrap = await inject(runtime.app, {
+      method: 'GET',
+      path: `/local-session/bootstrap?token=${encodeURIComponent(bootstrapToken)}&return=${encodeURIComponent('/studio?workspace=project_center')}`,
+    })
+    expect(bootstrap.status).toBe(303)
+    expect(bootstrap.headers.location).toBe('/studio?workspace=project_center')
+    const rawSetCookie = bootstrap.headers['set-cookie']
+    const setCookie = (Array.isArray(rawSetCookie) ? rawSetCookie[0] : String(rawSetCookie)) ?? ''
+    expect(setCookie).toContain('aigc_director_session=')
+    expect(setCookie).toContain('HttpOnly')
+    expect(setCookie).toContain('SameSite=Strict')
+    expect(setCookie).toContain('Path=/')
+    const cookie = setCookie.split(';', 1)[0] ?? ''
+
+    const replay = await inject(runtime.app, {
+      method: 'GET', path: `/local-session/bootstrap?token=${encodeURIComponent(bootstrapToken)}`,
+    })
+    expect(replay.status).toBe(404)
+
+    const session = await inject<{ data: { authMode: string; csrfToken: string } }>(runtime.app, {
+      method: 'GET', path: '/api/v2/session', headers: { cookie },
+    })
+    expect(session.status).toBe(200)
+    expect(session.body.data.authMode).toBe('cookie')
+    expect(session.body.data.csrfToken).toHaveLength(43)
+
+    const projectPayload = jsonBody({ name: '同源 Cookie 项目' })
+    const missingCsrf = await inject(runtime.app, {
+      method: 'POST', path: '/api/v2/projects', headers: { cookie, ...projectPayload.headers }, body: projectPayload.body,
+    })
+    expect(missingCsrf.status).toBe(403)
+
+    const wrongOrigin = await inject(runtime.app, {
+      method: 'POST', path: '/api/v2/projects',
+      headers: { cookie, origin: 'https://attacker.invalid', 'x-csrf-token': session.body.data.csrfToken, ...projectPayload.headers },
+      body: projectPayload.body,
+    })
+    expect(wrongOrigin.status).toBe(403)
+
+    const created = await inject<{ data: Project }>(runtime.app, {
+      method: 'POST', path: '/api/v2/projects',
+      headers: { cookie, origin: 'http://127.0.0.1:5173', 'x-csrf-token': session.body.data.csrfToken, ...projectPayload.headers },
+      body: projectPayload.body,
+    })
+    expect(created.status).toBe(201)
+    expect(created.body.data.name).toBe('同源 Cookie 项目')
   })
 
-  it('Deno 安装 API 只有精确确认后才调用注入式安装器', async () => {
-    const artifact = resolveDenoRuntimeArtifact(process.platform, process.arch)
-    let installed = false
-    let installCalls = 0
-    const installedAt = new Date().toISOString()
-    const receipt = {
-      version: artifact.version, platform: artifact.platform, arch: artifact.arch, assetName: artifact.assetName,
-      archiveSha256: artifact.sha256, binarySha256: 'b'.repeat(64), executablePath: join(directory, 'private-deno'), installedAt, reused: false,
+  it('Provider Marketplace 不回传凭据，零网络测试不发起请求，路由仅接受 ready 连接', async () => {
+    const vault = new InMemoryCredentialVault()
+    const isolated = createDirectorApp({
+      databasePath: join(directory, 'provider-connections.sqlite'), dataDirectory: join(directory, 'provider-connections'),
+      sessionToken: token, credentialVault: vault, providerNetworkDisabled: true,
+    })
+    try {
+      const initial = await api<{ data: ProviderConnection[] }>(isolated, 'GET', '/api/v2/provider-connections')
+      const demo = initial.body.data.find((connection) => connection.protocol === 'demo-local')
+      expect(demo).toMatchObject({ state: 'ready', credentialConfigured: false, capabilities: ['text', 'image', 'video', 'audio'] })
+      if (!demo) throw new Error('TEST_DEMO_PROVIDER_MISSING')
+
+      const secret = 'demo-provider-secret-never-return'
+      const created = await api<{ data: ProviderConnection }>(isolated, 'POST', '/api/v2/provider-connections', {
+        displayName: '主图像中继', protocol: 'openai-compatible', endpointOrigin: 'https://relay.example.com/',
+        credentialKey: 'image-relay-primary', credential: secret, capabilities: ['image'],
+        confirmation: 'CREATE_LOCAL_PROVIDER_CONNECTION',
+      })
+      expect(created.status).toBe(201)
+      expect(created.body.data).toMatchObject({ credentialRef: 'keychain:image-relay-primary', credentialConfigured: true, state: 'draft', revision: 1 })
+      expect(JSON.stringify(created.body)).not.toContain(secret)
+
+      const checked = await api<{ data: ProviderConnectionTestReport }>(isolated, 'POST', `/api/v2/provider-connections/${created.body.data.id}/test`, {
+        expectedRevision: 1, confirmation: 'TEST_PROVIDER_CONNECTION',
+      })
+      expect(checked.body.data).toMatchObject({ outcome: 'network_disabled', connection: { state: 'draft', revision: 2 } })
+      expect(JSON.stringify(checked.body)).not.toContain(secret)
+
+      const project = (await api<{ data: Project }>(isolated, 'POST', '/api/v2/projects', { name: 'Provider 路由项目' })).body.data
+      const rejected = await api(isolated, 'PUT', `/api/v2/projects/${project.id}/provider-route`, {
+        expectedRevision: 0, routes: [{ modality: 'image', primaryConnectionId: created.body.data.id, fallbackConnectionIds: [], model: 'image-v1', maxAttempts: 2, timeoutMs: 60_000 }],
+        dailyBudgetMicros: 0, currency: 'USD', confirmation: 'UPDATE_PROVIDER_ROUTE_POLICY',
+      })
+      expect(rejected.status).toBe(409)
+
+      const routed = await api<{ data: ProviderRoutePolicy }>(isolated, 'PUT', `/api/v2/projects/${project.id}/provider-route`, {
+        expectedRevision: 0, routes: [{ modality: 'image', primaryConnectionId: demo.id, fallbackConnectionIds: [], model: 'demo-image-v1', maxAttempts: 2, timeoutMs: 60_000 }],
+        dailyBudgetMicros: 0, currency: 'USD', confirmation: 'UPDATE_PROVIDER_ROUTE_POLICY',
+      })
+      expect(routed.status).toBe(200)
+      expect(routed.body.data).toMatchObject({ revision: 1, dailyBudgetMicros: 0 })
+      expect((await api<{ data: unknown[] }>(isolated, 'GET', `/api/v2/projects/${project.id}/provider-costs`)).body.data).toEqual([])
+    } finally { stopRuntime(isolated) }
+  })
+
+  it('用户自付候选经过显式预算、路由与二次确认，测试全过程不访问网络', async () => {
+    const vault = new InMemoryCredentialVault()
+    const adapterExecute = vi.fn<ProviderAdapter['execute']>(async (input, context) => ({
+      provider: 'mock-external', model: input.model,
+      media: {
+        id: crypto.randomUUID(), projectId: context.projectId, kind: 'image', storage: 'managed-file',
+        locator: `${context.taskId}.png`, mime: 'image/png', size: 16, sha256: 'a'.repeat(64), createdAt: new Date().toISOString(),
+      },
+      metadata: { billed: 'provider-account' },
+    }))
+    const adapter: ProviderAdapter = { id: 'mock-external', models: [], execute: adapterExecute }
+    let connectionId = ''
+    const isolated = createDirectorApp({
+      databasePath: join(directory, 'provider-paid-route.sqlite'), dataDirectory: join(directory, 'provider-paid-route'),
+      sessionToken: token, credentialVault: vault, providerNetworkDisabled: false,
+      providerConnectionProbe: { test: async (): Promise<'ready'> => 'ready' },
+      providerRouter: new ProviderRouter((id) => id === connectionId ? adapter : undefined),
+    })
+    try {
+      const createdConnection = await api<{ data: ProviderConnection }>(isolated, 'POST', '/api/v2/provider-connections', {
+        displayName: '无网络测试连接', protocol: 'openai-compatible', endpointOrigin: 'https://relay.example.com/',
+        credentialKey: 'paid-route-test', credential: 'test-secret-never-return', capabilities: ['image'],
+        confirmation: 'CREATE_LOCAL_PROVIDER_CONNECTION',
+      })
+      connectionId = createdConnection.body.data.id
+      const tested = await api<{ data: ProviderConnectionTestReport }>(isolated, 'POST', `/api/v2/provider-connections/${connectionId}/test`, {
+        expectedRevision: 1, confirmation: 'TEST_PROVIDER_CONNECTION',
+      })
+      expect(tested.body.data.outcome).toBe('ready')
+
+      const project = (await api<{ data: Project }>(isolated, 'POST', '/api/v2/projects', { name: '用户自付路由测试' })).body.data
+      const timestamp = new Date().toISOString()
+      const shotId = crypto.randomUUID()
+      isolated.db.put('shots', project.id, {
+        id: shotId, projectId: project.id, sceneId: crypto.randomUUID(), title: '外部候选镜头', description: '仅使用注入式 Mock 验证。',
+        dialogue: '', visualPrompt: '原创星阙档案塔', videoPrompt: '', negativePrompt: '', durationMs: 3000,
+        beats: [], boundaryFrames: [], ordinal: 0, revision: 1, staleFields: [], createdAt: timestamp, updatedAt: timestamp,
+      })
+      const route = await api<{ data: ProviderRoutePolicy }>(isolated, 'PUT', `/api/v2/projects/${project.id}/provider-route`, {
+        expectedRevision: 0,
+        routes: [{ modality: 'image', primaryConnectionId: connectionId, fallbackConnectionIds: [], model: 'image-test-v1', maxAttempts: 1, timeoutMs: 30_000 }],
+        dailyBudgetMicros: 1_000_000, currency: 'USD', confirmation: 'UPDATE_PROVIDER_ROUTE_POLICY',
+      })
+      expect(route.status).toBe(200)
+      const policy = await api<{ data: { revision: number } }>(isolated, 'PUT', `/api/v2/projects/${project.id}/generation-policy`, {
+        expectedRevision: 0, billingMode: 'user-funded', dailyPaidBudgetMicros: 1_000_000,
+        maxConcurrentTasks: 4, maxCandidatesPerBatch: 4, maxExportDurationMs: 3_600_000,
+        confirmation: 'ENABLE_USER_FUNDED_PROVIDERS',
+      })
+      expect(policy.status).toBe(200)
+
+      const request = {
+        expectedRouteRevision: route.body.data.revision, expectedPolicyRevision: policy.body.data.revision,
+        idempotencyKey: `provider-candidate-${crypto.randomUUID()}`, maxCostMicros: 125_000,
+        confirmation: 'GENERATE_WITH_USER_PROVIDER',
+      }
+      const started = await api<{ data: GenerationTask }>(isolated, 'POST', `/api/v2/shots/${shotId}/provider-candidates`, request)
+      expect(started.status).toBe(202)
+      const completed = await isolated.service.waitForTask(started.body.data.id)
+      expect(completed).toMatchObject({ status: 'succeeded', provider: connectionId, result: { estimatedCostMicros: 125_000 } })
+      expect(isolated.db.snapshot(project.id).candidates).toHaveLength(1)
+      expect(isolated.db.listProviderCosts(project.id)).toEqual([
+        expect.objectContaining({ taskId: completed.id, connectionId, amountMicros: 125_000, source: 'local-estimate', billed: false }),
+      ])
+
+      const repeated = await api<{ data: GenerationTask }>(isolated, 'POST', `/api/v2/shots/${shotId}/provider-candidates`, request)
+      expect(repeated.body.data.id).toBe(completed.id)
+      expect(adapterExecute).toHaveBeenCalledOnce()
+      expect(JSON.stringify({ started: started.body, completed, ledger: isolated.db.listProviderCosts(project.id) })).not.toContain('test-secret-never-return')
+    } finally { stopRuntime(isolated) }
+  })
+
+  it('可执行 Provider 插件与运行时 API 已永久封存', async () => {
+    for (const [method, path] of [
+      ['GET', '/api/v2/provider-plugins/runtime'],
+      ['POST', '/api/v2/provider-plugins/runtime/install'],
+      ['POST', '/api/v2/provider-plugins/runtime/install/cancel'],
+      ['GET', '/api/v2/provider-plugins'],
+      ['POST', '/api/v2/provider-plugins'],
+      ['POST', '/api/v2/provider-plugins/legacy/test'],
+      ['GET', '/api/v2/provider-plugin-publishers'],
+      ['POST', '/api/v2/provider-plugin-publishers'],
+    ] as const) {
+      const blocked = await api<{ error: { code: string; retryable: boolean } }>(runtime, method, path, method === 'POST' ? {} : undefined)
+      expect(blocked.status).toBe(410)
+      expect(blocked.body.error).toMatchObject({ code: 'EXECUTABLE_PROVIDER_ADAPTERS_DISABLED', retryable: false })
     }
-    const isolated = createDirectorApp({
-      databasePath: join(directory, 'runtime-api.sqlite'), dataDirectory: join(directory, 'runtime-api'), sessionToken: token,
-      providerNetworkDisabled: false,
-      denoRuntimeInstaller: {
-        inspect: async () => installed
-          ? { state: 'ready' as const, artifact, receipt: { ...receipt, reused: true } }
-          : { state: 'not-installed' as const, artifact },
-        install: async () => { installCalls += 1; installed = true; return receipt },
-      },
-    })
-    try {
-      const response = await api<{ data: Record<string, unknown> }>(isolated, 'POST', '/api/v2/provider-plugins/runtime/install', { confirmation: 'INSTALL_DENO_2.9.2' })
-      expect(response.status).toBe(200)
-      expect(response.body.data).toMatchObject({ state: 'ready', networkDisabled: false, installAllowed: false, binarySha256: 'b'.repeat(64) })
-      expect(JSON.stringify(response.body.data)).not.toContain('private-deno')
-      expect(installCalls).toBe(1)
-    } finally { stopRuntime(isolated) }
-  })
 
-  it('Deno 安装可在进行中精确取消，且重复取消不伪造成功', async () => {
-    const artifact = resolveDenoRuntimeArtifact(process.platform, process.arch)
-    let markStarted: (() => void) | undefined
-    const started = new Promise<void>((resolve) => { markStarted = resolve })
-    const isolated = createDirectorApp({
-      databasePath: join(directory, 'runtime-cancel-api.sqlite'), dataDirectory: join(directory, 'runtime-cancel-api'), sessionToken: token,
-      providerNetworkDisabled: false,
-      denoRuntimeInstaller: {
-        inspect: async () => ({ state: 'not-installed' as const, artifact }),
-        install: async (_platform, _arch, signal, onProgress) => await new Promise((_, reject) => {
-          onProgress?.({ phase: 'downloading', receivedBytes: 128, totalBytes: artifact.size })
-          markStarted?.()
-          const abort = (): void => reject(new DenoRuntimeInstallError('DENO_RUNTIME_ABORTED'))
-          if (signal?.aborted) abort()
-          else signal?.addEventListener('abort', abort, { once: true })
-        }),
-      },
-    })
-    try {
-      const installing = api<{ error: { code: string } }>(isolated, 'POST', '/api/v2/provider-plugins/runtime/install', { confirmation: 'INSTALL_DENO_2.9.2' })
-      await started
-
-      const progress = await api<{ data: { state: string; progress: { phase: string; receivedBytes: number; totalBytes: number } } }>(isolated, 'GET', '/api/v2/provider-plugins/runtime')
-      expect(progress.body.data).toMatchObject({
-        state: 'installing', progress: { phase: 'downloading', receivedBytes: 128, totalBytes: artifact.size },
-      })
-
-      expect((await api(isolated, 'POST', '/api/v2/provider-plugins/runtime/install/cancel', { confirmation: 'cancel' })).status).toBe(400)
-      const cancelled = await api<{ data: { status: string; runtime: { state: string } } }>(isolated, 'POST', '/api/v2/provider-plugins/runtime/install/cancel', {
-        confirmation: 'CANCEL_DENO_2.9.2_INSTALL',
-      })
-      expect(cancelled.status).toBe(200)
-      expect(cancelled.body.data).toEqual(expect.objectContaining({ status: 'cancelled', runtime: expect.objectContaining({ state: 'not-installed' }) }))
-
-      const interrupted = await installing
-      expect(interrupted.status).toBe(409)
-      expect(interrupted.body.error.code).toBe('DENO_RUNTIME_ABORTED')
-      const repeated = await api<{ error: { code: string } }>(isolated, 'POST', '/api/v2/provider-plugins/runtime/install/cancel', {
-        confirmation: 'CANCEL_DENO_2.9.2_INSTALL',
-      })
-      expect(repeated.status).toBe(409)
-      expect(repeated.body.error.code).toBe('DENO_RUNTIME_INSTALL_NOT_RUNNING')
-    } finally { stopRuntime(isolated) }
-  })
-
-  it('Provider 插件 API 只接受受信签名包与精确生命周期确认', async () => {
-    const signed = signedPluginRequest()
-    const untrusted = await api<{ error: { code: string } }>(runtime, 'POST', '/api/v2/provider-plugins', signed.request)
-    expect(untrusted.status).toBe(403)
-    expect(untrusted.body.error.code).toBe('PLUGIN_PUBLISHER_UNTRUSTED')
-
-    const isolated = createDirectorApp({
-      databasePath: join(directory, 'plugin-api.sqlite'), dataDirectory: join(directory, 'plugin-api'), sessionToken: token,
-      trustedProviderPluginKeys: signed.trusted, providerPluginsEnabled: true,
-      providerPluginLifecycleRunner: { test: async () => ({ healthy: true, protocol: 1 }) },
-    })
-    try {
-      const installed = await api<{ data: ProviderPluginRecord }>(isolated, 'POST', '/api/v2/provider-plugins', signed.request)
-      expect(installed.status).toBe(201)
-      expect(installed.body.data).toMatchObject({ state: 'installed', revision: 1 })
-      expect(JSON.stringify(installed.body.data)).not.toContain(directory)
-      expect(JSON.stringify(installed.body.data)).not.toContain(signed.request.bundleBase64)
-      expect((await api(isolated, 'POST', `/api/v2/provider-plugins/${installed.body.data.id}/test`, {
-        expectedRevision: 1, confirmation: 'test',
-      })).status).toBe(400)
-      const tested = await api<{ data: { plugin: ProviderPluginRecord } }>(isolated, 'POST', `/api/v2/provider-plugins/${installed.body.data.id}/test`, {
-        expectedRevision: 1, confirmation: 'TEST_SIGNED_PROVIDER_PLUGIN',
-      })
-      expect(tested.body.data.plugin).toMatchObject({ state: 'tested', revision: 2 })
-      const enabled = await api<{ data: ProviderPluginRecord }>(isolated, 'POST', `/api/v2/provider-plugins/${installed.body.data.id}/enable`, {
-        expectedRevision: 2, confirmation: 'ENABLE_SIGNED_PROVIDER_PLUGIN',
-      })
-      expect(enabled.body.data).toMatchObject({ state: 'enabled', revision: 3 })
-      const listed = await api<{ data: ProviderPluginRecord[] }>(isolated, 'GET', '/api/v2/provider-plugins')
-      expect(listed.body.data).toHaveLength(1)
-      expect(listed.body.data[0]).toMatchObject({ id: installed.body.data.id, state: 'enabled' })
-    } finally { stopRuntime(isolated) }
-  })
-
-  it('Provider 发布者 API 不返回公钥正文，撤销后新安装 fail closed', async () => {
-    const signed = signedPluginRequest()
-    const isolated = createDirectorApp({
-      databasePath: join(directory, 'publisher-api.sqlite'), dataDirectory: join(directory, 'publisher-api'), sessionToken: token,
-      providerPluginLifecycleRunner: { test: async () => ({ healthy: true }) },
-    })
-    try {
-      const publicKeyPem = signed.trusted['publisher.api-test']
-      if (!publicKeyPem) throw new Error('fixture publisher missing')
-      expect((await api(isolated, 'POST', '/api/v2/provider-plugin-publishers', {
-        keyId: 'publisher.api-test', displayName: 'API 测试发布者', publicKeyPem, confirmation: 'trust',
-      })).status).toBe(400)
-      const trusted = await api<{ data: ProviderPublisherTrust }>(isolated, 'POST', '/api/v2/provider-plugin-publishers', {
-        keyId: 'publisher.api-test', displayName: 'API 测试发布者', publicKeyPem,
-        confirmation: 'TRUST_PROVIDER_PLUGIN_PUBLISHER',
-      })
-      expect(trusted.status).toBe(201)
-      expect(trusted.body.data).toMatchObject({ state: 'trusted', revision: 1 })
-      expect(JSON.stringify(trusted.body.data)).not.toContain('BEGIN PUBLIC KEY')
-      expect((await api(isolated, 'POST', '/api/v2/provider-plugins', signed.request)).status).toBe(201)
-
-      const revoked = await api<{ data: ProviderPublisherTrust }>(isolated, 'POST', `/api/v2/provider-plugin-publishers/${trusted.body.data.id}/revoke`, {
-        expectedRevision: 1, confirmation: 'REVOKE_PROVIDER_PLUGIN_PUBLISHER',
-      })
-      expect(revoked.body.data).toMatchObject({ state: 'revoked', revision: 2 })
-      const listed = await api<{ data: ProviderPublisherTrust[] }>(isolated, 'GET', '/api/v2/provider-plugin-publishers')
-      expect(listed.body.data).toEqual([expect.objectContaining({ id: trusted.body.data.id, state: 'revoked' })])
-      expect(JSON.stringify(listed.body.data)).not.toContain('BEGIN PUBLIC KEY')
-      const rejected = await api<{ error: { code: string } }>(isolated, 'POST', '/api/v2/provider-plugins', signed.request)
-      expect(rejected.status).toBe(403)
-      expect(rejected.body.error.code).toBe('PLUGIN_PUBLISHER_UNTRUSTED')
-    } finally { stopRuntime(isolated) }
+    const systems = await api<{ data: { capabilities: Record<string, boolean> } }>(runtime, 'GET', '/api/v2/systems')
+    expect(systems.body.data.capabilities).toMatchObject({ declarativeProviderConnections: true, executableProviderAdapters: false })
   })
 
   it('随机桌面端口只在监听成功后加入精确 CORS 白名单', async () => {
@@ -243,7 +292,7 @@ describe('AIGC 导演工作室 API v2', () => {
     expect(accepted.headers['access-control-allow-origin']).toBe(origin)
 
     const rejected = await inject(runtime.app, { method: 'GET', path: '/api/v2/health', headers: { origin: 'http://127.0.0.1:43128' } })
-    expect(rejected.status).toBe(500)
+    expect(rejected.status).toBe(403)
     expect(rejected.headers['access-control-allow-origin']).toBeUndefined()
   })
 
@@ -412,18 +461,63 @@ describe('AIGC 导演工作室 API v2', () => {
     const exportRequest = {
       projectId: project.id, outputDirectory: join(directory, 'exports'), fileName: 'demo.mp4', width: 320, height: 320, fps: 12,
     }
-    const exported = await api<{ data: GenerationTask }>(runtime, 'POST', '/api/v2/exports', exportRequest)
+    const prepared = await prepareAndStartExport(runtime, exportRequest)
+    const exported = prepared.task
+    expect(JSON.stringify(prepared.preflight.body.data)).not.toContain(directory)
+    expect(prepared.preflight.body.data).toMatchObject({
+      shotCount: production.shots.length,
+      selectedCandidateCount: production.shots.length,
+      billing: { provider: 'demo-local', verified: true, amountMicros: 0, currency: 'none' },
+    })
     expect(exported.status).toBe(202)
     const task = exported.body.data
     const completed = await runtime.service.waitForTask(task.id)
-    expect(completed.status).toBe('succeeded')
-    expect(completed.result).toMatchObject({ fileName: 'demo.mp4' })
+    expect(completed.status, JSON.stringify(completed)).toBe('succeeded')
+    expect(completed.result).toMatchObject({ fileName: 'demo.mp4', selectedCandidateCount: production.shots.length })
     expect(JSON.stringify(completed.result)).not.toContain(directory)
+    const exportedMediaId = typeof completed.result?.mediaId === 'string' ? completed.result.mediaId : undefined
+    if (!exportedMediaId) throw new Error('TEST_EXPORT_MEDIA_MISSING')
+    const exportedMedia = runtime.db.snapshot(project.id).media.find((media) => media.id === exportedMediaId)
+    if (!exportedMedia) throw new Error('TEST_EXPORT_MEDIA_REFERENCE_MISSING')
+    expect(exportedMedia.locator).not.toBe(exportRequest.fileName)
+    const servedExport = await inject(runtime.app, {
+      method: 'GET', path: `/api/v2/media/${project.id}/${exportedMedia.locator}`, headers: auth,
+    })
+    expect(servedExport.status).toBe(200)
+    expect(createHash('sha256').update(servedExport.buffer).digest('hex')).toBe(exportedMedia.sha256)
 
-    const repeated = await api<{ data: GenerationTask }>(runtime, 'POST', '/api/v2/exports', exportRequest)
+    const repeated = await api<{ data: GenerationTask }>(runtime, 'POST', '/api/v2/exports', {
+      preflightId: prepared.preflight.body.data.id,
+      approvalToken: prepared.preflight.body.data.approvalToken,
+      confirmation: 'START_LOCAL_EXPORT',
+    })
     expect(repeated.body.data.id).toBe(task.id)
+    const unconsumedPreflight = await api<{ data: ExportPreflight }>(runtime, 'POST', '/api/v2/exports/preflight', exportRequest)
 
-    const alternate = await api<{ data: GenerationTask }>(runtime, 'POST', '/api/v2/exports', { ...exportRequest, outputDirectory: join(directory, 'alternate') })
+    const currentFirstShot = runtime.db.snapshot(project.id).shots.find((shot) => shot.id === firstShot.id)
+    const alternateCandidate = production.candidates.find((candidate) => candidate.shotId === firstShot.id && candidate.id !== currentFirstShot?.selectedCandidateId)
+    if (!alternateCandidate) throw new Error('TEST_ALTERNATE_CANDIDATE_MISSING')
+    const changedSelection = await api<{ data: { revision: number } }>(runtime, 'POST', `/api/v2/projects/${project.id}/graph/commands?view=production`, {
+      type: 'select_candidate', expectedRevision: graphRevision,
+      idempotencyKey: `reselect-${firstShot.id}-${alternateCandidate.id}`, shotId: firstShot.id, candidateId: alternateCandidate.id,
+    })
+    expect(changedSelection.status).toBe(200)
+    graphRevision = changedSelection.body.data.revision
+    const stalePreflight = await api<{ error: { code: string } }>(runtime, 'POST', '/api/v2/exports', {
+      preflightId: unconsumedPreflight.body.data.id,
+      approvalToken: unconsumedPreflight.body.data.approvalToken,
+      confirmation: 'START_LOCAL_EXPORT',
+    })
+    expect(stalePreflight.status).toBe(409)
+    expect(stalePreflight.body.error.code).toBe('EXPORT_PREFLIGHT_STALE')
+    const reassembled = (await prepareAndStartExport(runtime, exportRequest)).task
+    expect(reassembled.status).toBe(202)
+    expect(reassembled.body.data.id).not.toBe(task.id)
+    const reassembledCompleted = await runtime.service.waitForTask(reassembled.body.data.id)
+    expect(reassembledCompleted.status).toBe('succeeded')
+    expect(reassembledCompleted.result?.assemblyHash).not.toBe(completed.result?.assemblyHash)
+
+    const alternate = (await prepareAndStartExport(runtime, { ...exportRequest, outputDirectory: join(directory, 'alternate') })).task
     const alternateTask = alternate.body.data
     expect(alternateTask.id).not.toBe(task.id)
     expect((await runtime.service.waitForTask(alternateTask.id)).status).toBe('succeeded')
@@ -487,7 +581,8 @@ describe('AIGC 导演工作室 API v2', () => {
       method: 'POST', path: `/api/v2/projects/${project.id}/media`,
       headers: { ...auth, ...multipart.headers }, body: multipart.body,
     })
-    expect(upload.status).toBe(500)
+    expect(upload.status).toBe(422)
+    expect(upload.body).toMatchObject({ ok: false, error: { code: 'UPLOAD_TYPE_REJECTED', retryable: false } })
     expect(JSON.stringify(upload.body)).not.toContain('MZ-not-an-image')
 
     const command = await api(runtime, 'POST', `/api/v2/projects/${project.id}/graph/commands?view=story`, {

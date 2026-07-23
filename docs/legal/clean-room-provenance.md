@@ -11,7 +11,7 @@
 
 ## Independent design
 
-本项目独立定义 Story/Production/Delivery 三张领域图、Zod 契约、schema v9、Series/Episode 连续性、Prompt/Skill 发布门禁、CandidateBatch、Model Catalog、MediaResolver、可追溯分层记忆与脱敏 AgentRun checkpoint、三通道 Egress Broker、签名 Provider manifest、可撤销 Ed25519 发布者信任、Agent Approval、GraphCommand、Fake Provider、任务恢复和 Electron 边界。界面颜色、组件层级、文案、图标和应用标识均由本项目重新设计。
+本项目独立定义 Story/Production/Delivery 三张领域图、Zod 契约、schema v12、Series/Episode 连续性、Prompt/Skill 发布门禁、CandidateBatch、Model Catalog、MediaResolver、可追溯分层记忆与脱敏 AgentRun checkpoint、项目级零付费生成策略、append-only 高风险审计、三通道 Egress Broker、签名 Provider manifest、可撤销 Ed25519 发布者信任、Agent Approval、GraphCommand、Fake Provider、任务恢复和 Electron 边界。界面颜色、组件层级、文案、图标和应用标识均由本项目重新设计。
 
 2026-07-18 的全库对照使用 `open-source-feature-knowledge-base@1425238f35b16f23b8a63aee1a109113a164e4a9`。`.aigcproj` 的 manifest/checksum/quarantine/ID-remap 需求参考了 `xuanyustudio/LocalMiniDrama@92c66dd75688d83aac3ccc31bb51378613122cbc` 的 MIT 功能证据，但 ZIP 编解码、数据契约、事务恢复和 UI 均在本项目中独立编写，没有复制上游源码或资源。其余无许可、自定义许可或限制性项目仅用于抽象验收条件。
 

@@ -13,6 +13,8 @@ export interface ExportResult {
   outputPath: string
   media: MediaReference
   durationMs: number
+  videoCodec: 'h264' | 'mpeg4'
+  audioCodec: 'aac'
 }
 
 export interface ExtractedFrameResult {
@@ -28,6 +30,11 @@ export interface OrderedMediaReference {
   role: ProviderMediaReceipt['role']
   order: number
   media: MediaReference
+}
+
+export interface ExportVisualInput {
+  path: string
+  kind: 'image' | 'video'
 }
 
 export function previewMediaResolution(projectId: string, model: ModelDescriptor, inputs: readonly OrderedMediaReference[]) {
@@ -99,6 +106,18 @@ export async function probeMedia(filePath: string): Promise<{ durationSeconds: n
   return { durationSeconds, format: parsed.format?.format_name ?? '' }
 }
 
+async function resolveExportVideoEncoder(): Promise<{ codec: 'h264' | 'mpeg4'; args: string[] }> {
+  try {
+    const { stdout, stderr } = await run(resolveFfmpegPath(), ['-hide_banner', '-encoders'], undefined, 20_000)
+    if (/\blibx264\b/u.test(`${stdout}\n${stderr}`)) {
+      return { codec: 'h264', args: ['-c:v', 'libx264', '-preset', 'medium', '-crf', '18'] }
+    }
+  } catch {
+    // Minimal FFmpeg builds remain usable; the returned receipt records the fallback codec.
+  }
+  return { codec: 'mpeg4', args: ['-c:v', 'mpeg4', '-q:v', '3'] }
+}
+
 export async function extractLastVideoFrame(
   filePath: string,
   outputDirectory: string,
@@ -136,8 +155,13 @@ export async function extractLastVideoFrame(
   }
 }
 
-export async function exportProjectVideo(request: ExportRequest, shots: Shot[], options: { signal?: AbortSignal; onProgress?: (progress: ExportProgress) => void } = {}): Promise<ExportResult> {
+export async function exportProjectVideo(request: ExportRequest, shots: Shot[], options: {
+  signal?: AbortSignal
+  onProgress?: (progress: ExportProgress) => void
+  visualInputs?: readonly ExportVisualInput[]
+} = {}): Promise<ExportResult> {
   if (shots.length === 0) throw new Error('EXPORT_REQUIRES_SHOTS')
+  if (options.visualInputs && options.visualInputs.length !== shots.length) throw new Error('EXPORT_VISUAL_INPUT_COUNT_MISMATCH')
   const started = Date.now()
   options.onProgress?.({ stage: 'preparing', elapsedMs: 0 })
   const outputDirectory = resolve(request.outputDirectory)
@@ -145,18 +169,26 @@ export async function exportProjectVideo(request: ExportRequest, shots: Shot[], 
   const safeName = basename(request.fileName)
   if (safeName !== request.fileName || !safeName.toLowerCase().endsWith('.mp4')) throw new Error('EXPORT_FILE_NAME_INVALID')
   const outputPath = join(outputDirectory, safeName)
+  const videoEncoder = await resolveExportVideoEncoder()
   const palette = ['#16233d', '#123c44', '#37234b', '#47351e', '#193a2d', '#3d202b']
   const args: string[] = ['-hide_banner', '-loglevel', 'error', '-y']
   shots.forEach((shot, index) => {
     const duration = Math.max(0.5, shot.durationMs / 1_000)
-    args.push('-f', 'lavfi', '-t', duration.toFixed(3), '-i', `color=c=${palette[index % palette.length]}:s=${request.width}x${request.height}:r=${request.fps}`)
+    const visual = options.visualInputs?.[index]
+    if (visual?.kind === 'image') args.push('-loop', '1', '-t', duration.toFixed(3), '-i', resolve(visual.path))
+    else if (visual?.kind === 'video') args.push('-t', duration.toFixed(3), '-i', resolve(visual.path))
+    else args.push('-f', 'lavfi', '-t', duration.toFixed(3), '-i', `color=c=${palette[index % palette.length]}:s=${request.width}x${request.height}:r=${request.fps}`)
   })
-  const videoInputs = shots.map((_shot, index) => `[${index}:v]`).join('')
+  const filters = shots.map((shot, index) => {
+    const duration = Math.max(0.5, shot.durationMs / 1_000).toFixed(3)
+    return `[${index}:v]scale=${request.width}:${request.height}:force_original_aspect_ratio=decrease,pad=${request.width}:${request.height}:(ow-iw)/2:(oh-ih)/2:color=black,fps=${request.fps},tpad=stop_mode=clone:stop_duration=${duration},trim=duration=${duration},setpts=PTS-STARTPTS[v${index}]`
+  })
+  const videoInputs = shots.map((_shot, index) => `[v${index}]`).join('')
   args.push(
     '-f', 'lavfi', '-t', (shots.reduce((total, shot) => total + shot.durationMs, 0) / 1_000).toFixed(3), '-i', 'anullsrc=r=48000:cl=stereo',
-    '-filter_complex', `${videoInputs}concat=n=${shots.length}:v=1:a=0[v]`,
+    '-filter_complex', `${filters.join(';')};${videoInputs}concat=n=${shots.length}:v=1:a=0[v]`,
     '-map', '[v]', '-map', `${shots.length}:a`,
-    '-c:v', 'mpeg4', '-q:v', '3', '-pix_fmt', 'yuv420p', '-c:a', 'aac', '-shortest', '-movflags', '+faststart', outputPath,
+    ...videoEncoder.args, '-pix_fmt', 'yuv420p', '-c:a', 'aac', '-shortest', '-movflags', '+faststart', outputPath,
   )
   options.onProgress?.({ stage: 'encoding', elapsedMs: Date.now() - started })
   await run(resolveFfmpegPath(), args, options.signal)
@@ -165,11 +197,13 @@ export async function exportProjectVideo(request: ExportRequest, shots: Shot[], 
   const info = await stat(outputPath)
   const expectedSeconds = shots.reduce((total, shot) => total + shot.durationMs, 0) / 1_000
   if (Math.abs(probe.durationSeconds - expectedSeconds) > 1.5) throw new Error('EXPORT_DURATION_MISMATCH')
-  const digest = createHash('sha256').update(`${info.size}:${probe.durationSeconds}:${safeName}`).digest('hex')
+  const digest = createHash('sha256').update(await readFile(outputPath)).digest('hex')
   options.onProgress?.({ stage: 'completed', elapsedMs: Date.now() - started })
   return {
     outputPath,
     durationMs: Math.round(probe.durationSeconds * 1_000),
+    videoCodec: videoEncoder.codec,
+    audioCodec: 'aac',
     media: {
       id: randomUUID(), projectId: request.projectId, kind: 'video', storage: 'managed-file', locator: safeName,
       mime: 'video/mp4', size: info.size, sha256: digest, createdAt: new Date().toISOString(),

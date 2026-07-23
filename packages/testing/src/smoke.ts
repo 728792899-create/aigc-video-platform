@@ -1,7 +1,13 @@
 import { mkdtemp, rm, stat } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import { CandidateSchema, type ProjectSnapshot } from '@aigc-director/contracts'
+import {
+  CandidateBatchSchema,
+  CandidateSchema,
+  GenerationTaskSchema,
+  type GenerationTask,
+  type ProjectSnapshot,
+} from '@aigc-director/contracts'
 import { probeMedia } from '@aigc-director/media'
 import { createDirectorApp } from '../../../apps/server/src/http/app.js'
 
@@ -34,10 +40,10 @@ export async function runSmoke(): Promise<void> {
 
   try {
     invariant(process.env.DEMO_MODE === '1' && process.env.PROVIDER_NETWORK_DISABLED === '1', 'Demo 必须禁用 Provider 网络')
-    invariant(runtime.db.schemaVersion() === 9, 'Agent 记忆 checkpoint 要求 schema v9')
+    invariant(runtime.db.schemaVersion() === 12, 'Provider 连接、路由与成本账本要求 schema v12')
     const operationsTables = runtime.db.raw.prepare(`SELECT name FROM sqlite_master
-      WHERE type = 'table' AND name IN ('prompt_revisions','artifact_heads','skill_package_versions','golden_evaluations','candidate_batches','provider_media_receipts','memory_documents','memory_chunks','provider_plugin_versions','provider_publishers','agent_run_checkpoints')`).all()
-    invariant(operationsTables.length === 11, 'schema v9 必须完整创建 Prompt、CandidateBatch、媒体 receipt、分层记忆、Agent checkpoint、Provider 插件与发布者表')
+      WHERE type = 'table' AND name IN ('prompt_revisions','artifact_heads','skill_package_versions','golden_evaluations','candidate_batches','provider_media_receipts','memory_documents','memory_chunks','provider_plugin_versions','provider_publishers','agent_run_checkpoints','project_generation_policies','security_audit_events','provider_connections','provider_route_policies','provider_cost_ledger')`).all()
+    invariant(operationsTables.length === 16, 'schema v12 必须完整创建 Provider 连接、路由与不可变成本账本')
 
     const project = runtime.db.createProject({ name: '零付费闭环验收' })
     const imported = runtime.service.importSource(project.id, {
@@ -61,6 +67,37 @@ export async function runSmoke(): Promise<void> {
     invariant(produced.tasks.every((task) => task.provider === 'demo-local' && task.result?.billed === false), 'Demo 任务不得计费')
     invariant(produced.reviews.filter((review) => review.source === 'automatic_critic').length === produced.candidates.length, '每个候选必须有待人工确认的 Critic 证据')
     invariant(produced.artifactVersions.some((artifact) => artifact.stageId === 'frames'), '结构化阶段必须形成 Artifact 依赖链')
+
+    const sourceBatch = produced.candidateBatches[0]
+    invariant(sourceBatch, '局部失败验收必须有来源 CandidateBatch')
+    const originalTask = produced.tasks.find((task) => task.inputSnapshot.batchId === sourceBatch.id)
+    invariant(originalTask, '局部失败验收必须有来源生成任务')
+    const failedAt = new Date().toISOString()
+    runtime.db.put('generation_tasks', project.id, GenerationTaskSchema.parse({
+      ...originalTask, status: 'failed', retryable: true, progress: undefined, result: undefined,
+      error: {
+        code: 'TASK_EXECUTION_FAILED', userMessage: 'Smoke 注入候选失败。', retryable: true,
+        correlationId: crypto.randomUUID(), taskId: originalTask.id, timestamp: failedAt,
+      },
+      updatedAt: failedAt, finishedAt: failedAt,
+    }))
+    runtime.db.put('candidate_batches', project.id, CandidateBatchSchema.parse({
+      ...sourceBatch, status: 'partial', completedCount: sourceBatch.completedCount - 1,
+      failedCount: 1, updatedAt: failedAt, finishedAt: failedAt,
+    }))
+    const retryIdempotencyKey = `smoke-retry-failed-${crypto.randomUUID()}`
+    const retried = await runtime.service.retryFailedCandidates(sourceBatch.id, {
+      idempotencyKey: retryIdempotencyKey, confirmation: 'RETRY_FAILED_CANDIDATES',
+    })
+    invariant(!retried.reused && retried.batch.status === 'succeeded', '失败候选必须由新的成功重试批次恢复')
+    invariant(retried.batch.parentBatchId === sourceBatch.id && retried.batch.quantity === 1, '局部重试只能覆盖一个失败项并保留父批次')
+    invariant(retried.tasks.length === 1 && retried.tasks[0]?.parentTaskId === originalTask.id, '局部重试必须保留父任务 lineage')
+    invariant(retried.candidates.length === 1, '局部重试只能新增一个候选')
+    invariant(runtime.db.get<GenerationTask>('generation_tasks', originalTask.id)?.status === 'failed', '原失败任务必须作为诊断证据保留')
+    const retriedAgain = await runtime.service.retryFailedCandidates(sourceBatch.id, {
+      idempotencyKey: retryIdempotencyKey, confirmation: 'RETRY_FAILED_CANDIDATES',
+    })
+    invariant(retriedAgain.reused && retriedAgain.batch.id === retried.batch.id, '重复局部重试请求必须幂等复用原结果')
 
     const memoryReport = runtime.memory.rebuild(project.id)
     invariant(memoryReport.created > 0 && memoryReport.skippedSensitive === 0, '批准后的事件和产物必须建立无敏感内容的分层记忆')
@@ -106,14 +143,18 @@ export async function runSmoke(): Promise<void> {
     invariant(boundaryCompleted.status === 'succeeded', '真实尾帧提取任务必须成功')
     invariant(runtime.db.snapshot(project.id).shots[0]?.boundaryFrames.some((frame) => frame.provenance === 'extracted_video'), '尾帧必须绑定到来源视频 Candidate')
 
+    const beforeRestart: ProjectSnapshot = runtime.db.snapshot(project.id)
+
     closeRuntime(runtime)
     runtime = createDirectorApp({ databasePath, dataDirectory: directory, sessionToken })
     const restored: ProjectSnapshot = runtime.db.snapshot(project.id)
-    invariant(restored.candidates.length === produced.candidates.length + 1, '服务重启后图片与视频 Candidate 必须完整恢复')
-    invariant(restored.candidateBatches.length === produced.candidateBatches.length, '服务重启后 CandidateBatch 必须完整恢复')
+    invariant(restored.candidates.length === beforeRestart.candidates.length, '服务重启后原始、重试与视频 Candidate 必须完整恢复')
+    invariant(restored.candidateBatches.length === beforeRestart.candidateBatches.length, '服务重启后原始与重试 CandidateBatch 必须完整恢复')
     invariant(runtime.memory.search(project.id, '灯塔').length > 0, '服务重启后分层记忆必须可检索')
-    invariant(restored.promptRuns.length === produced.promptRuns.length, '服务重启后 PromptRun 必须完整恢复')
-    invariant(restored.artifactVersions.length >= produced.artifactVersions.length, '服务重启后 ArtifactVersion 必须完整恢复')
+    invariant(restored.promptRuns.length === beforeRestart.promptRuns.length, '服务重启后 PromptRun 必须完整恢复')
+    invariant(restored.artifactVersions.length === beforeRestart.artifactVersions.length, '服务重启后 ArtifactVersion 必须完整恢复')
+    invariant(restored.tasks.some((task) => task.id === originalTask.id && task.status === 'failed'), '服务重启后原失败任务诊断证据必须保留')
+    invariant(restored.tasks.some((task) => task.parentTaskId === originalTask.id && task.status === 'succeeded'), '服务重启后局部重试子任务必须恢复')
     invariant(restored.shots.every((shot) => shot.selectedCandidateId), '人工候选选择必须持久恢复')
     invariant(restored.shots.every((shot) => restored.artifactVersions.some((artifact) => artifact.stageId === `approved-candidate:${shot.id}`)), '批准产物必须持久恢复')
     invariant(restored.tasks.some((task) => task.id === completed.id && task.status === 'succeeded'), '服务重启后导出任务必须可查询')
@@ -123,6 +164,7 @@ export async function runSmoke(): Promise<void> {
       ok: true, projectId: project.id, events: restored.events.length, shots: restored.shots.length,
       candidates: restored.candidates.length, promptRuns: restored.promptRuns.length,
       artifacts: restored.artifactVersions.length, reviews: restored.reviews.length,
+      partialRetry: 'succeeded', retryIdempotency: 'reused', restartRecovery: 'succeeded',
       exported: 'director-smoke.mp4', paidRequests: 0,
     }))
   } finally {

@@ -29,7 +29,7 @@ flowchart LR
   ART --> REVIEW["Critic + 人工批准"]
 ```
 
-核心领域对象始终由 schema v9 数据库持有。Prompt Pack 不维护项目、画布、任务或候选的第二份事实。用户 Prompt/Skill revision 同样只存于 canonical database，不修改内置 Registry。分层记忆是可重建索引，AgentRun checkpoint 只保存脱敏引用证据，都不会替代 PromptRun 或 Artifact provenance。
+核心领域对象始终由当前 schema v12 数据库持有。Prompt Pack 不维护项目、画布、任务或候选的第二份事实。用户 Prompt/Skill revision 同样只存于 canonical database，不修改内置 Registry。分层记忆是可重建索引，AgentRun checkpoint 只保存脱敏引用证据，都不会替代 PromptRun 或 Artifact provenance。
 
 ## 可审计闭环
 
@@ -47,6 +47,6 @@ Demo 串联 16 个环节：需求归一、故事扩展、剧本结构化、实�
 
 ## 验证结果与边界
 
-2026-07-19 本地 `git diff --check && DEMO_MODE=1 PROVIDER_NETWORK_DISABLED=1 pnpm quality` 通过：148 项 workspace test、TypeScript、ESLint、Smoke、有效 MP4、重启恢复、clean-room、安全扫描和生产构建全部完成，付费请求 0。Phase 1 覆盖 schema v3 与 Series/Episode，Phase 2 覆盖 schema v4 与 Prompt/Skill/Artifact 及作用域局部重生成，Phase 3 覆盖 schema v5、CandidateBatch、Model Catalog、MediaResolver 和真实尾帧，Phase 4 覆盖 schema v6 分层记忆，Phase 5 覆盖 schema v7/v8 插件与发布者信任，schema v9 将脱敏记忆 provenance 绑定到 Agent run/plan checkpoint。知识库 Prompt Pack 的 19/19 test 继续作为 workspace 门禁运行。
+2026-07-20 本地 `DEMO_MODE=1 PROVIDER_NETWORK_DISABLED=1 pnpm quality` 通过：198 项 workspace test、TypeScript、ESLint、Smoke、有效 MP4、重启恢复、clean-room、安全扫描和生产构建全部完成，付费请求 0。Phase 1 覆盖 schema v3 与 Series/Episode，Phase 2 覆盖 schema v4 与 Prompt/Skill/Artifact 及作用域局部重生成，Phase 3 覆盖 schema v5、CandidateBatch、Model Catalog、MediaResolver 和真实尾帧，Phase 4 覆盖 schema v6 分层记忆，Phase 5 覆盖 schema v7/v8 插件与发布者信任，schema v9 将脱敏记忆 provenance 绑定到 Agent run/plan checkpoint，schema v10 增加项目级零付费生成策略、统一任务准入与恢复中心，schema v11 增加项目级 append-only 高风险审计。知识库 Prompt Pack 的 19/19 test 继续作为 workspace 门禁运行；任务生命周期测试覆盖未知结果、对账、幂等重试和策略边界。
 
 尚未验证：真实 Provider 的质量、费用、线上 reconcile/cancel/billing，Prompt Pack 对外许可，正式签名/公证和线上自动更新。不得把这些项目描述为已经通过生产验收。

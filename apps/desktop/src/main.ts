@@ -175,7 +175,7 @@ async function createMainWindow(): Promise<void> {
   const origin = `http://127.0.0.1:${serverConfig.port}`
   mainWindow = new BrowserWindow({
     width: 1480, height: 940, minWidth: 980, minHeight: 680,
-    title: 'AIGC 导演工作室', backgroundColor: '#070b13', show: false,
+    title: 'AIGC 导演工作室', backgroundColor: '#0F1418', show: false,
     webPreferences: { preload: preloadPath, contextIsolation: true, nodeIntegration: false, sandbox: true, webSecurity: true, devTools: !app.isPackaged },
   })
   mainWindow.removeMenu()
@@ -188,11 +188,11 @@ async function createMainWindow(): Promise<void> {
   mainWindow.webContents.once('did-finish-load', async () => {
     if (desktopSmokeEnabled || process.env.AIGC_DIRECTOR_DESKTOP_SMOKE === '1') {
       try {
-        const renderedTitle = await mainWindow?.webContents.executeJavaScript(
-          "document.querySelector('h1')?.textContent ?? document.body?.innerText ?? ''",
+        const renderReadyMarker = await mainWindow?.webContents.executeJavaScript(
+          "document.querySelector('[data-desktop-smoke-ready=\"aigc-director-studio\"]')?.getAttribute('data-desktop-smoke-ready') ?? ''",
           true,
         ) as unknown
-        if (typeof renderedTitle !== 'string' || !renderedTitle.includes('AIGC')) {
+        if (renderReadyMarker !== 'aigc-director-studio') {
           throw new Error('STUDIO_RENDER_FAILED')
         }
         await writeDesktopSmokeResult('DIRECTOR_DESKTOP_READY')

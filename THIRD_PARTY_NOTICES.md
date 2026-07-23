@@ -20,6 +20,8 @@ This file is an engineering inventory, not legal advice.
 
 The application icon in `resources/icon.svg` is original project artwork; PNG, ICNS, and ICO files are mechanical derivatives of that SVG.
 
+The product screenshots in `docs/screenshots/v2-studio.jpg` and `docs/screenshots/v2-electron.jpg` are first-party captures of this repository running with an isolated local database, Demo Mode enabled, Provider networking disabled, and no user media or external copyrighted artwork. They may be redistributed under the repository license as documentation assets.
+
 `yazl@3.3.1` is an MIT-licensed development/test-only dependency used to create hostile and valid ZIP fixtures; it is not a production runtime dependency. `ini@1.3.0` omits an SPDX field in its package metadata, but its installed `LICENSE` contains the MIT license text. `expand-template` is `(MIT OR WTFPL)` and `rc` is `(BSD-2-Clause OR MIT OR Apache-2.0)`; this project uses the permissive option stated by each package.
 
 No model weights, ONNX model, Deno runtime, Provider SDK credential, third-party Prompt, external screenshot, music, font, or demo video is committed or bundled in the current 2.0 tree. The optional Deno installer is locked to Deno 2.9.2 official release assets; platform, size, SHA-256 and source URL are recorded in `packages/providers/src/denoRuntime.ts`. Tests use generated fixtures and do not download or execute Deno. Any other optional download must record its exact version, checksum, source, size, and license before release. The desktop build copies this file and the project `LICENSE` into the application resources directory.

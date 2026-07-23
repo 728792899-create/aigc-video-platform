@@ -5,18 +5,33 @@ import {
   ArtifactVersionSchema,
   ArtifactHeadSchema,
   AssetBindingSchema,
+  CandidateBatchRetryRequestSchema,
   CandidateBatchSchema,
   CandidateSchema,
+  CreativeBriefCandidateRequestSchema,
+  CreativeBriefCandidateReviewRequestSchema,
+  CreativeBriefSchema,
+  CreativeBriefRevisionRequestSchema,
   GenerationTaskSchema,
   EgressBrokerStatusSchema,
   DenoRuntimeInstallRequestSchema,
   DenoRuntimeCancelRequestSchema,
   DenoRuntimeStatusSchema,
   EgressRequestDescriptorSchema,
+  EpisodeContinuitySummaryRequestSchema,
+  EpisodeContinuitySummarySchema,
+  ExportApprovalRequestSchema,
+  ExportPreflightSchema,
+  ExportTaskInputSchema,
   GraphCommandSchema,
   ProjectPackageManifestSchema,
   ReconcilePreviewSchema,
+  ScenePatchApplyRequestSchema,
+  SceneRevisionPatchSchema,
   PromptRevisionSchema,
+  PromptPolishRequestSchema,
+  ProjectGenerationPolicySchema,
+  ProjectGenerationPolicyUpdateRequestSchema,
   ScopedPromptBindingSchema,
   ScopedRegenerationRequestSchema,
   ProviderMediaReceiptSchema,
@@ -28,7 +43,14 @@ import {
   ProviderPublisherRevokeRequestSchema,
   ProviderPublisherTrustRequestSchema,
   ProviderPublisherTrustSchema,
+  ProviderConnectionCreateRequestSchema,
+  ProviderConnectionSchema,
+  ProviderRoutePolicySchema,
+  ProjectDiagnosticBundleSchema,
+  ProjectSecurityAuditLogSchema,
+  SecurityAuditEventSchema,
   ModelDescriptorSchema,
+  MusicAssetMetadataSchema,
   MemoryRecordSchema,
   MemorySearchResultSchema,
   SkillPackageVersionSchema,
@@ -37,9 +59,198 @@ import {
   ShotSchema,
   SourceImportPreviewSchema,
   StoryEventEdgeSchema,
+  TaskDiagnosticSchema,
+  TaskAdmissionSchema,
+  TaskRetryRequestSchema,
+  VoiceAssetMetadataSchema,
+  parseAssetMetadata,
 } from '../src/index.js'
 
 describe('2.0 跨进程契约', () => {
+  it('Provider 连接只保存凭据引用，拒绝 HTTP、嵌入凭据和可执行适配器', () => {
+    const now = new Date().toISOString()
+    const connection = ProviderConnectionSchema.parse({
+      id: crypto.randomUUID(), displayName: '主生成连接', protocol: 'openai-compatible',
+      endpointOrigin: 'https://relay.example.com/', credentialRef: 'keychain:relay-primary', credentialConfigured: true,
+      capabilities: ['text', 'image'], state: 'ready', trust: 'verified-endpoint', revision: 1,
+      createdAt: now, updatedAt: now,
+    })
+    expect(JSON.stringify(connection)).not.toContain('secret-value')
+    expect(ProviderConnectionCreateRequestSchema.safeParse({
+      displayName: '不安全连接', protocol: 'openai-compatible', endpointOrigin: 'http://relay.example.com/',
+      credentialKey: 'relay-primary', credential: 'demo-not-real-secret', capabilities: ['image'],
+      confirmation: 'CREATE_LOCAL_PROVIDER_CONNECTION',
+    }).success).toBe(false)
+    expect(ProviderConnectionCreateRequestSchema.safeParse({
+      displayName: '伪插件', protocol: 'declarative-http', endpointOrigin: 'https://relay.example.com/',
+      credentialKey: 'relay-primary', capabilities: ['video'], confirmation: 'CREATE_LOCAL_PROVIDER_CONNECTION',
+      manifest: {
+        version: 1, submit: { method: 'POST', path: '/jobs', response: { jobId: 'data.id', status: 'data.status' } },
+        terminalStates: { succeeded: ['done'], failed: ['failed'] }, sourceCode: 'export default () => fetch("*")',
+      },
+    }).success).toBe(false)
+  })
+
+  it('Provider 路由拒绝主连接重复出现在降级链', () => {
+    const primary = crypto.randomUUID()
+    const fallback = crypto.randomUUID()
+    expect(ProviderRoutePolicySchema.safeParse({
+      projectId: crypto.randomUUID(), revision: 1,
+      routes: [{ modality: 'image', primaryConnectionId: primary, fallbackConnectionIds: [primary], model: 'image-v1', maxAttempts: 2, timeoutMs: 60_000 }],
+      dailyBudgetMicros: 0, currency: 'USD', updatedAt: new Date().toISOString(),
+    }).success).toBe(false)
+    expect(ProviderRoutePolicySchema.parse({
+      projectId: crypto.randomUUID(), revision: 1,
+      routes: [{
+        modality: 'image', primaryConnectionId: primary, fallbackConnectionIds: [fallback],
+        fallbackConnectionModels: { [fallback]: 'fallback-image-v2' }, model: 'image-v1', maxAttempts: 2, timeoutMs: 60_000,
+      }],
+      dailyBudgetMicros: 1_000_000, currency: 'USD', updatedAt: new Date().toISOString(),
+    }).routes[0]?.fallbackConnectionModels).toEqual({ [fallback]: 'fallback-image-v2' })
+    expect(ProviderRoutePolicySchema.safeParse({
+      projectId: crypto.randomUUID(), revision: 1,
+      routes: [{
+        modality: 'image', primaryConnectionId: primary, fallbackConnectionIds: [fallback],
+        fallbackConnectionModels: { [crypto.randomUUID()]: 'unreachable-model' }, model: 'image-v1', maxAttempts: 2, timeoutMs: 60_000,
+      }],
+      dailyBudgetMicros: 0, currency: 'USD', updatedAt: new Date().toISOString(),
+    }).success).toBe(false)
+  })
+
+  it('安全审计只接受固定动作、阶段与脱敏目标引用', () => {
+    const now = new Date().toISOString()
+    const projectId = crypto.randomUUID()
+    const operationId = crypto.randomUUID()
+    const started = SecurityAuditEventSchema.parse({
+      id: crypto.randomUUID(), operationId, projectId,
+      action: 'generation_policy.update', status: 'started', targetType: 'project',
+      targetReferenceHash: 'a'.repeat(64), correlationId: 'audit-contract-request-001', createdAt: now,
+    })
+    const succeeded = SecurityAuditEventSchema.parse({
+      ...started, id: crypto.randomUUID(), status: 'succeeded', createdAt: new Date(Date.now() + 1).toISOString(),
+    })
+    const log = ProjectSecurityAuditLogSchema.parse({ projectId, generatedAt: now, events: [succeeded, started] })
+    expect(log.events).toHaveLength(2)
+    expect(SecurityAuditEventSchema.safeParse({ ...started, apiKey: 'forbidden' }).success).toBe(false)
+    expect(SecurityAuditEventSchema.safeParse({ ...started, targetReferenceHash: projectId }).success).toBe(false)
+    expect(SecurityAuditEventSchema.safeParse({ ...started, action: 'arbitrary.shell.execute' }).success).toBe(false)
+  })
+
+  it('创意简报使用严格可验证契约，不允许 UI 夹带未声明字段', () => {
+    const brief = {
+      goal: '将灯塔故事改编为可发布的竖屏短片', targetAudience: '科幻悬疑观众', platform: 'douyin',
+      genre: '科幻悬疑', tone: '克制、电影化', targetDurationSeconds: 60, aspectRatio: '9:16',
+      language: 'zh-CN', constraints: ['保留原著的灯塔线索'],
+    } as const
+    expect(CreativeBriefSchema.parse(brief).targetDurationSeconds).toBe(60)
+    expect(CreativeBriefRevisionRequestSchema.safeParse({ expectedRevision: 0, brief, providerPayload: {} }).success).toBe(false)
+    expect(CreativeBriefSchema.safeParse({ ...brief, targetDurationSeconds: 4 }).success).toBe(false)
+  })
+
+  it('创意简报候选固定锁定字段，批准和拒绝使用不同精确确认', () => {
+    expect(CreativeBriefCandidateRequestSchema.parse({
+      count: 3, feedback: '增加节奏感', lockedFields: ['goal', 'language'],
+      idempotencyKey: 'brief-candidate-request-0001',
+    }).lockedFields).toEqual(['goal', 'language'])
+    expect(CreativeBriefCandidateReviewRequestSchema.safeParse({
+      decision: 'approve', expectedApprovedRevision: 1,
+      confirmation: 'APPROVE_CREATIVE_BRIEF', idempotencyKey: 'brief-review-request-0001',
+    }).success).toBe(true)
+    expect(CreativeBriefCandidateReviewRequestSchema.safeParse({
+      decision: 'approve', expectedApprovedRevision: 1,
+      confirmation: 'REJECT_CREATIVE_BRIEF', idempotencyKey: 'brief-review-request-0002',
+    }).success).toBe(false)
+  })
+
+  it('Voice/Music 元数据有明确边界与权利状态', () => {
+    expect(parseAssetMetadata('voice', {}).rightsStatus).toBe('review_required')
+    expect(VoiceAssetMetadataSchema.safeParse({ language: 'zh-CN', speed: 3 }).success).toBe(false)
+    expect(MusicAssetMetadataSchema.safeParse({ durationMs: 4_000, loopStartMs: 3_000, loopEndMs: 5_000 }).success).toBe(false)
+    expect(parseAssetMetadata('music', { source: 'demo_fixture', rightsStatus: 'original' })).toMatchObject({ source: 'demo_fixture', rightsStatus: 'original' })
+  })
+
+  it('跨集摘要固定来源 revision/hash 且创建操作需要精确确认', () => {
+    const sourceId = crypto.randomUUID()
+    const episodeId = crypto.randomUUID()
+    expect(EpisodeContinuitySummarySchema.parse({
+      episodeId, source: { id: sourceId, revision: 2, contentHash: 'a'.repeat(64) },
+      summary: '主角抵达灯塔并发现失踪记录。', nextHook: '地下室仍有灯光。',
+      lockedFacts: ['灯塔已经停用'], eventRevisionHash: 'b'.repeat(64), generatedAt: new Date().toISOString(),
+    }).source.revision).toBe(2)
+    expect(EpisodeContinuitySummaryRequestSchema.safeParse({
+      expectedSourceId: sourceId, expectedSourceRevision: 2, expectedSourceHash: 'a'.repeat(64),
+      idempotencyKey: 'episode-summary-request-001', confirmation: 'CREATE_EPISODE_CONTINUITY_SUMMARY',
+    }).success).toBe(true)
+    expect(EpisodeContinuitySummaryRequestSchema.safeParse({
+      expectedSourceId: sourceId, expectedSourceRevision: 2, expectedSourceHash: 'a'.repeat(64),
+      idempotencyKey: 'episode-summary-request-001', confirmation: 'CONFIRM',
+    }).success).toBe(false)
+  })
+
+  it('导出任务固定 Shot/Candidate/Media 顺序与 hash', () => {
+    const now = new Date().toISOString()
+    const projectId = crypto.randomUUID()
+    const shotId = crypto.randomUUID()
+    const shot = {
+      id: shotId, projectId, sceneId: crypto.randomUUID(), title: '镜头 1', description: '灯塔', durationMs: 1_000,
+      ordinal: 0, revision: 2, staleFields: [], createdAt: now, updatedAt: now,
+    }
+    const selection = { shotId, shotRevision: 2, candidateId: crypto.randomUUID(), mediaId: crypto.randomUUID(), mediaSha256: 'a'.repeat(64), kind: 'image' }
+    expect(ExportTaskInputSchema.parse({
+      projectId, outputDirectory: '/tmp/export', fileName: 'demo.mp4', width: 1280, height: 720, fps: 24,
+      shotSnapshots: [shot], selections: [selection], assemblyHash: 'b'.repeat(64), assembledAt: now,
+    }).selections[0]?.candidateId).toBe(selection.candidateId)
+    expect(ExportTaskInputSchema.safeParse({
+      projectId, outputDirectory: '/tmp/export', fileName: 'demo.mp4', width: 1280, height: 720, fps: 24,
+      shotSnapshots: [shot], selections: [{ ...selection, shotId: crypto.randomUUID() }], assemblyHash: 'b'.repeat(64), assembledAt: now,
+    }).success).toBe(false)
+  })
+
+  it('导出预检不暴露本机目录，正式启动需要一次性精确确认', () => {
+    const preflight = ExportPreflightSchema.parse({
+      id: crypto.randomUUID(), projectId: crypto.randomUUID(), fileName: 'demo.mp4',
+      shotCount: 2, selectedCandidateCount: 2, durationMs: 8_000, width: 1280, height: 720, fps: 24,
+      assemblyHash: 'a'.repeat(64), destination: 'local-directory-selected',
+      billing: { provider: 'demo-local', verified: true, amountMicros: 0, currency: 'none' },
+      approvalToken: 'approval-token-with-enough-entropy', expiresAt: new Date(Date.now() + 60_000).toISOString(),
+    })
+    expect(preflight).not.toHaveProperty('outputDirectory')
+    expect(ExportApprovalRequestSchema.safeParse({
+      preflightId: preflight.id, approvalToken: preflight.approvalToken, confirmation: 'START_LOCAL_EXPORT',
+    }).success).toBe(true)
+    expect(ExportApprovalRequestSchema.safeParse({
+      preflightId: preflight.id, approvalToken: preflight.approvalToken, confirmation: 'EXPORT',
+    }).success).toBe(false)
+  })
+
+  it('项目诊断包只能包含脱敏状态证据', () => {
+    const bundle = ProjectDiagnosticBundleSchema.parse({
+      format: 'aigc-director-diagnostic', version: 1, generatedAt: new Date().toISOString(),
+      projectReferenceHash: 'a'.repeat(64),
+      runtime: { productVersion: '2.0.0', schemaVersion: 10, providerNetworkDisabled: true, billingMode: 'demo-only' },
+      counts: { sources: 1, chapters: 1, events: 2, scenes: 1, shots: 2, assets: 1, candidates: 4, media: 4, artifacts: 3, tasks: 2 },
+      taskStatusCounts: { succeeded: 1, failed: 1 },
+      tasks: [{
+        taskReferenceHash: 'b'.repeat(64), type: 'image', status: 'failed', stage: 'Demo 图片候选',
+        provider: 'demo-local', model: 'demo-image-v1', attempt: 1, outcomeCertainty: 'certain',
+        reconcileRequired: false, retryAllowed: true, cancelSemantics: 'local_only',
+        correlationId: crypto.randomUUID(), errorCode: 'TASK_EXECUTION_FAILED',
+        suggestedActions: ['retry', 'inspect'], elapsedMs: 30, updatedAt: new Date().toISOString(),
+      }],
+      integrityIssues: [],
+      privacy: {
+        credentialsIncluded: false, absolutePathsIncluded: false, rawUserContentIncluded: false,
+        rawPromptsIncluded: false, providerPayloadsIncluded: false, signedUrlsIncluded: false,
+      },
+      bundleHash: 'c'.repeat(64),
+    })
+    const serialized = JSON.stringify(bundle)
+    expect(serialized).not.toContain('inputSnapshot')
+    expect(serialized).not.toContain('providerTaskId')
+    expect(serialized).not.toContain('outputDirectory')
+    expect(serialized).not.toContain('apiKey')
+  })
+
   it('Agent checkpoint 只保存脱敏记忆引用，不接受记忆正文', () => {
     const now = new Date().toISOString()
     const citation = {
@@ -79,6 +290,27 @@ describe('2.0 跨进程契约', () => {
       variables: { topic: '雨夜车站' }, idempotencyKey: 'regenerate-scene-0001', unexpected: true,
     }).success).toBe(false)
   })
+
+  it('场景 patch 必须绑定基线 revision，应用前要求明确确认', () => {
+    const sceneId = crypto.randomUUID()
+    const shotId = crypto.randomUUID()
+    expect(SceneRevisionPatchSchema.parse({
+      sceneId, baseRevision: 2, changes: {},
+      shotPatches: [{ shotId, baseRevision: 3, changes: { dialogue: '我会准时赴约。' } }],
+    })).toMatchObject({ baseRevision: 2, shotPatches: [{ shotId, baseRevision: 3 }] })
+    expect(SceneRevisionPatchSchema.parse({ sceneId, baseRevision: 2, changes: { synopsis: '雨夜站台上，主角发现信件。' } }).shotPatches).toEqual([])
+    expect(SceneRevisionPatchSchema.safeParse({ sceneId, baseRevision: 2, changes: {} }).success).toBe(false)
+    expect(SceneRevisionPatchSchema.safeParse({
+      sceneId, baseRevision: 2, changes: {},
+      shotPatches: [
+        { shotId, baseRevision: 3, changes: { dialogue: '第一稿' } },
+        { shotId, baseRevision: 3, changes: { dialogue: '重复目标' } },
+      ],
+    }).success).toBe(false)
+    expect(ScenePatchApplyRequestSchema.safeParse({
+      expectedProjectRevision: 4, expectedSceneRevision: 2, idempotencyKey: 'apply-scene-patch-0001', confirmation: 'confirm',
+    }).success).toBe(false)
+  })
   it('保存不可变阶段产物及其 Prompt 和依赖证据', () => {
     const now = new Date().toISOString()
     const artifact = ArtifactVersionSchema.parse({
@@ -98,6 +330,50 @@ describe('2.0 跨进程契约', () => {
 
   it('画布命令必须携带乐观锁与幂等键', () => {
     expect(GraphCommandSchema.safeParse({ type: 'move_nodes', expectedRevision: 1, idempotencyKey: 'short', positions: {} }).success).toBe(false)
+  })
+
+  it('主任务明确区分未知结果和人工关注，重试必须显式确认', () => {
+    const now = new Date().toISOString()
+    const task = GenerationTaskSchema.parse({
+      id: crypto.randomUUID(), projectId: crypto.randomUUID(), type: 'video', status: 'outcome_unknown',
+      stage: '等待 Provider 对账', idempotencyKey: 'provider-submit-idempotency-0001', provider: 'demo-local', model: 'demo-video-v1',
+      attempt: 1, inputSnapshot: { promptHash: 'a'.repeat(64) }, retryable: false,
+      needsAttentionReason: 'Provider 已可能接受任务，禁止盲目重提。', createdAt: now, updatedAt: now,
+    })
+    expect(task.status).toBe('outcome_unknown')
+    expect(GenerationTaskSchema.parse({ ...task, status: 'needs_attention' }).status).toBe('needs_attention')
+    expect(TaskRetryRequestSchema.safeParse({ idempotencyKey: 'retry-idempotency-key-0001', confirmation: 'yes' }).success).toBe(false)
+    expect(TaskRetryRequestSchema.parse({ idempotencyKey: 'retry-idempotency-key-0001', confirmation: 'RETRY_FAILED_TASK' })).toBeTruthy()
+    const diagnostic = TaskDiagnosticSchema.parse({
+      taskId: task.id, projectId: task.projectId, status: task.status, outcomeCertainty: 'unknown',
+      reconcileRequired: true, retryAllowed: false, cancelSemantics: 'unsupported', correlationId: crypto.randomUUID(),
+      providerReferenceHash: 'b'.repeat(64), suggestedActions: ['reconcile', 'inspect'], elapsedMs: 25, updatedAt: now,
+    })
+    expect(diagnostic).not.toHaveProperty('inputSnapshot')
+    expect(diagnostic).not.toHaveProperty('providerTaskId')
+  })
+
+  it('任务准入不伪造价格，并明确付费 Provider 默认关闭', () => {
+    const projectId = crypto.randomUUID()
+    const policy = ProjectGenerationPolicySchema.parse({
+      projectId, revision: 0, billingMode: 'demo-only', paidProviders: 'blocked',
+      maxConcurrentTasks: 4, maxCandidatesPerBatch: 4, maxExportDurationMs: 120_000,
+      dailyPaidBudgetMicros: 0, updatedAt: new Date().toISOString(),
+    })
+    expect(ProjectGenerationPolicyUpdateRequestSchema.safeParse({
+      expectedRevision: 0, maxConcurrentTasks: 2, maxCandidatesPerBatch: 2,
+      maxExportDurationMs: 60_000, confirmation: 'yes',
+    }).success).toBe(false)
+    const admission = TaskAdmissionSchema.parse({
+      projectId, allowed: false, activeTasks: 4, maxConcurrentTasks: 4,
+      maxCandidatesPerBatch: 4, maxExportDurationMs: 120_000, policyRevision: policy.revision,
+      paidProviders: 'blocked', providerNetworkDisabled: true, reasons: ['concurrency_limit', 'provider_network_disabled'],
+      dailyPaidBudgetMicros: 0, dailyPaidSpentMicros: 0, remainingPaidBudgetMicros: 0,
+      checkedAt: new Date().toISOString(),
+    })
+    expect(admission.paidProviders).toBe('blocked')
+    expect(admission.dailyPaidBudgetMicros).toBe(0)
+    expect(admission).not.toHaveProperty('estimatedPrice')
   })
 
   it('Deno 运行时状态不暴露本机可执行路径且安装必须精确确认', () => {
@@ -268,6 +544,18 @@ describe('2.0 跨进程契约', () => {
       source: 'original-clean-room', contentHash: 'd'.repeat(64), createdAt: now, updatedAt: now,
     })
     expect(prompt.feedback).toBe('')
+    expect(PromptPolishRequestSchema.parse({
+      expectedRevision: 1,
+      feedback: '强化场景的空间关系',
+      direction: 'cinematic',
+      idempotencyKey: 'prompt-polish-contract-0001',
+    }).direction).toBe('cinematic')
+    expect(PromptPolishRequestSchema.safeParse({
+      expectedRevision: 1,
+      feedback: '强化场景',
+      idempotencyKey: 'prompt-polish-contract-0001',
+      providerPayload: { apiKey: 'forbidden' },
+    }).success).toBe(false)
     expect(ArtifactHeadSchema.parse({
       scope: { type: 'project', id: crypto.randomUUID() }, artifactType: 'SceneScript',
       currentVersionId: crypto.randomUUID(), expectedRevision: 2, updatedAt: now,
@@ -309,6 +597,15 @@ describe('2.0 跨进程契约', () => {
     expect(candidate.parametersSnapshot).toEqual({})
     expect(receipt).not.toHaveProperty('locator')
     expect(JSON.stringify({ model, receipt })).not.toMatch(/api[_-]?key|authorization|signedUrl/iu)
+  })
+
+  it('候选失败批次重试必须使用精确确认和幂等键', () => {
+    expect(CandidateBatchRetryRequestSchema.parse({
+      idempotencyKey: 'retry-failed-candidates-001', confirmation: 'RETRY_FAILED_CANDIDATES',
+    }).confirmation).toBe('RETRY_FAILED_CANDIDATES')
+    expect(CandidateBatchRetryRequestSchema.safeParse({
+      idempotencyKey: 'too-short', confirmation: 'RETRY_FAILED_CANDIDATES',
+    }).success).toBe(false)
   })
 
   it('分层记忆保存来源 revision、stale 状态和可解释召回', () => {

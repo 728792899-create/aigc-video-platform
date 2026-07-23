@@ -267,11 +267,14 @@ export function linkPreviousEndFrame(current: Shot, previous: Shot, options: { p
 }
 
 export const staleDependents: Readonly<Record<string, readonly string[]>> = {
+  title: ['image', 'video', 'timeline', 'export'],
   description: ['image', 'video', 'timeline', 'export'],
   visualPrompt: ['image', 'video', 'timeline', 'export'],
+  negativePrompt: ['image', 'video', 'timeline', 'export'],
   videoPrompt: ['video', 'timeline', 'export'],
   dialogue: ['voice', 'subtitle', 'timeline', 'export'],
   durationMs: ['subtitle', 'timeline', 'export'],
+  beats: ['image', 'video', 'voice', 'subtitle', 'timeline', 'export'],
   assetBinding: ['image', 'video', 'timeline', 'export'],
   music: ['timeline', 'export'],
 }
@@ -280,18 +283,29 @@ export function propagateStaleFields(changedFields: string[]): string[] {
   return [...new Set(changedFields.flatMap((field) => staleDependents[field] ?? []))]
 }
 
+export const sceneStaleDependents: Readonly<Record<string, readonly string[]>> = {
+  title: ['image', 'video', 'timeline', 'export'],
+  synopsis: ['image', 'video', 'timeline', 'export'],
+}
+
+export function propagateSceneStaleFields(changedFields: string[]): string[] {
+  return [...new Set(changedFields.flatMap((field) => sceneStaleDependents[field] ?? []))]
+}
+
 const allowedTaskTransitions: Readonly<Record<GenerationTask['status'], readonly GenerationTask['status'][]>> = {
   queued: ['running', 'cancel_requested', 'cancelled'],
-  running: ['succeeded', 'failed', 'cancel_requested', 'timed_out', 'orphaned', 'waiting_approval'],
+  running: ['succeeded', 'failed', 'cancel_requested', 'timed_out', 'orphaned', 'waiting_approval', 'outcome_unknown'],
   waiting_approval: ['running', 'cancelled'],
-  retrying: ['running', 'failed'],
+  retrying: ['running', 'failed', 'outcome_unknown'],
   succeeded: [],
   failed: ['retrying'],
-  cancel_requested: ['cancelled', 'succeeded', 'failed'],
+  cancel_requested: ['cancelled', 'succeeded', 'failed', 'outcome_unknown'],
   cancelled: [],
-  timed_out: ['retrying'],
-  orphaned: ['reconciling', 'failed'],
-  reconciling: ['running', 'succeeded', 'failed', 'orphaned'],
+  timed_out: ['retrying', 'reconciling', 'outcome_unknown'],
+  orphaned: ['reconciling', 'failed', 'needs_attention'],
+  reconciling: ['running', 'succeeded', 'failed', 'orphaned', 'outcome_unknown', 'needs_attention'],
+  outcome_unknown: ['reconciling', 'succeeded', 'failed', 'needs_attention'],
+  needs_attention: ['reconciling', 'retrying', 'cancelled'],
 }
 
 export function canTransitionTask(from: GenerationTask['status'], to: GenerationTask['status']): boolean {
@@ -336,14 +350,16 @@ export function projectGraph(snapshot: ProjectSnapshot, view: GraphProjection['v
   const nodes: GraphNode[] = []
   const edges: GraphEdge[] = []
   if (view === 'story') {
+    nodes.push(node(snapshot.project.id, 'project', snapshot.project.name, '创意简报与项目约束', 0, snapshot.series ? 2 : snapshot.episode ? 1 : 0))
     if (snapshot.series) nodes.push(node(snapshot.series.id, 'series', snapshot.series.name, `Series revision ${snapshot.series.revision}`, 0, 0))
     if (snapshot.episode) nodes.push(node(snapshot.episode.id, 'episode', snapshot.episode.title, `Episode ${snapshot.episode.ordinal + 1}`, 0, snapshot.series ? 1 : 0))
-    const offset = snapshot.series ? 2 : snapshot.episode ? 1 : 0
+    const offset = snapshot.series ? 3 : snapshot.episode ? 2 : 1
     snapshot.sources.forEach((source, index) => nodes.push(node(source.id, 'source', source.title, `原著 revision ${source.revision}`, index, offset)))
     snapshot.chapters.forEach((chapter, index) => nodes.push(node(chapter.id, 'chapter', chapter.title, chapter.summary.slice(0, 80), index, offset + 1)))
     snapshot.events.forEach((event, index) => nodes.push(node(event.id, 'event', event.title, event.type, index, offset + 2)))
     if (snapshot.series && snapshot.episode) edges.push({ id: `series:${snapshot.series.id}:episode:${snapshot.episode.id}`, source: `series:${snapshot.series.id}`, target: `episode:${snapshot.episode.id}`, type: 'contains', animated: false })
-    if (snapshot.episode) snapshot.sources.forEach((source) => edges.push({ id: `episode:${snapshot.episode!.id}:source:${source.id}`, source: `episode:${snapshot.episode!.id}`, target: `source:${source.id}`, type: 'contains', animated: false }))
+    if (snapshot.episode) edges.push({ id: `episode:${snapshot.episode.id}:project:${snapshot.project.id}`, source: `episode:${snapshot.episode.id}`, target: `project:${snapshot.project.id}`, type: 'produces', animated: false })
+    snapshot.sources.forEach((source) => edges.push({ id: `project:${snapshot.project.id}:source:${source.id}`, source: `project:${snapshot.project.id}`, target: `source:${source.id}`, type: 'contains', animated: false }))
     snapshot.chapters.forEach((chapter) => edges.push({ id: `source:${chapter.sourceId}:chapter:${chapter.id}`, source: `source:${chapter.sourceId}`, target: `chapter:${chapter.id}`, type: 'contains', animated: false }))
     snapshot.events.forEach((event) => edges.push({ id: `chapter:${event.chapterId}:event:${event.id}`, source: `chapter:${event.chapterId}`, target: `event:${event.id}`, type: 'contains', animated: false }))
     snapshot.eventEdges.forEach((edge) => edges.push({ id: edge.id, source: `event:${edge.sourceEventId}`, target: `event:${edge.targetEventId}`, type: edge.type, label: edge.type, animated: edge.type === 'causes' }))

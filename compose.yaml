@@ -1,0 +1,43 @@
+name: aigc-director-studio
+
+services:
+  studio:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    image: aigc-director-studio:local
+    restart: unless-stopped
+    init: true
+    read_only: true
+    user: node
+    ports:
+      - "127.0.0.1:${AIGC_DIRECTOR_PUBLIC_PORT:-33100}:33100"
+    environment:
+      DEMO_MODE: "${DEMO_MODE:-1}"
+      PROVIDER_NETWORK_DISABLED: "${PROVIDER_NETWORK_DISABLED:-1}"
+      AIGC_DIRECTOR_SESSION_TOKEN: "${AIGC_DIRECTOR_SESSION_TOKEN:?run pnpm docker:up}"
+      AIGC_DIRECTOR_BOOTSTRAP_TOKEN: "${AIGC_DIRECTOR_BOOTSTRAP_TOKEN:?run pnpm docker:up}"
+      AIGC_DIRECTOR_ALLOWED_ORIGINS: "http://127.0.0.1:${AIGC_DIRECTOR_PUBLIC_PORT:-33100},http://localhost:${AIGC_DIRECTOR_PUBLIC_PORT:-33100}"
+    volumes:
+      - director-data:/data
+    secrets:
+      - provider_credentials
+    tmpfs:
+      - /tmp:size=256m,mode=1777
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges:true
+    healthcheck:
+      test: ["CMD", "node", "-e", "fetch('http://127.0.0.1:33100/api/v2/health').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"]
+      interval: 10s
+      timeout: 3s
+      start_period: 20s
+      retries: 6
+
+volumes:
+  director-data:
+
+secrets:
+  provider_credentials:
+    file: ${AIGC_DIRECTOR_CREDENTIALS_SECRET_FILE:-./.local/docker/provider-credentials.json}
