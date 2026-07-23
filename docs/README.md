@@ -1,9 +1,10 @@
 # AIGC 导演工作室 2.0 文档
 
-当前文档对应 schema v12 与 `/api/v2`。本机服务和 Docker 均无需登录或云数据库；Demo 付费请求固定为 0。Browser 已验证 1440/1180/760 工作台，顶层 Smoke 覆盖局部失败重试、有效 MP4 和服务重启恢复。正式 Provider live verification、签名、公证与线上更新仍未验收。
+当前文档对应 schema v12 与 `/api/v2`。本机服务和 Docker 均无需登录或云数据库；Demo 付费请求固定为 0。Browser 已验证 1440/1180/≤768 工作台，顶层 Smoke 覆盖局部失败重试、有效 MP4 和服务重启恢复。正式 Provider live verification、签名、公证与线上更新仍未验收。
 
 - [架构与能力边界](architecture-v2.md)
-- [当前项目状态（2026-07-22 单一事实源）](current-status.md)
+- [当前项目状态（2026-07-23 单一事实源）](current-status.md)
+- [Product Design 实机审查与截图证据](product-design-audit-2026-07-23.md)
 - [API v2](api-v2.md)
 - [Schema v12 数据模型](data-model-v2.md)
 - [Prompt Pack 集成审计](PROMPT_PACK_INTEGRATION_AUDIT.md)

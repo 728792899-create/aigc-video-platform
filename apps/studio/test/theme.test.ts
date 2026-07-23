@@ -113,6 +113,23 @@ describe('Obsidian Atelier runtime contract', () => {
     expect(studio).toContain("const destination: StudioWorkspaceId = hasAttentionTask ? 'tasks' : hasPendingReview ? 'review' : 'brief'")
     expect(styles).toContain('.studio-sidebar { width: 240px; flex: 0 0 240px;')
     expect(styles).toContain('.studio-topbar { min-width: 0; min-height: 64px;')
+    expect(styles).toContain('grid-template-columns: minmax(0, 1.55fr) minmax(360px, .75fr);')
+    expect(styles).toContain('grid-column: 2; grid-row: 3; grid-template-columns: repeat(2, minmax(0, 1fr));')
+    expect(styles).not.toContain('grid-template-columns: repeat(4, 254px);')
+  })
+
+  it('supports the v2 single-sidebar compact mode without duplicating navigation', async () => {
+    const sidebar = await readFile(resolve(srcRoot, 'components/StudioSidebar.vue'), 'utf8')
+    const studio = await readFile(resolve(srcRoot, 'views/DirectorStudio.vue'), 'utf8')
+    const styles = await readFile(resolve(srcRoot, 'styles.css'), 'utf8')
+    expect(sidebar).toContain("collapsed ? '展开主导航' : '收起主导航'")
+    expect(sidebar).toContain("@click=\"$emit('toggleCollapse')\"")
+    expect(studio).toContain("'studio-shell--sidebar-collapsed': sidebarCollapsed")
+    expect(styles).toContain('.studio-shell.studio-shell--sidebar-collapsed .studio-sidebar,')
+    expect(styles).toContain('width: 72px;')
+    expect(styles).toContain('.studio-shell--sidebar-collapsed .studio-sidebar__item-copy { display: none; }')
+    expect(styles).toContain('.project-center-workspace__header { min-height: 0; display: grid; grid-template-columns: 1fr;')
+    expect(styles).toContain('.studio-shell[data-workspace] .studio-sidebar__brand { display: none; }')
   })
 
   it('keeps partial-generation recovery visible without expanding the full page', async () => {

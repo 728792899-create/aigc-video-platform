@@ -2,7 +2,18 @@
   <aside class="studio-sidebar" aria-label="工作室主导航">
     <header class="studio-sidebar__brand">
       <span class="studio-sidebar__brand-mark"><Sparkles :size="17" aria-hidden="true" /></span>
-      <span><strong>AIGC 导演工作室</strong><small>此设备 · 本地工作区</small></span>
+      <span class="studio-sidebar__brand-copy"><strong>AIGC 导演工作室</strong><small>此设备 · 本地工作区</small></span>
+      <button
+        class="studio-sidebar__collapse"
+        type="button"
+        :aria-label="collapsed ? '展开主导航' : '收起主导航'"
+        :aria-expanded="!collapsed"
+        :title="collapsed ? '展开主导航' : '收起主导航'"
+        @click="$emit('toggleCollapse')"
+      >
+        <PanelLeftOpen v-if="collapsed" :size="17" aria-hidden="true" />
+        <PanelLeftClose v-else :size="17" aria-hidden="true" />
+      </button>
     </header>
 
     <nav data-onboarding-target="stage-navigation" aria-label="产品工作区">
@@ -12,6 +23,7 @@
         type="button"
         :class="{ active: item.workspaceIds.includes(currentId) }"
         :aria-current="item.workspaceIds.includes(currentId) ? 'page' : undefined"
+        :aria-label="collapsed ? `${navigationLabel(item)}：${item.description}` : undefined"
         :title="item.description"
         @click="$emit('navigate', destinationFor(item.id))"
       >
@@ -32,16 +44,17 @@
 
 <script setup lang="ts">
 import type { Component } from 'vue'
-import { Blocks, ClipboardCheck, FolderKanban, ListTodo, PlugZap, ScrollText, ShieldCheck, Sparkles } from 'lucide-vue-next'
+import { Blocks, ClipboardCheck, FolderKanban, ListTodo, PanelLeftClose, PanelLeftOpen, PlugZap, ScrollText, ShieldCheck, Sparkles } from 'lucide-vue-next'
 import type { StudioWorkspaceFacts, StudioWorkspaceId } from '../workspaces.js'
 
 const props = defineProps<{
   currentId: StudioWorkspaceId
   facts: StudioWorkspaceFacts
   completedIds: ReadonlySet<StudioWorkspaceId>
+  collapsed: boolean
 }>()
 
-defineEmits<{ navigate: [id: StudioWorkspaceId]; openCommand: []; openHelp: [] }>()
+defineEmits<{ navigate: [id: StudioWorkspaceId]; toggleCollapse: []; openCommand: []; openHelp: [] }>()
 
 type PrimaryNavigationId = 'projects' | 'creation' | 'review' | 'tasks' | 'prompt' | 'provider' | 'governance'
 type PrimaryNavigationItem = {

@@ -4,7 +4,11 @@ A local-first, recoverable AIGC video production workspace. It runs without an a
 
 The current product uses the dark **Obsidian Atelier** design system, a single collapsible sidebar, and one horizontal eight-stage project journey. Story, Production, and Delivery graphs remain local views of the same schema v12 canonical snapshot rather than separate navigation layers.
 
-The single current source of truth for runtime scope, validation, and remaining release gates is the [2026-07-22 project status](docs/current-status.md).
+The single current source of truth for runtime scope, validation, and remaining release gates is the [2026-07-23 project status](docs/current-status.md).
+
+![AIGC Director Studio project center at 1440px](docs/screenshots/v2-studio.jpg)
+
+The current implementation has one collapsible desktop sidebar and one bottom navigation layer at widths up to 768px. The [Product Design runtime audit](docs/product-design-audit-2026-07-23.md) records the measured breakpoints, screenshots, and the remaining Figma-access limitation.
 
 ## One-command local service
 

@@ -19,11 +19,22 @@
 
 当前界面采用固定的 **Obsidian Atelier** 暗色体系：低饱和墨黑画布、抬升面板、鼠尾草品牌色、蓝灰信息色、金色警告和酒红危险色。全局只有一层可折叠主侧栏，项目内使用横向八阶段导航；状态同时保留图标和文字，不依赖颜色单独传达含义。
 
-![AIGC 导演工作室 Story Graph](docs/screenshots/v2-studio.jpg)
+![AIGC 导演工作室 1440px 项目中心](docs/screenshots/v2-studio.jpg)
 
-桌面端使用同一领域数据源；下图为 Electron 40 中完成原生目录选择、零 Key 候选预览与幂等 MP4 导出后的 Delivery Graph。
+主侧栏可在桌面端收起为 72px 图标栏；小于等于 768px 时只保留单层底部导航，项目主操作和恢复入口不受影响。
 
-![AIGC 导演工作室 Electron Delivery Graph](docs/screenshots/v2-electron.jpg)
+<details>
+<summary>查看收起侧栏与窄屏实机图</summary>
+
+![AIGC 导演工作室 72px 收起侧栏](docs/screenshots/v2-studio-sidebar-collapsed.jpg)
+
+![AIGC 导演工作室 768px 窄屏项目中心](docs/screenshots/v2-studio-compact.jpg)
+
+</details>
+
+桌面端使用同一领域数据源；下图为 2026-07-23 在隔离 userData 中重新采集的 Electron 40 候选审阅工作区，明确显示 `demo-local`、`billed=false` 与零费用边界。
+
+![AIGC 导演工作室 Electron 候选审阅](docs/screenshots/v2-electron.jpg)
 
 ## 产品闭环
 
@@ -73,11 +84,11 @@ Demo Mode 会走完整数据流并输出真正可播放的 MP4，所有任务记
 
 ### 当前验证状态
 
-- 单一当前事实源见 [2026-07-22 项目状态](docs/current-status.md)；历史记录不得覆盖该页的运行时、测试与发布判断。
+- 单一当前事实源见 [2026-07-23 项目状态](docs/current-status.md)；历史记录不得覆盖该页的运行时、测试与发布判断。
 - Workspace tests、Provider 契约、TypeScript strict、ESLint、Smoke 与生产构建通过；准确数量以当前 `pnpm quality` 输出为准。
 - Security scan、clean-room scan 与系统 FFmpeg 有效 MP4 冒烟通过。
 - Event/Scene 局部重生成先追加 Artifact；Scene draft 可包含 Scene 与所属 Shot 的字段 patch，审阅后以 project/scene/shot revision CAS 在单个事务内应用。对白只污染 voice/subtitle/timeline/export，视觉字段才污染 image/video；Shot 局部重生成仍只追加 Candidate，不覆盖其他场景或已选结果。
-- Browser 已验证 1440/1180/760 单侧栏工作台、16 个 Workspace、定向引导与零控制台错误。
+- Browser 已验证 1440/1180/≤768 单侧栏工作台、72px 收起模式、16 个 Workspace、定向引导与零页面控制台错误；截图与审查证据见 [Product Design 实机审查](docs/product-design-audit-2026-07-23.md)。
 - 正式 Provider 线上语义、安装包签名、公证、Windows 干净机和自动更新仍属于外部门禁，不宣称已完成。
 
 ## 快速开始

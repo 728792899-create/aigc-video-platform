@@ -188,11 +188,11 @@ async function createMainWindow(): Promise<void> {
   mainWindow.webContents.once('did-finish-load', async () => {
     if (desktopSmokeEnabled || process.env.AIGC_DIRECTOR_DESKTOP_SMOKE === '1') {
       try {
-        const renderedTitle = await mainWindow?.webContents.executeJavaScript(
-          "document.querySelector('h1')?.textContent ?? document.body?.innerText ?? ''",
+        const renderReadyMarker = await mainWindow?.webContents.executeJavaScript(
+          "document.querySelector('[data-desktop-smoke-ready=\"aigc-director-studio\"]')?.getAttribute('data-desktop-smoke-ready') ?? ''",
           true,
         ) as unknown
-        if (typeof renderedTitle !== 'string' || !renderedTitle.includes('AIGC')) {
+        if (renderReadyMarker !== 'aigc-director-studio') {
           throw new Error('STUDIO_RENDER_FAILED')
         }
         await writeDesktopSmokeResult('DIRECTOR_DESKTOP_READY')

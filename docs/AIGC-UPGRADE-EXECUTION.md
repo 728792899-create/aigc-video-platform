@@ -93,7 +93,7 @@ Task Tray 现在显示中文状态、人工关注原因和取消语义，并提�
 - Studio Systems 工作区新增安全审计面板，只渲染契约允许的脱敏字段。Global Prompt/Skill 暂无 project scope，因此不写入某个项目的审计流。
 - 图片上传在落盘和计算最终 hash 之前先解码并重新编码，剥离 EXIF、ICC 与应用标记；多页/动画图片以及超限像素直接以稳定错误拒绝。测试使用本地生成 fixture，不读取用户素材、不联网。
 - 隔离 Browser 实测完成生成策略二次确认、两条审计事件显示和整页刷新恢复，console 0 warning/error；Computer Use 在隔离 Electron userData 中确认桌面壳与 Studio 首屏可启动。
-- 该阶段的 `DEMO_MODE=1 PROVIDER_NETWORK_DISABLED=1 pnpm quality` 曾通过 198/198 workspace tests；当前 schema v12 最终门禁已提升为 255 项，两个阶段均保持付费请求 0。
+- 该阶段的 `DEMO_MODE=1 PROVIDER_NETWORK_DISABLED=1 pnpm quality` 曾通过 198/198 workspace tests；当前 schema v12 最终门禁已提升为 257 项，两个阶段均保持付费请求 0。
 
 ## 已完成的 schema v12 本地 Provider 垂直切片
 
@@ -102,7 +102,7 @@ Task Tray 现在显示中文状态、人工关注原因和取消语义，并提�
 - 仅允许内置 Demo、OpenAI-compatible 与受限声明式 HTTPS manifest。提交、轮询和取消都有超时、异常格式、限流和未知结果契约；未知结果不能自动切换 Provider 或重复扣费重试。
 - 任意 JavaScript、Python 或 Deno 可执行 Provider 适配器已从生产 HTTP 应用封存；旧插件和发布者路径固定返回 410 `EXECUTABLE_PROVIDER_ADAPTERS_DISABLED`。
 - 用户直接向 Provider 付费；产品只执行预算门禁、显式确认、路由与成本记录，不提供充值、余额托管或代扣。
-- 当前最终门禁为 255 项 workspace tests，另通过 `pnpm local:smoke`、`pnpm docker:smoke`、`pnpm electron:preflight` 和零 high 漏洞生产依赖审计。
+- 当前最终门禁为 257 项 workspace tests，另通过 `pnpm local:smoke`、`pnpm docker:smoke`、`pnpm electron:preflight` 和零 high 漏洞生产依赖审计。
 
 ## 已完成的 P1 创作合同切片
 

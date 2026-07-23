@@ -15,12 +15,21 @@
     </div>
   </section>
   <NewProjectWorkspace v-else-if="isProjectSetup" />
-  <main v-else class="studio-shell" :data-view="store.view" :data-workspace="currentWorkspace.id">
+  <main
+    v-else
+    class="studio-shell"
+    :class="{ 'studio-shell--sidebar-collapsed': sidebarCollapsed }"
+    :data-view="store.view"
+    :data-workspace="currentWorkspace.id"
+    data-desktop-smoke-ready="aigc-director-studio"
+  >
     <StudioSidebar
       :current-id="currentWorkspace.id"
       :facts="workspaceFacts"
       :completed-ids="completedWorkspaceIds"
+      :collapsed="sidebarCollapsed"
       @navigate="navigateWorkspace"
+      @toggle-collapse="sidebarCollapsed = !sidebarCollapsed"
       @open-command="commandOpen = true"
       @open-help="helpOpen = true"
     />
@@ -155,6 +164,7 @@ const store = useStudioStore()
 const route = useRoute()
 const router = useRouter()
 const listMode = ref(false)
+const sidebarCollapsed = ref(false)
 const commandOpen = ref(false)
 const systemsOpen = ref(false)
 const helpOpen = ref(false)

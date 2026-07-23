@@ -1,6 +1,6 @@
 # 当前项目状态
 
-更新日期：2026-07-22
+更新日期：2026-07-23
 适用分支：`codex/director-platform-spec-upgrade`
 状态：本地优先开发预览版；零 Key Demo 可运行；正式公开发布仍有外部门禁
 
@@ -18,6 +18,7 @@
 
 - 固定使用 Obsidian Atelier 低饱和暗色体系。
 - 只有一层可折叠主侧栏，项目内使用横向八阶段导航。
+- 桌面侧栏可收起为 72px；≤768px 时转为单层底部导航。项目中心的项目列表与指标区已修正为无横向溢出网格，窄屏主操作占满内容宽度。
 - 16 个可深链接 Workspace 在 `/studio/:projectId?` 内切换；Story、Production、Delivery 是制作画布的局部投影，不是第二层导航。
 - 主流程覆盖项目/Demo、简报、剧本、资产、分镜、连续性、生成、审阅、时间线、画布、Prompt/Skill、任务、Provider 连接、导出设置与本地治理。
 - 未具备后端契约的自由剪辑、多人协作、云端 RBAC 与真实结算必须显示 Planned 或 External Gate，不伪装为可用功能。
@@ -45,6 +46,6 @@ DEMO_MODE=1 PROVIDER_NETWORK_DISABLED=1 pnpm test:smoke
 - 正式 Provider 的真实线上协议、限流、计费与取消语义尚未进行付费 live verification。
 - macOS/Windows 安装包签名、Apple 公证、Windows 干净机、真实更新服务尚未完成。
 - 六角色内部联合评审和真实创作者可用性观察仍需人工签字。
-- Figma v2 到运行时的 Product Design 视觉审计正在进行；当前代码已采用单侧栏与目标色板，但全部视口的最终像素级复测尚未关闭。
+- Product Design 运行时审计已关闭项目中心溢出、双层窄屏导航和桌面启动探针三类问题，1440/1180/≤768 实机度量通过。Figma 节点级像素对比仍受文件 MCP 访问权限阻塞，不宣称一比一像素验收完成。
 
 以上门禁不影响零 Key Demo、本地 Web、Docker、开发模式 Electron 与自动化恢复测试；它们会影响“正式公开发布”声明。

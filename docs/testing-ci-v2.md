@@ -1,12 +1,12 @@
 # 测试与 CI
 
-> 当前事实源（2026-07-22）：Local v1 使用 schema v12、16 个本地工作区和声明式 Provider 连接。下文中关于 schema v2–v11、Deno 安装器、可执行插件监督器和旧 Browser/Computer Use 会话的内容是保留的历史回归记录，不代表当前生产可达能力。当前 Server 不初始化可执行插件运行时，旧插件路径固定返回 HTTP 410。
+> 当前事实源（2026-07-23）：Local v1 使用 schema v12、16 个本地工作区和声明式 Provider 连接。下文中关于 schema v2–v11、Deno 安装器、可执行插件监督器和旧 Browser/Computer Use 会话的内容是保留的历史回归记录，不代表当前生产可达能力。当前 Server 不初始化可执行插件运行时，旧插件路径固定返回 HTTP 410。
 
-## 2026-07-22 Local v1 最终自动化结果
+## 2026-07-23 Local v1 最终自动化结果
 
 | 门禁 | 结果 |
 | --- | --- |
-| `DEMO_MODE=1 PROVIDER_NETWORK_DISABLED=1 pnpm quality` | 通过；255 项 workspace tests、clean-room、安全扫描、FFmpeg、三端生产构建与 Smoke 全部通过 |
+| `DEMO_MODE=1 PROVIDER_NETWORK_DISABLED=1 pnpm quality` | 通过；257 项 workspace tests、clean-room、安全扫描、FFmpeg、三端生产构建与 Smoke 全部通过 |
 | `pnpm test:smoke` | 通过；完整 Demo、partial retry、相同幂等键复用、重启恢复和有效 MP4 |
 | `pnpm local:smoke` | 通过；随机 loopback 端口、bootstrap 会话、健康检查和安全退出 |
 | `pnpm docker:smoke` | 通过；干净镜像、非 root/只读根、Docker Secret、健康检查和停止清理 |
@@ -15,9 +15,9 @@
 | `git diff --check` | 通过 |
 | Provider 付费请求 | 0；所有自动化均使用 `demo-local` 且 `billed=false` |
 
-测试分布：desktop 5、contracts 34、prompt-pack 19、domain 6、model-catalog 2、studio 68、agents 6、media 3、providers 31、server 81，共 255 项。安全扫描覆盖 238 个源文件和 51 个构建文件；clean-room 校验 105 个 runtime/public 文件。FFmpeg 冒烟生成 1.000 秒、3,671 bytes 的可探测 MP4。
+测试分布：desktop 6、contracts 34、prompt-pack 19、domain 6、model-catalog 2、studio 69、agents 6、media 3、providers 31、server 81，共 257 项。安全扫描覆盖 239 个源文件和 51 个构建文件；clean-room 校验 105 个 runtime/public 文件。FFmpeg 冒烟生成 1.000 秒、3,671 bytes 的可探测 MP4。
 
-本轮 Browser 已复核 1440、1180、760 三种视口、16 个 Workspace、8 步引导、Provider 与本地治理界面，稳态 console 0 error。Electron 隔离启动和壳层视觉已确认；原生目录选择的本轮人工复核因 macOS 锁屏中断，不能以历史会话代替，状态见[开发预览验收报告](development-preview-acceptance.md)。
+本轮 Browser 已复核 1440、1180、≤768 三类视口、72px 侧栏收起、16 个 Workspace、8 步引导、Provider 与本地治理界面，稳态页面 console 0 error。Electron 在隔离 userData 中重新启动并采集当前审阅工作区；本轮未重跑原生目录选择与人工导出，状态见[开发预览验收报告](development-preview-acceptance.md)。
 
 ## 测试层级
 
